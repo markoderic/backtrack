@@ -1,0 +1,14 @@
+import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import Home from "./page";
+
+describe("Home", () => {
+  it("shows the name and exactly two links", () => {
+    render(<Home />);
+    expect(screen.getByRole("heading", { name: "Backtrack" })).toBeInTheDocument();
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "Join a class" })).toHaveAttribute("href", "/join");
+    expect(screen.getByRole("link", { name: "I'm a teacher" })).toHaveAttribute("href", "/teach");
+  });
+});
