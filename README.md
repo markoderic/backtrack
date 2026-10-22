@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Backtrack
 
-## Getting Started
+A website for lectures: students tap "I'm lost" on the slide where they got lost, keep listening, and come back to it after class.
 
-First, run the development server:
+Live at https://backtrack.courses
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## The problem
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Every student loses part of a lecture sometimes, and fixing it in class costs the next part of the lecture. Fixing it alone after class can take 30 minutes to an hour, so most small gaps get ignored and pile up.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Backtrack makes a small gap cheap to mark and easy to find again, and it shows the professor which slides lost people while there is still time to go back over them.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## What it does
 
-## Learn More
+Students
+- Join with a 6 digit code. No sign in, no name.
+- Follow the professor's slides live, or look back at earlier ones.
+- Tap I'm lost. The slide is saved, and you keep listening.
+- Optionally drag on the slide to highlight the part you lost, or add a short note. Undo is one tap.
+- My spots lists everything you marked after class, in slide order.
+- A tap made while offline is kept in the browser and sent when the connection is back.
 
-To learn more about Next.js, take a look at the following resources:
+Teachers
+- Sign in with Google, Miami accounts only (checked on the server and in the database).
+- Add courses, then start a lecture from a PDF. The PDF is turned into images in the browser.
+- Present from the projector view with the arrow keys or a clicker.
+- Watch the live view: how many different students got lost on each slide, with their notes and no names.
+- End the lecture to close the code, then look back at past lectures and export a semester CSV.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Who can see what is enforced by Supabase row level security, not only by the screens.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Stack
 
-## Deploy on Vercel
+- Next.js 16 (App Router, Cache Components), React 19, TypeScript
+- Tailwind CSS 4, with the design tokens in `src/app/globals.css`
+- Supabase: Postgres with row level security, Realtime, Storage and Auth
+- PDF.js to turn slides into images in the browser
+- Vercel for hosting
+- Vitest, Testing Library and PGlite for tests
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Run it locally
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+You need Node 22 and a Supabase project of your own.
+
+1. `npm install`
+2. Copy `.env.example` to `.env.local` and fill in these three names from your own project:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_SITE_URL` (use `http://localhost:3000` here)
+3. In the Supabase SQL editor, run the files in `supabase/migrations` in number order. The files ending in `.remote.sql` set up things that only exist on hosted Supabase (the private `slides` storage bucket and the Realtime tables), so run those too.
+4. In Supabase Auth, turn on anonymous sign ins and the Google provider, and add `http://localhost:3000/auth/callback` as a redirect URL.
+5. `npm run dev` and open http://localhost:3000
+
+Only the Supabase URL and the public anon key go in client code. Never commit `.env.local`.
+
+Scripts: `npm run dev`, `npm run build`, `npm start`, `npm run lint`, `npm test`.
+
+## Tests
+
+`npm test` runs everything. It needs no network and no Supabase project.
+
+- Component and logic tests in `src` use Vitest, Testing Library and jsdom.
+- Database tests in `tests/db` apply the real migrations to PGlite (Postgres in WebAssembly) and check the row level security rules, the code limits, the stats and the CSV export.
+
+## Built with AI tools
+
+Most of this code was written by Claude (Anthropic), working through Claude Code. Marko Deric directed it. Here is the split.
+
+What Claude did
+- Wrote most of the code: the Next.js app, the SQL migrations and the tests.
+- Worked task by task using subagent driven development. A builder agent did each task, and a separate reviewer agent checked it before it was kept.
+- Turned the spec into a build plan, and did the competitor research behind it.
+- Designed the screens in Figma through the Figma connector, then built them from that design.
+- Drove Marko's Chrome to set up GitHub, Vercel, Supabase and Google sign in, and to apply the database migrations.
+- Ran live checks on the deployed site, which found two bugs that the tests and reviews had missed.
+- Drafted this README.
+
+What Marko did
+- Defined the problem from his own research and interviews, and wrote the spec decisions: no accounts for students, no names, what a professor can see, and that saved spots stay private.
+- Picked the design direction and the logo.
+- Approved every task order and rule.
+- Did every login and every secret himself. No secret key is in this repo.
+- Clicked the database confirmations himself.
+- Tested it.
+
+AI code can be wrong, and some of it was. The reviews, the database tests and the live checks are there for that reason.
