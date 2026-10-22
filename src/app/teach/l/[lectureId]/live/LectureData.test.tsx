@@ -570,6 +570,23 @@ describe("End lecture", () => {
     expect(h.rpc).not.toHaveBeenCalled();
   });
 
+  it("focus leaving the confirm (Tab past Keep going) closes it and ends nothing", async () => {
+    await open();
+    const keep = within(screen.getByRole("dialog")).getByRole("button", { name: "Keep going" });
+    const bar = within(slideRow(1)).getByRole("button");
+    fireEvent.blur(keep, { relatedTarget: bar });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("focus moving inside the confirm keeps it open", async () => {
+    await open();
+    const dialog = screen.getByRole("dialog");
+    const keep = within(dialog).getByRole("button", { name: "Keep going" });
+    fireEvent.blur(keep, { relatedTarget: within(dialog).getByRole("button", { name: "End lecture" }) });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("a press inside the confirm keeps it open", async () => {
     await open();
     fireEvent.pointerDown(screen.getByText(DIALOG_TEXT));
@@ -591,6 +608,8 @@ describe("End lecture", () => {
     // The name stays, once, and there is a way back to the course.
     expect(screen.getAllByText("Lecture 1, Oct 26")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Back to the course" })).toHaveAttribute("href", "/teach/c/c1");
+    // Focus was on the confirm's button, which is gone: it lands on the way back.
+    await waitFor(() => expect(screen.getByRole("link", { name: "Back to the course" })).toHaveFocus());
   });
 
   it("shows a plain error and stays live when ending fails", async () => {
@@ -599,6 +618,7 @@ describe("End lecture", () => {
     confirmEnd();
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the lecture."));
     expect(screen.queryByText("Lecture ended.")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "End lecture" })).toHaveFocus());
     expect(screen.getByRole("button", { name: "End lecture" })).toBeInTheDocument();
     expect(h.removeChannel).not.toHaveBeenCalled();
     h.rpc.mockResolvedValue({ data: null, error: null });
@@ -619,8 +639,12 @@ describe("End lecture", () => {
   it("switches to past mode when the lecture row says ended, whoever ended it", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    const bar = within(slideRow(2)).getByRole("button");
+    act(() => bar.focus());
     act(() => h.handlers["lectures:UPDATE"]({ new: { current_slide: 3, status: "ended" } }));
     expect(screen.queryByRole("button", { name: "End lecture" })).not.toBeInTheDocument();
+    // Ended by someone else: focus is left where the teacher had it.
+    expect(bar).toHaveFocus();
     expect(screen.getByText("Lecture ended.")).toBeInTheDocument();
     expect(h.removeChannel).toHaveBeenCalledWith(channel);
   });

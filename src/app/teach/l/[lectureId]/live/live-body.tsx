@@ -38,11 +38,11 @@ export async function LiveBody({
   // ?end=1 is dropped there: an ended lecture has nothing to end.
   if (lecture.status === "ended") redirect(`/teach/l/${lecture.id}`);
 
-  const { data: slideRows, error: slidesError } = await supabase
-    .from("slides")
-    .select("number, first_line")
-    .eq("lecture_id", lecture.id)
-    .order("number");
+  // The slides and the teacher's name (a label only; it never throws) are read together.
+  const [{ data: slideRows, error: slidesError }, teacherName] = await Promise.all([
+    supabase.from("slides").select("number, first_line").eq("lecture_id", lecture.id).order("number"),
+    readTeacherName(supabase, user.id),
+  ]);
   if (slidesError) throw new Error(slidesError.message);
 
   const firstLines = new Map((slideRows ?? []).map((s) => [s.number, s.first_line]));
@@ -51,7 +51,6 @@ export async function LiveBody({
     first_line: firstLines.get(i + 1) ?? "",
   }));
 
-  const teacherName = await readTeacherName(supabase, user.id);
   const courseRel = (lecture as { courses?: { name?: string } | { name?: string }[] }).courses;
   const courseName = (Array.isArray(courseRel) ? courseRel[0]?.name : courseRel?.name) ?? "";
   const { code: courseCode } = splitCourseName(courseName);

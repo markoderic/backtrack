@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 const single = vi.fn();
 const select = vi.fn(() => ({ single }));
@@ -311,4 +311,169 @@ describe("Projector", () => {
     expect(update).not.toHaveBeenCalled();
     expect(shownSlide()).toBe("https://signed/1.webp");
   });
+});
+
+describe("Projector controls row", () => {
+  const row = () => screen.getByTestId("projector-controls");
+  const awake = () => row().getAttribute("data-awake");
+  const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+
+  function withTimers(run: () => void | Promise<void>) {
+    return async () => {
+      vi.useFakeTimers();
+      try {
+        await run();
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+  }
+
+  it("keeps the corner card to the address, code and joined, with the controls in their own row", () => {
+    joined = 38;
+    show();
+    press("ArrowRight");
+    const corner = screen.getByTestId("corner-card");
+    expect(corner).toHaveTextContent("backtrack-ebon-sigma.vercel.app");
+    expect(corner).toHaveTextContent("482916");
+    expect(corner).toHaveTextContent("38 joined");
+    expect(within(corner).queryByRole("link", { name: "Data" })).toBeNull();
+    expect(within(corner).queryByRole("link", { name: "End lecture" })).toBeNull();
+    expect(within(corner).queryByRole("button", { name: "Fullscreen" })).toBeNull();
+    expect(within(row()).getByRole("link", { name: "Data" })).toHaveAttribute("href", `/teach/l/${LECTURE}/live`);
+    expect(within(row()).getByRole("link", { name: "End lecture" })).toHaveAttribute(
+      "href",
+      `/teach/l/${LECTURE}/live?end=1`,
+    );
+    expect(within(row()).getByRole("button", { name: "Fullscreen" })).toBeInTheDocument();
+  });
+
+  it("is the same single row on the join card", () => {
+    show();
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+    expect(screen.getAllByTestId("projector-controls")).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "Data" })).toHaveLength(1);
+  });
+
+  it(
+    "shows on load and fades after 3 seconds without the mouse moving",
+    withTimers(() => {
+      show();
+      expect(awake()).toBe("true");
+      advance(2999);
+      expect(awake()).toBe("true");
+      advance(1);
+      expect(awake()).toBe("false");
+    }),
+  );
+
+  it(
+    "wakes on a pointer move or press, and each move restarts the 3 seconds",
+    withTimers(() => {
+      show();
+      advance(3000);
+      fireEvent.pointerMove(window);
+      expect(awake()).toBe("true");
+      advance(2000);
+      fireEvent.pointerMove(window);
+      advance(2999);
+      expect(awake()).toBe("true");
+      advance(1);
+      expect(awake()).toBe("false");
+      fireEvent.pointerDown(window);
+      expect(awake()).toBe("true");
+    }),
+  );
+
+  it(
+    "stays shown while a control has focus, and counts down again after focus leaves",
+    withTimers(() => {
+      show();
+      advance(3000);
+      expect(awake()).toBe("false");
+      act(() => screen.getByRole("link", { name: "Data" }).focus());
+      expect(awake()).toBe("true");
+      advance(10000);
+      expect(awake()).toBe("true");
+      // Moving between controls keeps it shown.
+      act(() => screen.getByRole("link", { name: "End lecture" }).focus());
+      advance(10000);
+      expect(awake()).toBe("true");
+      act(() => screen.getByRole("link", { name: "End lecture" }).blur());
+      expect(awake()).toBe("true");
+      advance(3000);
+      expect(awake()).toBe("false");
+    }),
+  );
+
+  it(
+    "while faded the controls are still reachable: in the accessibility tree, focusable, not hidden",
+    withTimers(() => {
+      show();
+      advance(3000);
+      expect(awake()).toBe("false");
+      expect(row().closest("[aria-hidden]")).toBeNull();
+      expect(row().closest("[inert]")).toBeNull();
+      const data = screen.getByRole("link", { name: "Data" });
+      act(() => data.focus());
+      expect(data).toHaveFocus();
+    }),
+  );
+
+  it(
+    "keys never wake it, and d and Escape work the same while it is faded",
+    withTimers(async () => {
+      show();
+      advance(3000);
+      press("ArrowRight"); // hides the join card
+      expect(awake()).toBe("false");
+      const updates = update.mock.calls.length;
+      press("Escape");
+      expect(push).not.toHaveBeenCalled();
+      expect(update.mock.calls.length).toBe(updates);
+      expect(awake()).toBe("false");
+      press("d");
+      expect(push).toHaveBeenCalledWith(`/teach/l/${LECTURE}/live`);
+      expect(awake()).toBe("false");
+      // A slide change by key does not wake it either.
+      press(" ");
+      await act(async () => {});
+      expect(update).toHaveBeenCalledWith({ current_slide: 2 });
+      expect(awake()).toBe("false");
+    }),
+  );
+
+  it(
+    "the Fullscreen button works while the row is faded",
+    withTimers(() => {
+      const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+      const { container } = show();
+      (container.firstElementChild as HTMLElement).requestFullscreen = requestFullscreen;
+      advance(3000);
+      fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
+      expect(requestFullscreen).toHaveBeenCalled();
+    }),
+  );
+
+  it(
+    "stops listening and clears its timer when it unmounts",
+    withTimers(() => {
+      const removed = vi.spyOn(window, "removeEventListener");
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const { unmount } = show();
+        unmount();
+        const types = removed.mock.calls.map((c) => c[0]);
+        expect(types).toContain("pointermove");
+        expect(types).toContain("pointerdown");
+        expect(vi.getTimerCount()).toBe(0);
+        advance(10000);
+        fireEvent.pointerMove(window);
+        expect(errors).not.toHaveBeenCalled();
+      } finally {
+        removed.mockRestore();
+        errors.mockRestore();
+      }
+    }),
+  );
 });

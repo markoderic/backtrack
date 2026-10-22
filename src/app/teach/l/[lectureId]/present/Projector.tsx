@@ -21,6 +21,8 @@ type Props = {
 
 /** How long the join card takes to fade out on the first arrow (--dur-slow, plus room). */
 const JOIN_FADE_MS = 400;
+/** The controls row fades out after this long without the mouse moving (and no control focused). */
+const CONTROLS_IDLE_MS = 3000;
 
 /**
  * The code as the design shows it, "482 916": two groups of three with a gap. The gap is
@@ -64,7 +66,7 @@ function JoinCard({
             "aria-hidden": true,
             onAnimationEnd: onFaded,
             className:
-              "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-[min(72px,5vw)] bg-bg " +
+              "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-[min(72px,5vw)] bg-bg px-4 " +
               "[animation:fade-in_var(--dur-slow)_var(--ease-in-out)_reverse_both]",
           }
         : {
@@ -116,6 +118,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const [error, setError] = useState<string | null>(null);
   const { urlFor } = useSlideImages(lectureId, current);
   const joined = useJoinedCount(lectureId);
+  // The controls row shows while the mouse moves and while one of its controls has focus.
+  const [awake, setAwake] = useState(true);
+  const [focused, setFocused] = useState(false);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // The key handler reads these instead of state, so a fast key press never sees a stale value.
   const currentRef = useRef(initialSlide);
@@ -177,6 +183,27 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     return () => clearTimeout(timer);
   }, [joinCardFading]);
 
+  // Any pointer move or press wakes the controls for another 3 s. Keys never do: arrows, a
+  // clicker and Space must not flash the row over the slide. Setting the same state again
+  // does not render, so a moving mouse only restarts the timer.
+  const wake = useCallback(() => {
+    setAwake(true);
+    clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => setAwake(false), CONTROLS_IDLE_MS);
+  }, []);
+
+  useEffect(() => {
+    // Shown on load (awake starts true); the first countdown starts here.
+    idleTimer.current = setTimeout(() => setAwake(false), CONTROLS_IDLE_MS);
+    window.addEventListener("pointermove", wake, { passive: true });
+    window.addEventListener("pointerdown", wake, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", wake);
+      window.removeEventListener("pointerdown", wake);
+      clearTimeout(idleTimer.current);
+    };
+  }, [wake]);
+
   async function toggleFullscreen(e: React.MouseEvent<HTMLButtonElement>) {
     e.currentTarget.blur(); // Space must move the slide, not press this button again.
     try {
@@ -189,8 +216,22 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
 
   const url = urlFor(current);
 
+  /*
+   * One row of controls, always in the DOM and in the tab order (Tab reaches it and focus
+   * shows it). It only fades: opacity, instant with reduced motion.
+   */
   const controls = (
-    <div className="flex items-center gap-4">
+    <div
+      data-testid="projector-controls"
+      data-awake={awake || focused ? "true" : "false"}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setFocused(false);
+        wake();
+      }}
+      className="flex items-center gap-4 rounded-md border border-hairline bg-surface px-4 py-2 shadow-popover opacity-0 transition-opacity duration-(--dur-slow) ease-out focus-within:opacity-100 motion-reduce:transition-none data-[awake=true]:opacity-100"
+    >
       <Link href={`/teach/l/${lectureId}/live`} className={controlClass}>
         Data
       </Link>
@@ -217,27 +258,24 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
       )}
 
       {/*
-       * Top right, 32 from the corner (Figma 34:851). On the slide it is the corner card:
-       * address, code, joined, then the teacher's controls after a hairline. On the join
-       * card only the controls show there, since the card itself has the rest.
+       * Top right, 32 from the corner (Figma 34:851). On the slide: the corner card with
+       * address, code and joined, as in the design. Under it (alone there on the join card)
+       * the teacher's controls, which fade out while the mouse is still.
        */}
-      <div className="absolute top-8 right-8 z-20 flex max-w-[calc(100%-64px)] justify-end">
-        {joinCardShowing ? (
-          controls
-        ) : (
+      <div className="absolute top-8 right-8 z-20 flex max-w-[calc(100%-64px)] flex-col items-end gap-2">
+        {!joinCardShowing && (
           <div
             data-testid="corner-card"
-            className="flex animate-fade-in flex-wrap items-center gap-x-6 gap-y-2 rounded-md border border-hairline bg-surface px-6 py-4 whitespace-nowrap shadow-popover"
+            className="flex animate-fade-in items-center gap-6 rounded-md border border-hairline bg-surface px-6 py-4 whitespace-nowrap shadow-popover"
           >
             <p className="type-body-strong text-ink">{siteAddress}</p>
             <p className="type-title text-ink">
               <Code code={code} />
             </p>
             {joined !== null && <p className="type-body text-secondary">{joined} joined</p>}
-            <span aria-hidden className="h-6 w-px bg-hairline" />
-            {controls}
           </div>
         )}
+        {controls}
       </div>
 
       {error && (

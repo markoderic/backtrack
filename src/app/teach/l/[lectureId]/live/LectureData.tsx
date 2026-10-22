@@ -148,6 +148,10 @@ export function LectureData({
   const [picked, setPicked] = useState<number | null>(null);
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
+  const backLink = useRef<HTMLAnchorElement>(null);
+  // Where focus goes once the confirm it was in is gone: the way back after ending here,
+  // or End lecture again after a failure. Ended by someone else, focus is left alone.
+  const focusAfterEnd = useRef<"back" | "end" | null>(null);
   useEffect(() => {
     const supabase = createBrowserSupabase();
     let cancelled = false;
@@ -309,13 +313,21 @@ export function LectureData({
       setConfirming(false);
       setLive(false);
       setJustEnded(true);
+      focusAfterEnd.current = "back";
     } catch {
       setConfirming(false);
       setEndError(true);
+      focusAfterEnd.current = "end";
     } finally {
       setEnding(false);
     }
   }
+
+  useEffect(() => {
+    if (!focusAfterEnd.current || ending) return;
+    (focusAfterEnd.current === "back" ? backLink.current : endButton.current)?.focus();
+    focusAfterEnd.current = null;
+  }, [ending, justEnded, endError]);
 
   const rows = useMemo(() => Array.from(taps.values()), [taps]);
   const stats = useMemo(() => slideStats(rows, slides.length), [rows, slides.length]);
@@ -375,7 +387,17 @@ export function LectureData({
           </div>
           <div className="min-w-0 flex-1" />
           {live ? (
-            <div ref={endArea} className="relative ml-auto">
+            <div
+              ref={endArea}
+              className="relative ml-auto"
+              // A non-modal popover: Tab past Keep going (or anywhere else) closes it, so it never
+              // stays open over the page with focus behind it. Switching windows leaves it open.
+              onBlur={(e) => {
+                if (!confirming || ending || !document.hasFocus()) return;
+                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                closeConfirm(false);
+              }}
+            >
               <button
                 ref={endButton}
                 type="button"
@@ -424,7 +446,7 @@ export function LectureData({
           ) : (
             justEnded &&
             courseId && (
-              <Link href={`/teach/c/${courseId}`} className={textLinkClass}>
+              <Link ref={backLink} href={`/teach/c/${courseId}`} className={textLinkClass}>
                 Back to the course
               </Link>
             )
@@ -454,7 +476,7 @@ export function LectureData({
             <>
               <ol
                 data-testid="bars"
-                className="-mx-1 -mb-2 flex h-[388px] animate-fade-in items-end gap-1.5 overflow-x-auto overflow-y-hidden px-1 pb-2 sm:gap-3"
+                className="-mx-1 -my-2 flex h-[396px] animate-fade-in items-end gap-1.5 overflow-x-auto overflow-y-hidden px-1 py-2 sm:gap-3"
               >
                 {slides.map((slide) => {
                   const stat = stats[slide.number - 1];
@@ -466,12 +488,12 @@ export function LectureData({
                   const share = most === 0 ? 0 : stat.students / most;
                   const scale = Math.round(Math.max(share, BAR_MIN / BAR_MAX) * 1e4) / 1e4;
                   return (
-                    <li key={slide.number} data-testid={`slide-${slide.number}`} className="flex h-full min-w-6 flex-[0_1_64px]">
+                    <li key={slide.number} data-testid={`slide-${slide.number}`} className="flex h-full min-w-11 flex-[0_1_64px]">
                       <button
                         type="button"
                         aria-pressed={isSelected}
                         onClick={() => setPicked(slide.number)}
-                        className="group press focus-ring flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm"
+                        className="group press focus-ring relative flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm"
                       >
                         {/* What a screen reader hears; the drawing below is hidden from it. */}
                         <span className="sr-only">
