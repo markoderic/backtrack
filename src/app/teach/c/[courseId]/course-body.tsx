@@ -7,6 +7,7 @@ import { Icon } from "@/components/Icon";
 import { LiveLectureRow } from "../../LiveLectureRow";
 import { readTeacherName } from "../../teacher";
 import { TeacherPage, splitCourseName, textLinkClass } from "../../ui";
+import { LECTURE_DELETED } from "../../delete-lecture-copy";
 import { PastLectures, type PastLecture } from "./PastLectures";
 
 const PAGE = 1000;
@@ -113,8 +114,16 @@ async function summarize(supabase: Supabase, courseId: string, past: LectureRow[
   return out;
 }
 
-export async function CourseBody({ params }: { params: Promise<{ courseId: string }> }) {
+export async function CourseBody({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ courseId: string }>;
+  /** ?deleted=1 after Delete lecture brought the teacher back here. */
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { courseId } = await params;
+  const deleted = (await searchParams)?.deleted === "1";
 
   const supabase = await createServerSupabase();
   const {
@@ -186,11 +195,17 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
           )}
         </div>
 
+        {/* Always in the page so the line is announced when it appears. */}
+        <p role="status" data-testid="course-status" className="type-small text-secondary empty:sr-only">
+          {deleted ? LECTURE_DELETED : ""}
+        </p>
+
         {live.length > 0 && (
           <div className="mt-8 flex flex-col">
             {live.map((lecture) => (
               <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
             ))}
+            <p className="pt-2 type-caption text-secondary">A live lecture can be deleted after it ends.</p>
           </div>
         )}
 

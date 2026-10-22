@@ -1,10 +1,16 @@
 import { Suspense } from "react";
 import { CourseBody } from "./course-body";
 
-export default function CoursePage({ params }: { params: Promise<{ courseId: string }> }) {
+export default function CoursePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ courseId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   return (
     <Suspense fallback={null}>
-      <CourseBody params={params} />
+      <CourseBody params={params} searchParams={searchParams} />
     </Suspense>
   );
 }

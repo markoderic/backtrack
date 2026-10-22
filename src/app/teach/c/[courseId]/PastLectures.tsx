@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatLectureDate } from "@/lib/lectureDate";
 import { Icon } from "@/components/Icon";
+import { DeleteLecture } from "../../DeleteLecture";
 import { rowLinkClass, staggerClass, staggerStyle } from "../../ui";
 
 /** The 44 px hit area of "N more": it starts at the text's top edge and reaches down, so it never covers the last row's padding above it. */
@@ -54,11 +55,13 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
         <span className={`h-6 items-center ${COL.lost}`}>Lost taps</span>
         <span className={`h-6 items-center ${COL.most}`}>Most lost slide</span>
         <span className="size-4.5 shrink-0" />
+        {/* Room for the quiet Delete at the end of each row, so the headings line up. */}
+        <span className="w-14 shrink-0" />
       </div>
       <ul ref={list} className="flex flex-col">
         {shown.map((l, i) => (
-          <li key={l.id} className={`border-t border-hairline ${staggerClass}`} style={staggerStyle(i)}>
-            <Link href={`/teach/l/${l.id}`} className={`${rowLinkClass} flex items-center py-4 type-body`}>
+          <li key={l.id} className={`group/row flex items-center gap-2 border-t border-hairline ${staggerClass}`} style={staggerStyle(i)}>
+            <Link href={`/teach/l/${l.id}`} className={`${rowLinkClass} flex min-w-0 flex-1 items-center py-4 type-body`}>
               <span className={`flex h-6 items-center text-secondary ${COL.date}`}>{formatLectureDate(l.lectureDate)}</span>
               <span className="min-w-0 flex-1 truncate pr-4 type-body-strong text-ink transition-colors duration-(--dur-fast) ease-out group-hover:text-ink-hover">
                 {l.name}
@@ -96,6 +99,7 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
                 className="transition-[translate] duration-(--dur-fast) ease-out motion-safe:group-hover:translate-x-0.5"
               />
             </Link>
+            <DeleteLecture lectureId={l.id} lectureName={l.name} variant="row" />
           </li>
         ))}
       </ul>

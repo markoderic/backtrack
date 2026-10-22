@@ -44,7 +44,8 @@ create table storage.buckets (
 create table storage.objects (
   bucket_id text,
   name text,
-  owner uuid
+  owner uuid,
+  created_at timestamptz default now()
 );
 alter table storage.objects enable row level security;
 grant select, insert, update, delete on storage.objects to anon, authenticated;

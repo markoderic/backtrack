@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+
+vi.mock("../../lecture-actions", () => ({ deleteLecture: vi.fn() }));
+
 import { PastLectures, type PastLecture } from "./PastLectures";
 
 const lectures: PastLecture[] = Array.from({ length: 8 }, (_, i) => ({
@@ -24,5 +27,15 @@ describe("PastLectures", () => {
     expect(screen.getAllByRole("link")).toHaveLength(8);
     expect(screen.queryByRole("button", { name: /more/ })).toBeNull();
     await waitFor(() => expect(screen.getByRole("link", { name: /Week 3/ })).toHaveFocus());
+  });
+
+  it("gives each shown row a quiet Delete for that lecture, outside the row link", () => {
+    render(<PastLectures lectures={lectures} />);
+    const del = screen.getByRole("button", { name: "Delete Week 8" });
+    expect(del.closest("a")).toBeNull();
+    expect(del.closest("li")?.querySelector("a")).toHaveAttribute("href", "/teach/l/l8");
+    expect(screen.getAllByRole("button", { name: /^Delete / })).toHaveLength(5);
+    fireEvent.click(del);
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Week 8");
   });
 });

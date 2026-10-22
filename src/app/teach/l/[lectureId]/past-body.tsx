@@ -4,6 +4,7 @@ import { formatLectureDate } from "@/lib/lectureDate";
 import { Icon } from "@/components/Icon";
 import { LectureData } from "./live/LectureData";
 import { RenameForm } from "./RenameForm";
+import { DeleteLecture } from "../../DeleteLecture";
 import { readTeacherName } from "../../teacher";
 import { TeacherTopBar, splitCourseName, textLinkClass } from "../../ui";
 
@@ -139,10 +140,13 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
           </div>
           <div className="min-w-0 flex-1" />
           {/* A plain link, not next/link: it downloads a file and must not be prefetched as a page. */}
-          <a href={`/teach/l/${lecture.id}/export`} download className={textLinkClass}>
-            <Icon name="download" size={18} />
-            Export this lecture
-          </a>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <a href={`/teach/l/${lecture.id}/export`} download className={textLinkClass}>
+              <Icon name="download" size={18} />
+              Export this lecture
+            </a>
+            <DeleteLecture lectureId={lecture.id} lectureName={lecture.name} variant="page" />
+          </div>
         </div>
       </LectureData>
     </div>

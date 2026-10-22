@@ -192,4 +192,10 @@ describe("PastBody", () => {
     expect(screen.queryByText(/joined/)).toBeNull();
     expect(screen.queryByText(/lost tap/)).toBeNull();
   });
+
+  it("offers Delete lecture next to the export", async () => {
+    maybeSingle.mockResolvedValue({ data: lecture, error: null });
+    render(await PastBody({ params }));
+    expect(screen.getByRole("button", { name: "Delete lecture" })).toHaveAttribute("aria-haspopup", "dialog");
+  });
 });

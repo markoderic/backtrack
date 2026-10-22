@@ -320,3 +320,37 @@ describe("CourseBody", () => {
     expect(html).toMatch(/<button[^>]*>3(<!-- -->)? more<\/button>/);
   });
 });
+
+describe("CourseBody, Delete lecture", () => {
+  const twoLectures = () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 228" }, error: null });
+    lectures.mockResolvedValue({
+      data: [
+        { id: "l2", name: "Live one", status: "live", lecture_date: "2026-10-22" },
+        { id: "l1", name: "System check, Oct 22", status: "ended", lecture_date: "2026-10-22" },
+      ],
+      error: null,
+    });
+  };
+
+  it("says Lecture deleted. after a delete brought the teacher back (?deleted=1)", async () => {
+    twoLectures();
+    const html = renderToStaticMarkup(await CourseBody({ params, searchParams: Promise.resolve({ deleted: "1" }) }));
+    expect(html).toMatch(/<p role="status"[^>]*>Lecture deleted\.<\/p>/);
+  });
+
+  it("keeps the status line empty (but present) otherwise", async () => {
+    twoLectures();
+    const html = renderToStaticMarkup(await CourseBody({ params, searchParams: Promise.resolve({}) }));
+    expect(html).toMatch(/<p role="status"[^>]*data-testid="course-status"[^>]*><\/p>/);
+    expect(html).not.toContain("Lecture deleted.");
+  });
+
+  it("offers Delete on past lecture rows only, and says a live one is deleted after it ends", async () => {
+    twoLectures();
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('aria-label="Delete System check, Oct 22"');
+    expect(html).not.toContain('aria-label="Delete Live one"');
+    expect(html).toContain("A live lecture can be deleted after it ends.");
+  });
+});
