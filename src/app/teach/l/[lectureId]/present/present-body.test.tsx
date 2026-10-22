@@ -96,6 +96,7 @@ describe("PresentBody", () => {
       siteAddress: "backtrack-ebon-sigma.vercel.app",
       initialSlide: 3,
       slideCount: 10,
+      courseId: "c1",
     });
   });
 

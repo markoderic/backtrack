@@ -41,6 +41,7 @@ export async function PresentBody({ params }: { params: Promise<{ lectureId: str
       siteAddress={siteAddress()}
       initialSlide={lecture.current_slide}
       slideCount={lecture.slide_count}
+      courseId={lecture.course_id}
     />
   );
 }

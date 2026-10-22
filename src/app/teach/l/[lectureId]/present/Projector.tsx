@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { useJoinedCount } from "@/lib/useJoinedCount";
+import { useLiveLecture } from "@/lib/useLiveLecture";
 import { LogoMark } from "@/components/Logo";
 import { Icon } from "@/components/Icon";
+import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 
 type Props = {
   lectureId: string;
@@ -17,12 +19,39 @@ type Props = {
   siteAddress: string;
   initialSlide: number;
   slideCount: number;
+  /** Where "Back to the course" goes once the lecture has ended. */
+  courseId?: string;
 };
 
 /** How long the join card takes to fade out on the first arrow (--dur-slow, plus room). */
 const JOIN_FADE_MS = 400;
 /** The controls row fades out after this long without the mouse moving (and no control focused). */
 const CONTROLS_IDLE_MS = 3000;
+
+/** sessionStorage key: the join card of this lecture was put away in this tab. */
+export const joinCardKey = (lectureId: string) => `backtrack:joincard:${lectureId}`;
+
+function joinCardSeen(lectureId: string): boolean {
+  try {
+    return window.sessionStorage.getItem(joinCardKey(lectureId)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function markJoinCardSeen(lectureId: string): void {
+  try {
+    window.sessionStorage.setItem(joinCardKey(lectureId), "1");
+  } catch {
+    // Storage is blocked: the card just shows again on the next open at slide 1.
+  }
+}
+
+// The key is only read, never watched: it changes only from this page's own key press.
+const noSubscribe = () => () => {};
+
+type KeyboardLock = { lock?: (codes?: string[]) => Promise<void>; unlock?: () => void };
+const keyboardLock = () => (navigator as Navigator & { keyboard?: KeyboardLock }).keyboard;
 
 /**
  * The code as the design shows it, "482 916": two groups of three with a gap. The gap is
@@ -108,16 +137,29 @@ function JoinCard({
 const controlClass =
   "press focus-ring rounded-sm type-small-strong whitespace-nowrap text-secondary hover:text-ink";
 
-export function Projector({ lectureId, code, siteAddress, initialSlide, slideCount }: Props) {
+export function Projector({ lectureId, code, siteAddress, initialSlide, slideCount, courseId }: Props) {
   const router = useRouter();
-  const root = useRef<HTMLDivElement>(null);
   const [current, setCurrent] = useState(initialSlide);
-  const [joinCardShowing, setJoinCardShowing] = useState(true);
+  // The join card shows only on the first open of the lecture: still on slide 1 and not put
+  // away before in this tab. Coming back from the data view (D then Esc), Resume or a reload
+  // goes straight to the slide. The server has no sessionStorage, so it draws the card and
+  // the first client render corrects it.
+  const seen = useSyncExternalStore(
+    noSubscribe,
+    () => joinCardSeen(lectureId),
+    () => false,
+  );
+  const [dismissed, setDismissed] = useState(false);
+  const joinCardShowing = initialSlide === 1 && !seen && !dismissed;
   // The join card fading out after the first arrow, drawn over the slide and then removed.
   const [joinCardFading, setJoinCardFading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { urlFor } = useSlideImages(lectureId, current);
   const joined = useJoinedCount(lectureId);
+  // Hears an End from anywhere else (the dashboard, a phone): Realtime, plus a read every 20 s.
+  const ended = useLiveLecture(lectureId, initialSlide).state?.ended ?? false;
+  const [endedHere, setEndedHere] = useState(false);
+  const isEnded = ended || endedHere;
   // The controls row shows while the mouse moves and while one of its controls has focus.
   const [awake, setAwake] = useState(true);
   const [focused, setFocused] = useState(false);
@@ -125,52 +167,83 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
 
   // The key handler reads these instead of state, so a fast key press never sees a stale value.
   const currentRef = useRef(initialSlide);
-  const joinCardRef = useRef(true);
+  // The slide the teacher asked for last. A press while a change is still being saved moves
+  // this on, and the newest one is sent when that save comes back, so a quick double press
+  // on a clicker skips two slides instead of dropping one.
+  const wantedRef = useRef(initialSlide);
+  const joinCardRef = useRef(joinCardShowing);
+  const endedRef = useRef(false);
   const updating = useRef(false);
+  useEffect(() => {
+    joinCardRef.current = joinCardShowing;
+  }, [joinCardShowing]);
+  useEffect(() => {
+    if (isEnded) endedRef.current = true;
+  }, [isEnded]);
 
-  const go = useCallback(
-    async (target: number) => {
-      updating.current = true;
-      try {
+  const go = useCallback(async () => {
+    if (updating.current) return;
+    updating.current = true;
+    try {
+      while (wantedRef.current !== currentRef.current && !endedRef.current) {
+        const target = wantedRef.current;
+        // Only a live lecture moves: no row back means it ended somewhere else.
         const { data, error: updateError } = await createBrowserSupabase()
           .from("lectures")
           .update({ current_slide: target })
           .eq("id", lectureId)
+          .eq("status", "live")
           .select("current_slide")
-          .single();
-        if (updateError || !data) throw new Error(updateError?.message ?? "No row was updated.");
+          .maybeSingle();
+        if (updateError) throw new Error(updateError.message);
+        if (!data) {
+          endedRef.current = true;
+          setEndedHere(true);
+          return;
+        }
         currentRef.current = target;
         setCurrent(target);
         setError(null);
-      } catch {
-        setError("Could not change the slide.");
-      } finally {
-        updating.current = false;
       }
-    },
-    [lectureId],
-  );
+    } catch {
+      // Presses made meanwhile are dropped with it: the next press starts from the slide on screen.
+      wantedRef.current = currentRef.current;
+      setError("Could not change the slide.");
+    } finally {
+      updating.current = false;
+    }
+  }, [lectureId]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const action = slideKeyAction(e);
       if (!action) return;
-      if (action === "close") return; // The browser leaves fullscreen by itself.
+      if (endedRef.current) return;
+      if (action === "close") {
+        // Without a keyboard lock the browser leaves fullscreen by itself and this never runs.
+        // With one (Chrome, see toggleFullscreen), Esc reaches the page, so it leaves here.
+        if (document.fullscreenElement) {
+          keyboardLock()?.unlock?.();
+          void document.exitFullscreen?.().catch(() => {});
+        }
+        return;
+      }
       e.preventDefault();
-      if (updating.current) return;
       if (action === "data") {
         router.push(`/teach/l/${lectureId}/live`);
         return;
       }
       if (joinCardRef.current) {
         joinCardRef.current = false;
-        setJoinCardShowing(false);
+        markJoinCardSeen(lectureId);
+        setDismissed(true);
         setJoinCardFading(true);
         return;
       }
-      const target = clampSlide(currentRef.current + (action === "next" ? 1 : -1), slideCount);
-      if (target === currentRef.current) return;
-      void go(target);
+      const target = clampSlide(wantedRef.current + (action === "next" ? 1 : -1), slideCount);
+      if (target === wantedRef.current) return;
+      wantedRef.current = target;
+      void go();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -204,17 +277,42 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     };
   }, [wake]);
 
+  // The whole page goes fullscreen, not this component, so it stays fullscreen through D to
+  // the data view and Esc back (both are client side, the document stays). Where the browser
+  // has a keyboard lock (Chrome), Esc is locked too: a press then reaches the page (Esc in the
+  // data view comes back here, Esc here leaves fullscreen), and holding Esc still leaves.
   async function toggleFullscreen(e: React.MouseEvent<HTMLButtonElement>) {
     e.currentTarget.blur(); // Space must move the slide, not press this button again.
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await root.current?.requestFullscreen?.();
+      if (document.fullscreenElement) {
+        keyboardLock()?.unlock?.();
+        await document.exitFullscreen();
+        return;
+      }
+      await document.documentElement.requestFullscreen?.();
     } catch {
       setError("Could not change fullscreen.");
+      return;
+    }
+    try {
+      await keyboardLock()?.lock?.(["Escape"]);
+    } catch {
+      // No lock: the first Esc in the data view then only leaves fullscreen, as before.
     }
   }
 
   const url = urlFor(current);
+
+  if (isEnded) {
+    return (
+      <main className="fixed inset-0 flex animate-page-in flex-col items-center justify-center gap-6 bg-bg p-4 text-center">
+        <p role="status" className="type-title text-ink">
+          This lecture has ended.
+        </p>
+        {courseId && <ButtonPrimaryLink href={`/teach/c/${courseId}`}>Back to the course</ButtonPrimaryLink>}
+      </main>
+    );
+  }
 
   /*
    * One row of controls, always in the DOM and in the tab order (Tab reaches it and focus
@@ -245,7 +343,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   );
 
   return (
-    <div ref={root} className="fixed inset-0 overflow-hidden bg-bg text-ink">
+    <div className="fixed inset-0 overflow-hidden bg-bg text-ink">
       {/* The slide fills the screen at its own ratio and is never scaled past it. It swaps instantly. */}
       {url && (
         // eslint-disable-next-line @next/next/no-img-element
