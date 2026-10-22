@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { CourseBody } from "./course-body";
+import { CourseSkeleton } from "../../skeletons";
 
 export default function CoursePage({
   params,
@@ -9,7 +10,7 @@ export default function CoursePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<CourseSkeleton />}>
       <CourseBody params={params} searchParams={searchParams} />
     </Suspense>
   );

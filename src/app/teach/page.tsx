@@ -9,6 +9,7 @@ import { AddCourseForm } from "./add-course-form";
 import { LiveLectureRow } from "./LiveLectureRow";
 import { RefreshOnReturn } from "./RefreshOnReturn";
 import { SignInView } from "./sign-in-view";
+import { CoursesSkeleton } from "./skeletons";
 import { TeacherPage, rowLinkClass, staggerClass, staggerStyle } from "./ui";
 
 type LectureMeta = { course_id: string; lecture_date: string };
@@ -140,7 +141,7 @@ export default function TeachPage({
   searchParams: Promise<{ error?: string | string[] }>;
 }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<CoursesSkeleton />}>
       <TeachBody searchParams={searchParams} />
     </Suspense>
   );
