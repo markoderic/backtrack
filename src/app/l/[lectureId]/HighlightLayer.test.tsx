@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
 import { useRef } from "react";
 import type { QueueOp, SendResult } from "@/lib/tapQueue";
-import { HighlightLayer, MENU_HEIGHT } from "./HighlightLayer";
+import { MENU_HEIGHT } from "@/lib/highlightMenu";
+import { HighlightLayer } from "./HighlightLayer";
 import { LostButton } from "./LostButton";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";

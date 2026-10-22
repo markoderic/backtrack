@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { Icon } from "@/components/Icon";
-import { menuTop } from "@/app/l/[lectureId]/HighlightLayer";
+import { menuTop } from "@/lib/highlightMenu";
 import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
