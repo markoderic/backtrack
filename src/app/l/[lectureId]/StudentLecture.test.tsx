@@ -63,6 +63,10 @@ const useSlideImages = vi.fn((...args: [string, number?]) => ({
 vi.mock("@/lib/useSlideImages", () => ({
   useSlideImages: (id: string, current?: number) => useSlideImages(id, current),
 }));
+const useTrackHere = vi.fn();
+vi.mock("@/lib/useHere", () => ({
+  useTrackHere: (id: string, enabled: boolean) => useTrackHere(id, enabled),
+}));
 
 import { StudentLecture } from "./StudentLecture";
 
@@ -108,7 +112,7 @@ function channelStatus(status: string) {
 const teacherMoves = (n: number) => act(() => channelUpdate({ new: { current_slide: n, status: "live", slide_count: 10 } }));
 
 beforeEach(() => {
-  [single, insert, update, upsert, rpc, from, replace, useSlideImages, ownRows, ownFilters, getSession].forEach((m) =>
+  [single, insert, update, upsert, rpc, from, replace, useSlideImages, ownRows, ownFilters, getSession, useTrackHere].forEach((m) =>
     m.mockClear(),
   );
   localStorage.clear();
@@ -329,6 +333,14 @@ describe("StudentLecture", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("counts this tab in the teacher's here count while the lecture is live, and stops when it ends", async () => {
+    show();
+    await settle();
+    expect(useTrackHere).toHaveBeenLastCalledWith(LECTURE, true);
+    act(() => channelUpdate({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
+    await waitFor(() => expect(useTrackHere).toHaveBeenLastCalledWith(LECTURE, false));
   });
 
   it("goes to the lecture's spot when the lecture ends", async () => {

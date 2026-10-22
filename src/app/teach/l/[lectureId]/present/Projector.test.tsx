@@ -26,13 +26,16 @@ vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ from,
 
 let liveEnded = false;
 let here: number | null = null;
-const useLiveLecture = vi.fn((...args: [string, number?, { presence?: string }?]) => ({
+const useLiveLecture = vi.fn((...args: [string, number?]) => ({
   state: { ended: liveEnded },
-  here,
   args,
 }));
 vi.mock("@/lib/useLiveLecture", () => ({
-  useLiveLecture: (id: string, initial?: number, options?: { presence?: string }) => useLiveLecture(id, initial, options),
+  useLiveLecture: (id: string, initial?: number) => useLiveLecture(id, initial),
+}));
+const useHereCount = vi.fn((...args: [string, boolean]) => (args[1] ? here : null));
+vi.mock("@/lib/useHere", () => ({
+  useHereCount: (id: string, enabled: boolean) => useHereCount(id, enabled),
 }));
 
 const push = vi.fn();
@@ -70,7 +73,7 @@ const press = (key: string) => fireEvent.keyDown(window, { key });
 const shownSlide = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
-  [single, select, eq, update, from, push, urlFor, useSlideImages, useJoinedCount, useLiveLecture, rpc, abortSignal, read, readSelect].forEach(
+  [single, select, eq, update, from, push, urlFor, useSlideImages, useJoinedCount, useLiveLecture, useHereCount, rpc, abortSignal, read, readSelect].forEach(
     (m) => m.mockClear(),
   );
   urlFor.mockImplementation((n: number) => `https://signed/${n}.webp`);
@@ -522,9 +525,10 @@ describe("Projector join card only on the first open", () => {
 });
 
 describe("Projector after the lecture ended somewhere else", () => {
-  it("follows the lecture's status with the shared live hook, counting (not joining) who is here", () => {
+  it("follows the lecture's status with the shared live hook, and counts (never joins) who is here on its own channel", () => {
     show({ initialSlide: 3 });
-    expect(useLiveLecture).toHaveBeenCalledWith(LECTURE, 3, { presence: "count" });
+    expect(useLiveLecture).toHaveBeenCalledWith(LECTURE, 3);
+    expect(useHereCount).toHaveBeenCalledWith(LECTURE, true);
   });
 
   it("shows the ended state when the hook hears the end, and keys do nothing", () => {

@@ -46,7 +46,8 @@ vi.mock("next/navigation", () => ({
   },
   redirect: (to: string) => {
     throw new Error(`REDIRECT:${to}`);
-  },  useRouter: () => ({ refresh: () => {} }),
+  },
+  useRouter: () => ({ refresh: () => {} }),
 }));
 
 import { renderToStaticMarkup } from "react-dom/server";

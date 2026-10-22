@@ -36,7 +36,8 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT:${to}`);
-  },  useRouter: () => ({ refresh: () => {} }),
+  },
+  useRouter: () => ({ refresh: () => {} }),
 }));
 vi.mock("./sign-in-button", () => ({ SignInButton: () => <button>Sign in</button> }));
 vi.mock("./add-course-form", () => ({

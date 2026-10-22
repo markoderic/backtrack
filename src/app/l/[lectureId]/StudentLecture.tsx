@@ -12,6 +12,7 @@ import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
+import { useTrackHere } from "@/lib/useHere";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { HighlightLayer } from "./HighlightLayer";
 import { LostButton, type Spot } from "./LostButton";
@@ -98,6 +99,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [slowKey, setSlowKey] = useState<string | null>(null);
   const ended = state?.ended ?? false;
+  // This tab counts in the teacher's "here" while the lecture is live (on its own channel,
+  // never the slide channel). My spots does not count.
+  useTrackHere(lectureId, !ended);
   // Kept in a ref so a re-render (the count turning back from red, the loading text)
   // never restarts the 3 second bound below.
   const routerRef = useRef(router);

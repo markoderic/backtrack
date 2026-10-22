@@ -418,8 +418,10 @@ describe("SpotsView: opening a spot", () => {
   it("during a live lecture, a later live slide raises the cap, and the end reads the page again", async () => {
     show({ liveSlide: 4 });
     await ready();
-    // The lecture's channel (its second argument is the here count's presence key).
-    expect((makeChannel.mock.calls[0] as unknown[])[0]).toBe(`lecture-${LECTURE}`);
+    expect(makeChannel).toHaveBeenCalledWith(`lecture-${LECTURE}`);
+    // My spots never counts in the teacher's here count: no here channel, no presence.
+    expect(makeChannel.mock.calls.map((c) => (c as unknown[])[0])).not.toContain(`here-${LECTURE}`);
+    expect(makeChannel.mock.calls.every((c) => (c as unknown[]).length === 1)).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Slide 3/ }));
     const next = () => screen.getByRole("button", { name: "Next slide" });
     fireEvent.click(next());

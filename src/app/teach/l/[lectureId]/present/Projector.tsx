@@ -7,6 +7,7 @@ import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { useJoinedCount } from "@/lib/useJoinedCount";
 import { useLiveLecture } from "@/lib/useLiveLecture";
+import { useHereCount } from "@/lib/useHere";
 import { useShownAgain } from "@/lib/useShownAgain";
 import { LogoMark } from "@/components/Logo";
 import { Icon } from "@/components/Icon";
@@ -186,10 +187,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const [broken, setBroken] = useState<{ slide: number; url: string } | null>(null);
   const joined = useJoinedCount(lectureId);
   // Hears an End from anywhere else (the dashboard, a phone): Realtime, plus a read every 20 s.
-  // It also counts the students who have the lecture open right now (Realtime Presence).
-  const live = useLiveLecture(lectureId, initialSlide, { presence: "count" });
+  const live = useLiveLecture(lectureId, initialSlide);
   const ended = live.state?.ended ?? false;
-  const here = live.here ?? null;
+  // The students who have the lecture page open right now (Realtime Presence on its own channel).
+  const here = useHereCount(lectureId, !ended);
   const [endedHere, setEndedHere] = useState(false);
   const isEnded = ended || endedHere;
   // End class asks first, right here on the projector (no trip to the data view).
@@ -495,8 +496,8 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
 
   if (isEnded) return <ClassEnded courseId={courseId} fixed />;
 
-  // Students on the lecture page right now, never more than have joined (one student with
-  // two tabs open counts once there).
+  // Students on the lecture page right now, capped at joined: a student with two tabs open
+  // counts twice in presence, so the cap keeps the total believable (it is a cap, not a dedupe).
   const hereCount = here !== null && joined !== null ? Math.min(here, joined) : null;
   const count =
     joined === null ? null : hereCount === null ? `${joined} joined` : `${hereCount} here · ${joined} joined`;

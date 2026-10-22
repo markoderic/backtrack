@@ -6,19 +6,10 @@ const channel = {
   filter: null as unknown,
   update: null as Handler | null,
   status: null as ((s: string) => void) | null,
-  /** The presence sync listener (the projector's "count" mode only). */
-  sync: null as (() => void) | null,
-  presence: {} as Record<string, unknown[]>,
   on: vi.fn(),
   subscribe: vi.fn(),
-  track: vi.fn(async (payload: unknown) => (payload ? "ok" : "error")),
-  presenceState: vi.fn(() => channel.presence),
 };
-channel.on.mockImplementation((type: string, filter: unknown, cb: Handler) => {
-  if (type === "presence") {
-    channel.sync = cb as unknown as () => void;
-    return channel;
-  }
+channel.on.mockImplementation((_type: string, filter: unknown, cb: Handler) => {
   channel.filter = filter;
   channel.update = cb;
   return channel;
@@ -54,9 +45,7 @@ beforeEach(() => {
   channel.filter = null;
   channel.update = null;
   channel.status = null;
-  channel.sync = null;
-  channel.presence = {};
-  [single, eq, select, from, makeChannel, removeChannel, setAuth, channel.track, channel.on].forEach((m) => m.mockClear());
+  [single, eq, select, from, makeChannel, removeChannel, setAuth].forEach((m) => m.mockClear());
   setAuth.mockImplementation(async () => {});
   single.mockResolvedValue(row(3));
   setVisibility("visible");
@@ -91,7 +80,16 @@ describe("useLiveLecture", () => {
     expect(makeChannel).not.toHaveBeenCalled();
     await act(async () => giveToken());
     expect(makeChannel).toHaveBeenCalledTimes(1);
-    expect((makeChannel.mock.calls[0] as unknown[])[0]).toBe(`lecture-${LECTURE}`);
+    expect(makeChannel).toHaveBeenCalledWith(`lecture-${LECTURE}`);
+  });
+
+  it("keeps presence off the slide channel: the topic alone, no presence config, no presence listener", async () => {
+    channel.on.mockClear();
+    renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(makeChannel).toHaveBeenCalledTimes(1));
+    // The here count has a channel of its own (useHere), so a presence limit can never close this one.
+    expect(makeChannel.mock.calls[0]).toEqual([`lecture-${LECTURE}`]);
+    expect(channel.on.mock.calls.map((c) => (c as unknown[])[0])).toEqual(["postgres_changes"]);
   });
 
   it("opens no channel when it unmounts before the token arrives", async () => {
@@ -587,75 +585,6 @@ describe("useLiveLecture", () => {
       await act(async () => document.dispatchEvent(new Event("visibilitychange")));
       await wait(40000);
       expect(makeChannel).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("presence (the projector's here count)", () => {
-    const opened = async (presence?: "track" | "count") => {
-      const hook = renderHook(() => useLiveLecture(LECTURE, 3, presence ? { presence } : undefined));
-      await waitFor(() => expect(channel.status).not.toBeNull());
-      return hook;
-    };
-
-    it("a student's page is counted: a random key for this tab, tracked with nothing in it once subscribed", async () => {
-      await opened();
-      const [, params] = makeChannel.mock.calls[0] as unknown as [string, { config: { presence: { key: string } } }];
-      expect(params.config.presence.key).toMatch(/^[0-9a-f-]{36}$/);
-      expect(params.config.presence.key).not.toContain(LECTURE);
-      expect(channel.track).not.toHaveBeenCalled();
-      await act(async () => channel.status?.("SUBSCRIBED"));
-      expect(channel.track).toHaveBeenCalledTimes(1);
-      expect(channel.track).toHaveBeenCalledWith({});
-      // It does not listen to presence, so it never hears who else is there.
-      expect(channel.on.mock.calls.map((c) => (c as unknown[])[0])).not.toContain("presence");
-    });
-
-    it("tracks again after the channel drops and comes back", async () => {
-      await opened();
-      await act(async () => channel.status?.("SUBSCRIBED"));
-      act(() => channel.status?.("CHANNEL_ERROR"));
-      await act(async () => channel.status?.("SUBSCRIBED"));
-      expect(channel.track).toHaveBeenCalledTimes(2);
-    });
-
-    it("a student's page keeps working when presence is not there at all", async () => {
-      const track = channel.track;
-      (channel as { track: unknown }).track = undefined;
-      try {
-        const { result } = await opened();
-        await act(async () => channel.status?.("SUBSCRIBED"));
-        await waitFor(() => expect(result.current.state).toMatchObject({ conn: "live" }));
-        expect(result.current.here).toBeNull();
-      } finally {
-        channel.track = track;
-      }
-    });
-
-    it("the projector is not counted and hears how many tabs are on the lecture", async () => {
-      const { result } = await opened("count");
-      expect(makeChannel).toHaveBeenCalledWith(`lecture-${LECTURE}`);
-      expect(result.current.here).toBeNull();
-      await act(async () => channel.status?.("SUBSCRIBED"));
-      expect(channel.track).not.toHaveBeenCalled();
-      channel.presence = { a: [{}], b: [{}], c: [{}] };
-      act(() => channel.sync?.());
-      expect(result.current.here).toBe(3);
-      channel.presence = { a: [{}], c: [{}] };
-      act(() => channel.sync?.());
-      expect(result.current.here).toBe(2);
-    });
-
-    it("the count is unknown (null) while the channel is down, and comes back with the next sync", async () => {
-      const { result } = await opened("count");
-      await act(async () => channel.status?.("SUBSCRIBED"));
-      channel.presence = { a: [{}] };
-      act(() => channel.sync?.());
-      expect(result.current.here).toBe(1);
-      act(() => channel.status?.("CHANNEL_ERROR"));
-      expect(result.current.here).toBeNull();
-      await act(async () => channel.status?.("SUBSCRIBED"));
-      act(() => channel.sync?.());
-      expect(result.current.here).toBe(1);
     });
   });
 });
