@@ -45,6 +45,7 @@ describe("SlideStrip", () => {
   it("with live 8 and viewing 5, slide 8 has the live marker and slide 5 the viewing marker and the ring", () => {
     strip({ live: 8, viewing: 5 });
     expect(item(8)).toHaveAttribute("data-live");
+    expect(item(8).querySelector("[data-playhead]")).not.toBeNull();
     expect(item(8)).not.toHaveAttribute("aria-current");
     expect(item(5)).toHaveAttribute("aria-current", "true");
     expect(item(5)).not.toHaveAttribute("data-live");
@@ -52,14 +53,15 @@ describe("SlideStrip", () => {
     for (const n of [1, 2, 3, 4, 6, 7]) {
       expect(item(n)).not.toHaveAttribute("data-live");
       expect(item(n)).not.toHaveAttribute("aria-current");
+      expect(item(n).querySelector("[data-dot]")).not.toBeNull();
     }
   });
 
-  it("when viewing the live slide, one segment has both markers and the playhead alone shows it (no ring)", () => {
+  it("when viewing the live slide, its dot has both the ring and the playhead, and there is one of each", () => {
     const { container } = strip({ live: 8, viewing: 8 });
     expect(item(8)).toHaveAttribute("data-live");
     expect(item(8)).toHaveAttribute("aria-current", "true");
-    expect(container.querySelector("[data-here]")).toBeNull();
+    expect(container.querySelectorAll("[data-here]")).toHaveLength(1);
     expect(container.querySelectorAll("[data-playhead]")).toHaveLength(1);
   });
 
@@ -78,26 +80,19 @@ describe("SlideStrip", () => {
     expect(onPick).toHaveBeenCalledWith(3);
   });
 
-  it("grows as the live slide moves, 40 px a slide (28 on a phone), and shows no count", () => {
+  it("gives every dot a 44 px button and grows as the live slide moves, with no count", () => {
     const { rerender, container } = strip({ live: 3, viewing: 3 });
-    const nav = screen.getByRole("navigation", { name: "Slides" });
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
-    expect(nav.style.maxWidth).toBe("calc(var(--seg) * 3 + 2px)");
-    expect(nav.className).toContain("[--seg:28px]");
-    expect(nav.className).toContain("sm:[--seg:40px]");
+    for (const li of screen.getAllByRole("listitem")) expect(li.className).toMatch(/\bsize-11\b/);
     rerender(<SlideStrip live={4} viewing={4} spots={new Map()} onPick={() => {}} />);
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
-    expect(nav.style.maxWidth).toBe("calc(var(--seg) * 4 + 2px)");
     expect(container.textContent).not.toMatch(/\bof\b|\//);
   });
 
-  it("shrinks its segments instead of scrolling when the lecture runs past the width", () => {
+  it("scrolls sideways when the lecture runs past the width, instead of shrinking the dots", () => {
     strip({ live: 30, viewing: 20 });
-    const nav = screen.getByRole("navigation", { name: "Slides" });
-    // The strip takes the room left in the row (flex-1, min-w-0) and every segment an equal share of it.
-    expect(nav.className).toMatch(/\bflex-1\b/);
-    expect(nav.className).toMatch(/\bmin-w-0\b/);
-    expect(nav.className).not.toMatch(/overflow-x-auto/);
-    for (const li of screen.getAllByRole("listitem")) expect(li.className).toMatch(/\bflex-1\b/);
+    const list = screen.getByRole("list");
+    expect(list.className).toMatch(/overflow-x-auto/);
+    for (const li of screen.getAllByRole("listitem")) expect(li.className).toMatch(/\bshrink-0\b/);
   });
 });
