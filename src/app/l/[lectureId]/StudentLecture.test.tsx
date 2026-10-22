@@ -52,11 +52,11 @@ function show(initialSlide = 7) {
 const shownSrc = () => screen.getByRole("img").getAttribute("src");
 const forward = () => screen.getByRole("button", { name: "Forward" });
 const back = () => screen.getByRole("button", { name: "Back" });
-const teacherMoves = (n: number) => act(() => channel.update?.({ new: { current_slide: n, status: "live" } }));
+const teacherMoves = (n: number) => act(() => channel.update?.({ new: { current_slide: n, status: "live", slide_count: 10 } }));
 
 beforeEach(() => {
   [single, insert, update, upsert, rpc, from, replace, useSlideImages].forEach((m) => m.mockClear());
-  single.mockResolvedValue({ data: { current_slide: 7, status: "live" }, error: null });
+  single.mockResolvedValue({ data: { current_slide: 7, status: "live", slide_count: 10 }, error: null });
   channel.update = null;
   channel.status = null;
 });
@@ -85,6 +85,18 @@ describe("StudentLecture", () => {
     expect(text).not.toMatch(/10/);
     expect(text).not.toMatch(/\bof\b/i);
     expect(screen.queryByText(/\//)).not.toBeInTheDocument();
+  });
+
+  it("shows no total even after the lecture row and a realtime update carried slide_count 10", async () => {
+    const { container } = show(7);
+    await waitFor(() => expect(single).toHaveBeenCalled());
+    await act(async () => channel.status?.("SUBSCRIBED"));
+    expect(screen.getAllByText("7")).toHaveLength(1);
+    expect(container.textContent ?? "").not.toMatch(/10/);
+    teacherMoves(8);
+    expect(screen.getAllByText("8")).toHaveLength(1);
+    expect(container.textContent ?? "").not.toMatch(/10/);
+    expect(container.textContent ?? "").not.toMatch(/\bof\b/i);
   });
 
   it("keeps the same when the help panel is open", () => {
@@ -128,7 +140,7 @@ describe("StudentLecture", () => {
   });
 
   it("Back is disabled on slide 1", () => {
-    single.mockResolvedValue({ data: { current_slide: 1, status: "live" }, error: null });
+    single.mockResolvedValue({ data: { current_slide: 1, status: "live", slide_count: 10 }, error: null });
     show(1);
     expect(back()).toBeDisabled();
   });
@@ -155,22 +167,43 @@ describe("StudentLecture", () => {
     expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument();
     act(() => channel.status?.("CHANNEL_ERROR"));
     expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
-    single.mockResolvedValue({ data: { current_slide: 9, status: "live" }, error: null });
+    single.mockResolvedValue({ data: { current_slide: 9, status: "live", slide_count: 10 }, error: null });
     await act(async () => channel.status?.("SUBSCRIBED"));
     await waitFor(() => expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument());
     expect(shownSrc()).toBe("https://signed/9.webp");
   });
 
+  it("keeps the Reconnecting... bar when the read after a drop fails, then jumps to live on a retry", async () => {
+    vi.useFakeTimers();
+    try {
+      show();
+      await act(async () => {});
+      fireEvent.click(back());
+      act(() => channel.status?.("CHANNEL_ERROR"));
+      single.mockResolvedValue({ data: null, error: { message: "Failed to fetch" } });
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
+      expect(shownSrc()).toBe("https://signed/6.webp");
+
+      single.mockResolvedValue({ data: { current_slide: 9, status: "live", slide_count: 10 }, error: null });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument();
+      expect(shownSrc()).toBe("https://signed/9.webp");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("goes to the lecture's spot when the lecture ends", () => {
     show();
     expect(replace).not.toHaveBeenCalled();
-    act(() => channel.update?.({ new: { current_slide: 7, status: "ended" } }));
+    act(() => channel.update?.({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
     expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
   });
 
   it("reads the lecture again on SUBSCRIBED and goes to the spot if it ended meanwhile", async () => {
     show();
-    single.mockResolvedValue({ data: { current_slide: 7, status: "ended" }, error: null });
+    single.mockResolvedValue({ data: { current_slide: 7, status: "ended", slide_count: 10 }, error: null });
     await act(async () => channel.status?.("SUBSCRIBED"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
   });

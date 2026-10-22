@@ -3,29 +3,44 @@
 import { useEffect, useState } from "react";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 
+const RETRY_FIRST_MS = 1000;
+const RETRY_MAX_MS = 10000;
+
 /**
  * How many students have joined a lecture, live. null until the first count
- * arrives. A failed count throws on the next render. Teacher side only: row
- * level security shows a teacher the participants of their own lectures.
+ * arrives. A failed count keeps the last number and is retried after 1, 2, 4
+ * seconds and so on, up to 10, so the projector never goes blank over it.
+ * Teacher side only: row level security shows a teacher the participants of
+ * their own lectures.
  */
 export function useJoinedCount(lectureId: string): number | null {
   const [count, setCount] = useState<number | null>(null);
-  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     const supabase = createBrowserSupabase();
     let cancelled = false;
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const refetch = async () => {
-      const { count: total, error: countError } = await supabase
-        .from("participants")
-        .select("lecture_id", { count: "exact", head: true })
-        .eq("lecture_id", lectureId);
-      if (countError) throw new Error(countError.message);
-      if (!cancelled) setCount(total ?? 0);
-    };
-    const fail = (e: unknown) => {
-      if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
+      clearTimeout(timer);
+      timer = undefined;
+      try {
+        const { count: total, error } = await supabase
+          .from("participants")
+          .select("lecture_id", { count: "exact", head: true })
+          .eq("lecture_id", lectureId);
+        if (error) throw new Error(error.message);
+        if (cancelled) return;
+        failures = 0;
+        setCount(total ?? 0);
+      } catch {
+        if (cancelled) return;
+        // Keep the last count and try again.
+        clearTimeout(timer);
+        timer = setTimeout(refetch, Math.min(RETRY_FIRST_MS * 2 ** failures, RETRY_MAX_MS));
+        failures++;
+      }
     };
 
     const channel = supabase
@@ -37,16 +52,16 @@ export function useJoinedCount(lectureId: string): number | null {
       )
       // Counts again on every SUBSCRIBED, which also covers a reconnect that missed inserts.
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") refetch().catch(fail);
+        if (status === "SUBSCRIBED") void refetch();
       });
-    refetch().catch(fail);
+    void refetch();
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       void supabase.removeChannel(channel);
     };
   }, [lectureId]);
 
-  if (error) throw error;
   return count;
 }

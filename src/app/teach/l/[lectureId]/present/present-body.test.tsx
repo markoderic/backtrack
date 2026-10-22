@@ -3,10 +3,26 @@ import { render, screen } from "@testing-library/react";
 
 const maybeSingle = vi.fn();
 const getUser = vi.fn();
+const selects: string[] = [];
+const eqCalls: [string, unknown][] = [];
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => ({
     auth: { getUser },
-    from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }),
+    from: () => {
+      const chain = {
+        maybeSingle,
+        eq: (column: string, value: unknown) => {
+          eqCalls.push([column, value]);
+          return chain;
+        },
+      };
+      return {
+        select: (columns: string) => {
+          selects.push(columns);
+          return chain;
+        },
+      };
+    },
   }),
 }));
 vi.mock("next/navigation", () => ({
@@ -34,6 +50,8 @@ const lecture = {
 };
 
 beforeEach(() => {
+  selects.length = 0;
+  eqCalls.length = 0;
   maybeSingle.mockReset();
   getUser.mockReset();
   getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
@@ -49,6 +67,14 @@ describe("PresentBody", () => {
   it("is a 404 when the lecture is not the teacher's", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
     await expect(PresentBody({ params })).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("asks only for a lecture of the signed in teacher's own courses, so a joined student gets a 404", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await expect(PresentBody({ params })).rejects.toThrow("NOT_FOUND");
+    expect(selects[0]).toContain("courses!inner(teacher_id)");
+    expect(eqCalls).toContainEqual(["id", "l1"]);
+    expect(eqCalls).toContainEqual(["courses.teacher_id", "u1"]);
   });
 
   it("is a 404 for a malformed uuid in the url", async () => {

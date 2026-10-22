@@ -89,18 +89,93 @@ describe("useJoinedCount", () => {
     expect(removeChannel).toHaveBeenCalledWith(channel);
   });
 
-  it("throws when the count query fails", async () => {
-    eq.mockResolvedValue({ count: null, error: { message: "count broke" } });
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { result } = renderHook(() => {
+  describe("when a count fails", () => {
+    const failed = { count: null, error: { message: "Failed to fetch" } };
+    const wait = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
+
+    it("keeps the last count, does not throw, and retries with backoff until it works", async () => {
+      vi.useFakeTimers();
       try {
-        return useJoinedCount(LECTURE);
-      } catch (e) {
-        return e as Error;
+        const { result } = renderHook(() => useJoinedCount(LECTURE));
+        await act(async () => {});
+        expect(result.current).toBe(4);
+
+        eq.mockResolvedValue(failed);
+        await act(async () => channel.status?.("SUBSCRIBED"));
+        expect(result.current).toBe(4);
+        const calls = eq.mock.calls.length;
+
+        await wait(999);
+        expect(eq.mock.calls.length).toBe(calls);
+        await wait(1);
+        expect(eq.mock.calls.length).toBe(calls + 1);
+        expect(result.current).toBe(4);
+
+        await wait(2000);
+        expect(eq.mock.calls.length).toBe(calls + 2);
+        expect(result.current).toBe(4);
+
+        eq.mockResolvedValue({ count: 11, error: null });
+        await wait(4000);
+        expect(result.current).toBe(11);
+
+        const done = eq.mock.calls.length;
+        await wait(60000);
+        expect(eq.mock.calls.length).toBe(done);
+      } finally {
+        vi.useRealTimers();
       }
     });
-    await waitFor(() => expect(result.current).toBeInstanceOf(Error));
-    expect((result.current as unknown as Error).message).toBe("count broke");
-    spy.mockRestore();
+
+    it("caps the wait at 10 seconds", async () => {
+      vi.useFakeTimers();
+      try {
+        eq.mockResolvedValue(failed);
+        renderHook(() => useJoinedCount(LECTURE));
+        await act(async () => {});
+        for (const delay of [1000, 2000, 4000, 8000, 10000, 10000]) {
+          const before = eq.mock.calls.length;
+          await wait(delay - 1);
+          expect(eq.mock.calls.length).toBe(before);
+          await wait(1);
+          expect(eq.mock.calls.length).toBe(before + 1);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shows no count when the first count fails, then the count once a retry works", async () => {
+      vi.useFakeTimers();
+      try {
+        eq.mockResolvedValue(failed);
+        const { result } = renderHook(() => useJoinedCount(LECTURE));
+        await act(async () => {});
+        expect(result.current).toBeNull();
+        eq.mockRejectedValue(new TypeError("Failed to fetch"));
+        await wait(1000);
+        expect(result.current).toBeNull();
+        eq.mockResolvedValue({ count: 3, error: null });
+        await wait(2000);
+        expect(result.current).toBe(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stops retrying when it unmounts", async () => {
+      vi.useFakeTimers();
+      try {
+        eq.mockResolvedValue(failed);
+        const { unmount } = renderHook(() => useJoinedCount(LECTURE));
+        await act(async () => {});
+        unmount();
+        const calls = eq.mock.calls.length;
+        await wait(60000);
+        expect(eq.mock.calls.length).toBe(calls);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

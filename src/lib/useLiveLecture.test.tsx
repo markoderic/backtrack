@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, render, act, waitFor, screen } from "@testing-library/react";
-import { Component, type ReactNode } from "react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 
 type Handler = (payload: { new: Record<string, unknown> }) => void;
 const channel = {
@@ -150,28 +149,110 @@ describe("useLiveLecture", () => {
     expect(single.mock.calls.length).toBe(calls);
   });
 
-  it("throws when the read fails", async () => {
-    single.mockResolvedValue({ data: null, error: { message: "read broke" } });
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-      state = { error: null as Error | null };
-      static getDerivedStateFromError(error: Error) {
-        return { error };
-      }
-      render() {
-        return this.state.error ? <p>caught: {this.state.error.message}</p> : this.props.children;
-      }
+  describe("when a read fails", () => {
+    const failed = { data: null, error: { message: "Failed to fetch" } };
+
+    async function dropAndFailOnce() {
+      const hook = renderHook(() => useLiveLecture(LECTURE, 3));
+      await act(async () => {});
+      act(() => hook.result.current.back());
+      act(() => channel.status?.("CHANNEL_ERROR"));
+      single.mockResolvedValue(failed);
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      return hook;
     }
-    function Probe() {
-      useLiveLecture(LECTURE);
-      return <p>ok</p>;
-    }
-    render(
-      <Boundary>
-        <Probe />
-      </Boundary>,
-    );
-    expect(await screen.findByText("caught: read broke")).toBeInTheDocument();
-    spy.mockRestore();
+
+    const wait = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
+
+    it("stays on Reconnecting without throwing, retries after 1, 2 and 4 seconds, then jumps to live", async () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = await dropAndFailOnce();
+        expect(result.current.state).toMatchObject({ conn: "reconnecting", viewing: 2, following: false });
+        const calls = single.mock.calls.length;
+
+        await wait(999);
+        expect(single.mock.calls.length).toBe(calls);
+        await wait(1);
+        expect(single.mock.calls.length).toBe(calls + 1);
+        expect(result.current.state?.conn).toBe("reconnecting");
+
+        await wait(1999);
+        expect(single.mock.calls.length).toBe(calls + 1);
+        await wait(1);
+        expect(single.mock.calls.length).toBe(calls + 2);
+        expect(result.current.state?.conn).toBe("reconnecting");
+
+        single.mockResolvedValue(row(8));
+        await wait(4000);
+        expect(result.current.state).toEqual({ live: 8, viewing: 8, following: true, conn: "live", ended: false });
+
+        // Nothing is left to retry.
+        const done = single.mock.calls.length;
+        await wait(60000);
+        expect(single.mock.calls.length).toBe(done);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waits no longer than 10 seconds between retries", async () => {
+      vi.useFakeTimers();
+      try {
+        await dropAndFailOnce();
+        for (const delay of [1000, 2000, 4000, 8000, 10000, 10000]) {
+          const before = single.mock.calls.length;
+          await wait(delay - 1);
+          expect(single.mock.calls.length).toBe(before);
+          await wait(1);
+          expect(single.mock.calls.length).toBe(before + 1);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("treats a read that throws like a failed read", async () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = await dropAndFailOnce();
+        single.mockRejectedValue(new TypeError("Failed to fetch"));
+        await wait(1000);
+        expect(result.current.state?.conn).toBe("reconnecting");
+        single.mockResolvedValue(row(5));
+        await wait(2000);
+        expect(result.current.state).toMatchObject({ conn: "live", viewing: 5 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stops retrying when it unmounts", async () => {
+      vi.useFakeTimers();
+      try {
+        const { unmount } = await dropAndFailOnce();
+        unmount();
+        const calls = single.mock.calls.length;
+        await wait(60000);
+        expect(single.mock.calls.length).toBe(calls);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shows nothing but keeps trying when the very first read fails", async () => {
+      vi.useFakeTimers();
+      try {
+        single.mockResolvedValue(failed);
+        const { result } = renderHook(() => useLiveLecture(LECTURE));
+        await act(async () => {});
+        expect(result.current.state).toBeNull();
+        single.mockResolvedValue(row(4));
+        await wait(1000);
+        expect(result.current.state).toMatchObject({ live: 4, viewing: 4, conn: "live" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

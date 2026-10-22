@@ -13,11 +13,13 @@ export async function PresentBody({ params }: { params: Promise<{ lectureId: str
   } = await supabase.auth.getUser();
   if (!user) redirect("/teach");
 
-  // Row level security only returns the lecture to the teacher who owns it.
+  // Students who joined a lecture can read it too, so ownership is asked for
+  // explicitly: only a lecture of one of this teacher's own courses comes back.
   const { data: lecture, error } = await supabase
     .from("lectures")
-    .select("id, course_id, code, status, current_slide, slide_count")
+    .select("id, course_id, code, status, current_slide, slide_count, courses!inner(teacher_id)")
     .eq("id", lectureId)
+    .eq("courses.teacher_id", user.id)
     .maybeSingle();
   // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing lecture.
   if (error && error.code !== "22P02") throw new Error(error.message);

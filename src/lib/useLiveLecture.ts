@@ -4,11 +4,16 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { followReducer, initialFollowState, type FollowState } from "@/lib/followState";
 
+const RETRY_FIRST_MS = 1000;
+const RETRY_MAX_MS = 10000;
+
 /**
  * Follows a lecture's live slide for a student. `state` is null until the
  * first read arrives, unless `initialLive` (the slide the server already read)
  * is given. Reads only current_slide and status, never the slide count.
- * A failed read throws on the next render.
+ * A failed read leaves the connection on "reconnecting" and is retried after
+ * 1, 2, 4 seconds and so on, up to 10, until it works; then the view jumps to
+ * the live slide.
  */
 export function useLiveLecture(
   lectureId: string,
@@ -21,7 +26,6 @@ export function useLiveLecture(
 } {
   const [state, dispatch] = useReducer(followReducer, initialFollowState(initialLive ?? 1));
   const [ready, setReady] = useState(initialLive !== undefined);
-  const [error, setError] = useState<Error | null>(null);
   const readyRef = useRef(initialLive !== undefined);
   const droppedRef = useRef(false);
 
@@ -29,14 +33,33 @@ export function useLiveLecture(
     const supabase = createBrowserSupabase();
     let cancelled = false;
 
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     const load = async () => {
-      const { data, error: readError } = await supabase
-        .from("lectures")
-        .select("current_slide, status")
-        .eq("id", lectureId)
-        .single();
+      clearTimeout(timer);
+      timer = undefined;
+      let data: { current_slide: number; status: string };
+      try {
+        const { data: row, error: readError } = await supabase
+          .from("lectures")
+          .select("current_slide, status")
+          .eq("id", lectureId)
+          .single();
+        if (readError || !row) throw new Error(readError?.message ?? "Lecture not found.");
+        data = row;
+      } catch {
+        if (cancelled) return;
+        // Not connected, as far as the student can tell: say so and try again.
+        droppedRef.current = true;
+        dispatch({ type: "disconnected" });
+        clearTimeout(timer);
+        timer = setTimeout(load, Math.min(RETRY_FIRST_MS * 2 ** failures, RETRY_MAX_MS));
+        failures++;
+        return;
+      }
       if (cancelled) return;
-      if (readError || !data) throw new Error(readError?.message ?? "Lecture not found.");
+      failures = 0;
       if (data.status === "ended") {
         dispatch({ type: "ended" });
       } else if (!readyRef.current || droppedRef.current) {
@@ -48,9 +71,6 @@ export function useLiveLecture(
         dispatch({ type: "liveChanged", n: data.current_slide });
       }
       setReady(true);
-    };
-    const fail = (e: unknown) => {
-      if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
     };
 
     const channel = supabase
@@ -67,16 +87,17 @@ export function useLiveLecture(
       .subscribe((status) => {
         if (cancelled) return;
         if (status === "SUBSCRIBED") {
-          load().catch(fail);
+          void load();
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           droppedRef.current = true;
           dispatch({ type: "disconnected" });
         }
       });
-    load().catch(fail);
+    void load();
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       void supabase.removeChannel(channel);
     };
   }, [lectureId]);
@@ -85,6 +106,5 @@ export function useLiveLecture(
   const forward = useCallback(() => dispatch({ type: "forward" }), []);
   const jumpToLive = useCallback(() => dispatch({ type: "jumpToLive" }), []);
 
-  if (error) throw error;
   return { state: ready ? state : null, back, forward, jumpToLive };
 }
