@@ -11,6 +11,8 @@ import { markRejected } from "@/lib/tapSync";
 export const UNDO_WINDOW_MS = 10000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
+/** A tap the server kept turning away (login gone, or too many requests), dropped after a few tries. */
+const TAP_FAILED = "This one didn't save. Try again.";
 const TOO_MANY = "Too many taps. Try again in a minute.";
 const TOO_MANY_LECTURE = "Too many taps in this lecture.";
 
@@ -122,6 +124,9 @@ export function LostButton({
   // The ops the database refused for the tap limit (send said "limited" or "capped"), and which
   // one. Shared by every caller of a flush run, as two flushes at once get the same run and refusals.
   const limitedOps = useRef(new WeakMap<QueueOp, "limited" | "capped">());
+  // The next try after a throttled send (the queue says how long to wait). One at a time.
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushRef = useRef<(ending?: boolean) => Promise<void>>(async () => {});
   useEffect(() => {
     sendRef.current = send;
     loadOwnRef.current = loadOwn;
@@ -153,13 +158,32 @@ export function LostButton({
     // 3 seconds, maybe before a slow leaving flush comes back.
     if (ending && refusedTap.current) markRejected(lectureId);
     try {
-      const { rejected: refused } = await queue().flush(async (op) => {
+      const {
+        rejected: refused,
+        gaveUp = [],
+        retryIn,
+      } = await queue().flush(async (op) => {
         const result = await sendRef.current(op);
         if (!isTapLimit(result)) return result;
         // Dropped like any refusal (never retried); remembered so the message can say why.
         limitedOps.current.set(op, result);
         return "rejected";
       });
+      // Throttled (401 or 429): try again after the wait, while the page is open.
+      if (retryIn !== undefined && mounted.current && !ending) {
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+        retryTimer.current = setTimeout(() => {
+          retryTimer.current = null;
+          void flushRef.current();
+        }, retryIn);
+      }
+      // Dropped after too many throttled tries: not because the lecture ended, so the page
+      // need not check and the spots page gets no note. The taps behind it go on.
+      if (gaveUp.length > 0 && mounted.current) {
+        const lost = dropTaps(gaveUp.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
+        setBar((b) => (b && lost.has(b.id) ? null : b));
+        if (refused.length === 0) setRejected(lost.size > 0 ? TAP_FAILED : CHANGE_FAILED);
+      }
       if (refused.length === 0) return;
       // Refused only for the tap limit: the lecture did not end, so the page need not check
       // and the spots page gets no "lecture had ended" note.
@@ -179,6 +203,7 @@ export function LostButton({
   }, [queue, lectureId, dropTaps, fail]);
 
   useEffect(() => {
+    flushRef.current = flush;
     onFlushReady?.(flush);
   }, [onFlushReady, flush]);
 
@@ -225,6 +250,8 @@ export function LostButton({
     return () => {
       mounted.current = false;
       window.removeEventListener("online", onOnline);
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      retryTimer.current = null;
     };
   }, [queue, flush, loadSaved]);
 

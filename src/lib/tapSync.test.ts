@@ -60,6 +60,14 @@ describe("flushLeftoverTaps", () => {
     expect(JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]")).toHaveLength(1);
   });
 
+  it("leaves the ops queued, with no note, when the server turns them away for now (401 or 429)", async () => {
+    leave({ op: "insert", tap: tap(3) });
+    const result = await flushLeftoverTaps(LECTURE, send("throttled"));
+    expect(result).toMatchObject({ sent: 0, rejected: [], retryIn: 2000 });
+    expect(JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "[]")).toHaveLength(1);
+    expect(sessionStorage.getItem(rejectedKey(LECTURE))).toBeNull();
+  });
+
   it("does nothing for a lecture with no leftovers", async () => {
     const s = send("ok");
     expect(await flushLeftoverTaps(LECTURE, s)).toEqual({ sent: 0, rejected: [] });

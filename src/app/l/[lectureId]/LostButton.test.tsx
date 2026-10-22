@@ -421,6 +421,60 @@ describe("LostButton", () => {
     });
   });
 
+  describe("a server that keeps turning a tap away (401 login gone, 429 too many requests)", () => {
+    const TAP_FAILED = "This one didn't save. Try again.";
+
+    it("tries again after 2, 4 and 8 seconds, then drops it with a notice, and later taps still save", async () => {
+      vi.useFakeTimers();
+      const onRejected = vi.fn();
+      let first: string | undefined;
+      const send = vi.fn<Send>(async (op) => {
+        if (op.op !== "insert") return "ok";
+        first ??= op.tap.id;
+        return op.tap.id === first ? "throttled" : "ok";
+      });
+      const { lastSpots } = setup({ send, onRejected });
+      await settle();
+      press();
+      await settle();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(lastSpots()).toEqual([7]);
+      // A second tap waits behind the first, and does not cut the wait short.
+      press();
+      await settle();
+      expect(send).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTime(2000));
+      expect(send).toHaveBeenCalledTimes(2);
+      await act(async () => vi.advanceTimersByTime(4000));
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(screen.queryByText(TAP_FAILED)).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(8000));
+      // The 4th try is the last: the first tap is dropped and the second one goes out.
+      const inserts = send.mock.calls.map((c) => c[0]).filter((o) => o.op === "insert");
+      expect(inserts).toHaveLength(5);
+      expect(new Set(inserts.map((o) => (o.op === "insert" ? o.tap.id : "")))).toHaveProperty("size", 2);
+      expect(screen.getByRole("alert")).toHaveTextContent(TAP_FAILED);
+      expect(lastSpots()).toEqual([7]); // the second tap's dot stays
+      expect(onRejected).not.toHaveBeenCalled();
+      expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
+      // Nothing is left to retry.
+      await act(async () => vi.advanceTimersByTime(60000));
+      expect(send.mock.calls.filter((c) => c[0].op === "insert")).toHaveLength(5);
+    });
+
+    it("stops trying when the page goes away", async () => {
+      vi.useFakeTimers();
+      const send = vi.fn<Send>(async () => "throttled");
+      const { unmount } = setup({ send });
+      await settle();
+      press();
+      await settle();
+      unmount();
+      await act(async () => vi.advanceTimersByTime(60000));
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("taps over the limit (too many from one student)", () => {
     const TOO_MANY = "Too many taps. Try again in a minute.";
 

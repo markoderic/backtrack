@@ -33,9 +33,10 @@ describe("classifySend", () => {
     expect(classifySend({ error: { code: "PGRST000", message: "no connection" }, status: 503 })).toBe("offline");
   });
 
-  it("keeps the tap for an expired login or a rate limit, which a retry can fix", () => {
-    expect(classifySend({ error: { code: "PGRST301", message: "JWT expired" }, status: 401 })).toBe("offline");
-    expect(classifySend({ error: { code: "", message: "slow down" }, status: 429 })).toBe("offline");
+  it("is throttled for an expired or gone login or a rate limit: retried a few times, then dropped", () => {
+    expect(classifySend({ error: { code: "PGRST301", message: "JWT expired" }, status: 401 })).toBe("throttled");
+    expect(classifySend({ error: { code: "", message: "slow down" }, status: 429 })).toBe("throttled");
+    expect(classifySend({ error: { message: "slow down", status: 429 } })).toBe("throttled");
   });
 
   it("is limited for the tap limit error, whatever the status, so it is dropped and never retried", () => {

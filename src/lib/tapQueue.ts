@@ -23,9 +23,25 @@ export type QueueOp =
  * ok: saved. offline: try again later. rejected: the database said no, retrying will not
  * help. limited: the database said no because this student made too many taps in a minute
  * (the 0012 limit); capped: the same for 300 taps in the lecture. The queue drops both like a
- * rejection, and the page says why.
+ * rejection, and the page says why. throttled: the server turned it away for now (401, the
+ * login is gone or expired, or 429, too many requests). A later try may work, so the queue
+ * tries it again after a wait, THROTTLED_TRIES times in all, then drops it (gaveUp) so it
+ * can't hold up the taps behind it forever.
  */
-export type SendResult = "ok" | "rejected" | "offline" | "limited" | "capped";
+export type SendResult = "ok" | "rejected" | "offline" | "limited" | "capped" | "throttled";
+
+/** How many throttled answers an op gets before the queue drops it. */
+export const THROTTLED_TRIES = 4;
+
+/** The wait before trying a throttled op again: 2, 4 then 8 seconds (at most 30). */
+export const throttledDelay = (tries: number) => Math.min(30_000, 2_000 * 2 ** (tries - 1));
+
+/**
+ * sent: how many went through. rejected: what the database refused (removed from the queue).
+ * gaveUp: what was throttled THROTTLED_TRIES times and dropped. retryIn: set when the run
+ * stopped at a throttled op; flush again after this many milliseconds.
+ */
+export type FlushResult = { sent: number; rejected: QueueOp[]; gaveUp?: QueueOp[]; retryIn?: number };
 
 /** A refusal for the 0012 tap limit, not because the lecture ended. */
 export const isTapLimit = (r: SendResult): r is "limited" | "capped" => r === "limited" || r === "capped";
@@ -64,7 +80,9 @@ export class TapQueue {
   private ops: QueueOp[];
   /** The insert being sent right now. It can no longer be cancelled. */
   private inFlight: QueueOp | null = null;
-  private running: Promise<{ sent: number; rejected: QueueOp[] }> | null = null;
+  private running: Promise<FlushResult> | null = null;
+  /** Throttled ops: how many times, and not to be sent again before this time (ms). In memory only. */
+  private throttled = new WeakMap<QueueOp, { tries: number; notBefore: number }>();
 
   constructor(lectureId: string) {
     this.key = `backtrack:queue:${lectureId}`;
@@ -102,35 +120,54 @@ export class TapQueue {
    * Sends the queued ops one at a time, in order. An op that sends ok is removed.
    * A rejected op is removed and returned (with its insert's queued updates
    * dropped, as they have nothing to change). The first offline stops the flush
-   * and leaves everything from that op on queued. Ops queued while it runs are
-   * sent in the same run. Two flushes at once share one run.
+   * and leaves everything from that op on queued. A throttled op also stops the flush,
+   * and is not sent again until its wait is over (retryIn says how long); after
+   * THROTTLED_TRIES it is dropped like a rejection and returned in gaveUp, and the flush
+   * goes on to the ops behind it. Ops queued while it runs are sent in the same run.
+   * Two flushes at once share one run.
    */
-  flush(send: (op: QueueOp) => Promise<SendResult>): Promise<{ sent: number; rejected: QueueOp[] }> {
+  flush(send: (op: QueueOp) => Promise<SendResult>): Promise<FlushResult> {
     if (this.running) return this.running;
     this.running = this.run(send);
     return this.running;
   }
 
-  private async run(send: (op: QueueOp) => Promise<SendResult>): Promise<{ sent: number; rejected: QueueOp[] }> {
+  private async run(send: (op: QueueOp) => Promise<SendResult>): Promise<FlushResult> {
     // Lets flush() record this run before the loop can finish. The loop's last look at
     // the queue and `running = null` below happen in the same tick, so an op queued
     // at any moment is either seen by the loop or starts a new run.
     await Promise.resolve();
     let sent = 0;
     const rejected: QueueOp[] = [];
+    const gaveUp: QueueOp[] = [];
+    let retryIn: number | undefined;
     try {
       for (;;) {
         const op = this.ops[0];
         if (!op) break;
+        const wait = this.throttled.get(op);
+        if (wait && wait.notBefore > Date.now()) {
+          retryIn = wait.notBefore - Date.now();
+          break;
+        }
         this.inFlight = op;
         const result = await send(op);
         this.inFlight = null;
         if (result === "offline") break;
+        if (result === "throttled") {
+          const tries = (wait?.tries ?? 0) + 1;
+          if (tries < THROTTLED_TRIES) {
+            retryIn = throttledDelay(tries);
+            this.throttled.set(op, { tries, notBefore: Date.now() + retryIn });
+            break;
+          }
+          this.throttled.delete(op);
+        }
         this.ops = this.ops.filter((o) => o !== op);
         if (result === "ok") {
           sent++;
         } else {
-          rejected.push(op);
+          (result === "throttled" ? gaveUp : rejected).push(op);
           if (op.op === "insert") {
             const id = op.tap.id;
             this.ops = this.ops.filter((o) => o.op === "insert" || o.id !== id);
@@ -142,7 +179,12 @@ export class TapQueue {
       this.inFlight = null;
       this.running = null;
     }
-    return { sent, rejected };
+    return {
+      sent,
+      rejected,
+      ...(gaveUp.length > 0 ? { gaveUp } : {}),
+      ...(retryIn !== undefined ? { retryIn } : {}),
+    };
   }
 
   private load(): QueueOp[] {

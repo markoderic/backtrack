@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { TapQueue, type PendingTap, type QueueOp, type SendResult } from "./tapQueue";
+import { TapQueue, THROTTLED_TRIES, throttledDelay, type PendingTap, type QueueOp, type SendResult } from "./tapQueue";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const KEY = `backtrack:queue:${LECTURE}`;
@@ -80,6 +80,64 @@ describe("TapQueue", () => {
     expect(result.sent).toBe(1);
     expect(send).toHaveBeenCalledTimes(2);
     expect(q.pending()).toEqual([{ op: "insert", tap: tap(4) }]);
+  });
+
+  describe("throttled sends (401 or 429)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("waits 2, 4 then 8 seconds between tries and sends nothing before the wait is over", async () => {
+      vi.useFakeTimers();
+      const q = new TapQueue(LECTURE);
+      q.enqueue(tap(3));
+      const send = sender("throttled", "throttled", "throttled");
+      expect(await q.flush(send)).toEqual({ sent: 0, rejected: [], retryIn: 2000 });
+      vi.advanceTimersByTime(1500);
+      expect(await q.flush(send)).toEqual({ sent: 0, rejected: [], retryIn: 500 });
+      expect(send).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(500);
+      expect((await q.flush(send)).retryIn).toBe(4000);
+      vi.advanceTimersByTime(4000);
+      expect((await q.flush(send)).retryIn).toBe(8000);
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(q.pending()).toEqual([{ op: "insert", tap: tap(3) }]);
+      expect(THROTTLED_TRIES).toBe(4);
+      expect(throttledDelay(10)).toBe(30000);
+    });
+
+    it("drops the op (and its queued updates) after the last try, and sends the taps behind it", async () => {
+      vi.useFakeTimers();
+      const q = new TapQueue(LECTURE);
+      q.enqueue(tap(3));
+      q.update(tap(3).id, { note: "hello" });
+      q.enqueue(tap(4));
+      const send = sender("throttled", "throttled", "throttled", "throttled", "ok");
+      for (const wait of [2000, 4000, 8000]) {
+        expect((await q.flush(send)).retryIn).toBe(wait);
+        vi.advanceTimersByTime(wait);
+      }
+      const result = await q.flush(send);
+      expect(result).toEqual({ sent: 1, rejected: [], gaveUp: [{ op: "insert", tap: tap(3) }] });
+      expect(send.mock.calls.map((c) => c[0])).toEqual([
+        ...Array(4).fill({ op: "insert", tap: tap(3) }),
+        { op: "insert", tap: tap(4) },
+      ]);
+      expect(q.pending()).toEqual([]);
+      expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
+    });
+
+    it("sends a throttled op normally once the server takes it, then the rest", async () => {
+      vi.useFakeTimers();
+      const q = new TapQueue(LECTURE);
+      q.enqueue(tap(3));
+      q.enqueue(tap(4));
+      const send = sender("throttled", "ok", "ok");
+      expect((await q.flush(send)).retryIn).toBe(2000);
+      vi.advanceTimersByTime(2000);
+      expect(await q.flush(send)).toEqual({ sent: 2, rejected: [] });
+      expect(q.pending()).toEqual([]);
+    });
   });
 
   it("sends an update queued behind an offline insert after it, never before", async () => {
