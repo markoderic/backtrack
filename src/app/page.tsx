@@ -23,7 +23,7 @@ export default function Home() {
         </nav>
       </div>
       {/* Quiet footer: out of the flow, so the logo and the two choices stay exactly centered. */}
-      <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-6">
+      <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-2">
         <PrivacyLink />
       </footer>
     </main>

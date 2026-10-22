@@ -248,7 +248,7 @@ export default function JoinPage() {
           {!error && <div aria-hidden className="h-5" />}
         </div>
       </form>
-      <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-4">
+      <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-1">
         <PrivacyLink />
       </footer>
     </main>

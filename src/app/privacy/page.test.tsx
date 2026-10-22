@@ -17,7 +17,7 @@ describe("Privacy page", () => {
 
   it("says students never sign in and that saved spots are private", () => {
     render(<PrivacyPage />);
-    expect(screen.getByText(/You never sign in\./)).toBeInTheDocument();
+    expect(screen.getByText(/You never sign in or sign up\./)).toBeInTheDocument();
     expect(screen.getByText(/Save this are private/)).toBeInTheDocument();
   });
 
@@ -43,5 +43,26 @@ describe("Privacy page", () => {
   it("links back to Home from the logo", () => {
     render(<PrivacyPage />);
     expect(screen.getByRole("link", { name: "backtrack" })).toHaveAttribute("href", "/");
+  });
+
+  it("tells students the professor reads notes, and that an undone tap keeps its note", () => {
+    render(<PrivacyPage />);
+    expect(screen.getByText(/the professor reads it/)).toBeInTheDocument();
+    expect(screen.getByText(/A professor can hide notes on their own screen/)).toBeInTheDocument();
+    expect(screen.getByText(/marked as undone, with its note and highlight/)).toBeInTheDocument();
+  });
+
+  it("is plain about the anonymous ID: it persists, the professor's browser gets it, a wrong code is not kept", () => {
+    render(<PrivacyPage />);
+    expect(screen.getByText(/same ID in every lecture you join on this browser/)).toBeInTheDocument();
+    expect(screen.getByText(/The code you typed is not kept/)).toBeInTheDocument();
+    expect(screen.getByText(/keeps no device details with it/)).toBeInTheDocument();
+  });
+
+  it("does not promise deletion, and says what the host logs can hold", () => {
+    const { container } = render(<PrivacyPage />);
+    expect(container.textContent).not.toMatch(/until that lecture is deleted/);
+    expect(screen.getByText(/Lectures, their slide images and the taps on them are kept/)).toBeInTheDocument();
+    expect(screen.getByText(/can include your IP address/)).toBeInTheDocument();
   });
 });
