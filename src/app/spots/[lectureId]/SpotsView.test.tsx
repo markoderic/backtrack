@@ -625,6 +625,14 @@ describe("SpotsView: after the course's time to see slides is over", () => {
     expect(items[0].querySelector("[data-slide-gone]")).not.toBeNull();
   });
 
+  it("draws no mark over a thumbnail that is no longer available", async () => {
+    tables.lost_taps = { data: [{ ...tap("a", 3, "2026-10-26T14:05:00Z"), hl_x: 0.1, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 }], error: null };
+    show({ endedAt: "2026-10-26T15:00:00Z" });
+    const [item] = await ready();
+    expect(item.querySelector("[data-slide-gone]")).not.toBeNull();
+    expect(item.querySelectorAll("[data-highlight-box]")).toHaveLength(0);
+  });
+
   it("a spot opens with the note and This slide is no longer available.", async () => {
     show({ endedAt: "2026-10-26T15:00:00Z" });
     await ready();

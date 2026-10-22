@@ -127,7 +127,7 @@ function Thumb({ url, spot, gone }: { url: string | undefined; spot: Spot; gone?
       ) : (
         <div className="aspect-video w-full" />
       )}
-      {url && spot.rect && <HighlightBoxes rects={[spot.rect]} boxClassName={highlightClass(spot.kind, true)} />}
+      {!gone && url && spot.rect && <HighlightBoxes rects={[spot.rect]} boxClassName={highlightClass(spot.kind, true)} />}
     </div>
   );
 }
