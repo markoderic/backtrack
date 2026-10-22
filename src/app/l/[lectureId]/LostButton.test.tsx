@@ -838,15 +838,41 @@ describe("LostButton", () => {
       expect(status.firstElementChild).not.toBe(first);
     });
 
-    it("says the note was saved, and says nothing once the line is gone", async () => {
+    it("says Note saved. as a line of its own, so the save is not read again", async () => {
       setup();
       await settle();
       press();
+      const status = screen.getByRole("status");
+      expect(status).toHaveAttribute("aria-atomic", "false");
+      const saved = status.firstElementChild;
       typeNote("too fast");
       sendNote();
-      expect(screen.getByRole("status")).toHaveTextContent("Saved slide 7. Note saved.");
+      expect(status.children).toHaveLength(2);
+      expect(status.firstElementChild).toBe(saved);
+      expect(saved).toHaveTextContent("Saved slide 7.");
+      expect(status.children[1]).toHaveTextContent("Note saved.");
+      expect(status).toHaveTextContent("Saved slide 7. Note saved.");
+    });
+
+    it("says Undone. after each Undo, and not again when a later saved line closes", async () => {
+      vi.useFakeTimers();
+      setup();
+      await settle();
+      press();
       undo();
-      expect(screen.getByRole("status")).toHaveTextContent(/^$/);
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent(/^Undone\.$/);
+      const first = status.firstElementChild;
+      press();
+      undo();
+      expect(status).toHaveTextContent(/^Undone\.$/);
+      expect(status.firstElementChild).not.toBe(first);
+      press();
+      expect(status).toHaveTextContent(/^Saved slide 7\.$/);
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      expect(status).toHaveTextContent(/^$/);
     });
 
     it("puts focus back on I'm lost after Undo, so it never falls to the page", async () => {
@@ -869,18 +895,57 @@ describe("LostButton", () => {
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "I'm lost" }));
     });
 
-    it("puts focus back on I'm lost when the saved line closes by itself while Undo has focus", async () => {
+    it("holds the saved line while Undo has keyboard focus, and closes it 10 s after focus leaves", async () => {
       vi.useFakeTimers();
       setup();
       await settle();
       press();
       act(() => screen.getByRole("button", { name: "Undo" }).focus());
       await act(async () => {
-        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+        vi.advanceTimersByTime(UNDO_WINDOW_MS * 3);
       });
+      expect(screen.getByRole("button", { name: "Undo" })).toBe(document.activeElement);
+      const lost = screen.getByRole("button", { name: "I'm lost" });
+      act(() => lost.focus());
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS - 1);
+      });
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    });
+
+    it("puts focus back on I'm lost when the next slide closes the line while Undo has focus", async () => {
+      const { rerender, send, loadOwn, onSpots } = setup();
+      await settle();
+      press();
+      act(() => screen.getByRole("button", { name: "Undo" }).focus());
+      rerender(<LostButton lectureId={LECTURE} viewing={8} send={send} loadOwn={loadOwn} onSpots={onSpots} />);
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "I'm lost" }));
     });
+
+    for (const result of ["rejected", "limited"] as const) {
+      it(`leaves I'm lost alone when a ${result} tap takes the line away while a note is typed`, async () => {
+        let answer: (r: SendResult) => void = () => {};
+        const send = vi.fn<Send>(() => new Promise<SendResult>((r) => (answer = r)));
+        setup({ send });
+        await settle();
+        press();
+        act(() => noteField().focus());
+        typeNote("hel");
+        await settle();
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).toBe(noteField());
+        await act(async () => answer(result));
+        await settle();
+        expect(screen.queryByRole("textbox", { name: "Add a note" })).not.toBeInTheDocument();
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+        expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "I'm lost" }));
+      });
+    }
 
     it("lets Tab move from the note field to Undo (focus is never pulled back while it moves)", async () => {
       setup();

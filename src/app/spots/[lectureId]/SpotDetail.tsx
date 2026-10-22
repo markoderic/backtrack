@@ -581,7 +581,7 @@ export function SpotDetail({
                   type="button"
                   aria-label="Edit note"
                   onClick={() => setEditingNote(true)}
-                  className="press -m-2.5 flex size-9 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring"
+                  className="press touch-target relative -m-2.5 flex size-9 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring"
                 >
                   <Icon name="edit" size={16} />
                 </button>

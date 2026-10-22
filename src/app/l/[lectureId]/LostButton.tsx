@@ -105,12 +105,27 @@ export function LostButton({
   const [lastViewing, setLastViewing] = useState(viewing);
   // The saved line whose note field has focus, if any.
   const [focusedBar, setFocusedBar] = useState<string | null>(null);
+  // The saved line whose Undo has keyboard focus, if any: it holds the 10 second close, so there is time to press it.
+  const [undoFocusedBar, setUndoFocusedBar] = useState<string | null>(null);
+  // Each Undo gets a new id, so the status line says "Undone." every time; 0 is nothing to say.
+  const [undoneId, setUndoneId] = useState(0);
   const [rejected, setRejected] = useState<string | null>(null);
   const [fatal, setFatal] = useState<Error | null>(null);
   // The control in the saved line that has focus (the note field or Undo). When that control goes
   // (Undo, the note sent, the line closing) focus would fall to the page, so it comes back to I'm lost.
   const lostRef = useRef<HTMLButtonElement>(null);
   const barFocus = useRef<HTMLElement | null>(null);
+  // The saved line on screen, for the refusal paths (flush has no fresh `bar`).
+  const barIdRef = useRef<string | null>(null);
+  /**
+   * A refusal (or a tap given up on) is about to take the saved line away. If the student is typing
+   * in its note field, focus must not jump to I'm lost (a Space there would be a new tap): forget the field.
+   */
+  const forgetFieldIfGoing = useCallback((ids: ReadonlySet<string>) => {
+    if (barIdRef.current && ids.has(barIdRef.current) && barFocus.current instanceof HTMLInputElement) {
+      barFocus.current = null;
+    }
+  }, []);
 
   const queueRef = useRef<TapQueue | null>(null);
   const sendRef = useRef(send);
@@ -185,6 +200,7 @@ export function LostButton({
       // need not check and the spots page gets no note. The taps behind it go on.
       if (gaveUp.length > 0 && mounted.current) {
         const lost = dropTaps(gaveUp.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
+        forgetFieldIfGoing(lost);
         setBar((b) => (b && lost.has(b.id) ? null : b));
         if (refused.length === 0) setRejected(lost.size > 0 ? TAP_FAILED : CHANGE_FAILED);
       }
@@ -197,6 +213,7 @@ export function LostButton({
       if (!mounted.current) return;
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
       if (gone.size > 0 && !tooMany) refusedTap.current = true;
+      forgetFieldIfGoing(gone);
       setBar((b) => (b && gone.has(b.id) ? null : b));
       const capped = refused.some((op) => limitedOps.current.get(op) === "capped");
       setRejected(tooMany ? (capped ? TOO_MANY_LECTURE : TOO_MANY) : gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
@@ -204,7 +221,7 @@ export function LostButton({
     } catch (e) {
       fail(e);
     }
-  }, [queue, lectureId, dropTaps, fail]);
+  }, [queue, lectureId, dropTaps, fail, forgetFieldIfGoing]);
 
   useEffect(() => {
     flushRef.current = flush;
@@ -272,6 +289,11 @@ export function LostButton({
   // A note being typed (not sent yet) holds the saved line open: the field has focus, or holds real text.
   const typing = !!bar && !bar.saved && (bar.note.trim() !== "" || focusedBar === bar.id);
   const barId = bar?.id;
+  // Keyboard focus on Undo also holds the 10 seconds (not the next slide).
+  const held = typing || (!!bar && undoFocusedBar === bar.id);
+  useEffect(() => {
+    barIdRef.current = barId ?? null;
+  }, [barId]);
 
   // The next slide closes the saved line, unless a note is being typed.
   if (viewing !== lastViewing) {
@@ -280,12 +302,12 @@ export function LostButton({
   }
 
   // The saved line closes itself after 10 seconds, which ends the Undo window.
-  // Typing holds it; sending or dropping the note starts the 10 seconds over.
+  // Typing (or focus on Undo) holds it; sending or dropping the note, or leaving Undo, starts the 10 seconds over.
   useEffect(() => {
-    if (!barId || typing) return;
+    if (!barId || held) return;
     const timer = setTimeout(() => setBar(null), UNDO_WINDOW_MS);
     return () => clearTimeout(timer);
-  }, [barId, typing]);
+  }, [barId, held]);
 
   const barSlide = bar?.slide;
   const barKind = bar?.kind;
@@ -301,6 +323,8 @@ export function LostButton({
     queue().enqueue({ id, tappedOnSlide: viewing, tappedAt: new Date().toISOString(), ...extra });
     setTaps((prev) => new Map(prev).set(id, { slide: viewing, kind }));
     setRejected(null);
+    // A new save replaces any "Undone." (it is not said again when this line closes).
+    setUndoneId(0);
     // A note that came with the tap is already on it.
     setBar({ id, slide: viewing, note: extra.note ?? "", saved: !!extra.note, kind, rect: extra.rect });
     void flush();
@@ -337,6 +361,7 @@ export function LostButton({
     if (!queue().cancel(bar.id)) queue().update(bar.id, { undone: true });
     dropTaps([bar.id]);
     setBar(null);
+    setUndoneId((n) => n + 1);
     void flush();
   }
 
@@ -375,9 +400,19 @@ export function LostButton({
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) barFocus.current = null;
         }}
       >
-        {/* Always there, so a screen reader says each save (a new line per tap, even on the same slide). */}
-        <p role="status" className="sr-only">
-          {bar && <span key={bar.id}>{`${message}.${bar.saved && bar.note ? " Note saved." : ""}`}</span>}
+        {/*
+          Always there, so a screen reader says each save (a new line per tap, even on the same slide).
+          Not atomic: only the line just added is read, so "Note saved." does not repeat the save.
+        */}
+        <p role="status" aria-atomic="false" className="sr-only">
+          {bar ? (
+            <>
+              <span key={bar.id}>{`${message}.`}</span>
+              {bar.saved && bar.note && <span key={`${bar.id}-note`}> Note saved.</span>}
+            </>
+          ) : (
+            undoneId > 0 && <span key={`undone-${undoneId}`}>Undone.</span>
+          )}
         </p>
         {bar ? (
           <div
@@ -414,6 +449,8 @@ export function LostButton({
             <button
               type="button"
               onClick={undo}
+              onFocus={() => setUndoFocusedBar(bar.id)}
+              onBlur={() => setUndoFocusedBar(null)}
               className="press touch-target relative order-2 rounded-xs type-small-strong text-ink underline hover:text-secondary focus-ring sm:order-3"
             >
               Undo
