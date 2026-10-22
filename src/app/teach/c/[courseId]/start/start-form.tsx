@@ -95,6 +95,8 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   // The PDFs being prepared right now. A removed or replaced PDF's render (or every render, when
   // the page is hidden or goes away) is ignored and stopped at its next page.
   const alive = useRef(new Set<number>());
+  // A PDF being prepared as a Replace, by its key: the part it replaces, put back if it fails.
+  const replaced = useRef(new Map<number, Part>());
   const partsNow = useRef<Part[]>([]);
   useEffect(() => {
     partsNow.current = parts;
@@ -121,6 +123,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     if (!started.current) return;
     started.current = false;
     alive.current.clear();
+    replaced.current.clear();
     touchedName.current = false;
     setParts([]);
     setStarting(false);
@@ -160,10 +163,23 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       if (!alive.current.has(key)) return;
       alive.current.delete(key);
       update(key, { status: "ready", blobs: result.blobs, firstLines: result.firstLines });
+      replaced.current.delete(key);
     } catch (e) {
       if (!alive.current.has(key)) return;
       alive.current.delete(key);
-      setParts((list) => list.filter((p) => p.key !== key));
+      // A Replace that could not be read puts the PDF it was replacing back in its place
+      // (batch A review M3), instead of leaving the teacher with neither.
+      const old = replaced.current.get(key);
+      replaced.current.delete(key);
+      if (old) {
+        setParts((list) => list.map((p) => (p.key === key ? old : p)));
+        if (old.prep.status !== "ready") {
+          alive.current.add(old.key);
+          void prepare(old.key, old.file);
+        }
+      } else {
+        setParts((list) => list.filter((p) => p.key !== key));
+      }
       if (e instanceof NotPdfError || e instanceof PasswordPdfError) setError(e.message);
       else setError("Could not read that PDF. Try again.");
     }
@@ -180,6 +196,8 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       return { key, file, prep: { status: "preparing", done: 0, total: 0 } } as Part;
     });
     if (target.mode === "replace") {
+      const old = partsNow.current.find((p) => p.key === target.key);
+      if (old) replaced.current.set(fresh[0].key, old);
       alive.current.delete(target.key);
       setParts((list) => (list.some((p) => p.key === target.key) ? list.map((p) => (p.key === target.key ? fresh[0] : p)) : [...list, ...fresh]));
     } else {
@@ -196,6 +214,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
 
   function removePart(key: number) {
     alive.current.delete(key);
+    replaced.current.delete(key);
     setParts((list) => list.filter((p) => p.key !== key));
     setError(null);
   }

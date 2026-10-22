@@ -197,6 +197,38 @@ describe("StartForm", () => {
     expect(renderPdf).toHaveBeenCalledTimes(2);
   });
 
+  it("Replace with a file that is not a PDF keeps the original (batch A review M3)", async () => {
+    renderPdf
+      .mockResolvedValueOnce({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] })
+      .mockRejectedValueOnce(new NotPdfError());
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("draft.pdf");
+    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    vi.spyOn(input, "click").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
+    choose("photo.png");
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("draft.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("photo.png")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 slides ready"));
+    expect(screen.getByRole("button", { name: "Start lecture" })).toBeEnabled();
+  });
+
+  it("Replace with a password PDF keeps the original too", async () => {
+    renderPdf
+      .mockResolvedValueOnce({ blobs: [blob("image/webp")], firstLines: ["a"] })
+      .mockRejectedValueOnce(new PasswordPdfError());
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("draft.pdf");
+    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    vi.spyOn(input, "click").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
+    choose("locked.pdf");
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("draft.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("locked.pdf")).toBeNull();
+  });
+
   it("Add another PDF puts its pages after the first one's: names in order, the combined count, one lecture", async () => {
     renderPdf
       .mockResolvedValueOnce({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["Intro", "Goals"] })
