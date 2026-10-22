@@ -186,7 +186,7 @@ describe("everything else is refused", () => {
     expect(await one("select email from public.teachers where id = $1", [MARKO])).toEqual({ email: "dericm@miamioh.edu" });
   });
 
-  it("courses: only name and archived", async () => {
+  it("courses: only name, archived and the slide access setting", async () => {
     for (const set of [`teacher_id = '${OTHER}'`, "created_at = now()", `id = '${NEWBIE}'`]) {
       await expect(q(marko, `update public.courses set ${set} where id = $1`, [MARKO_COURSE]), set).rejects.toThrow(denied);
     }
