@@ -113,3 +113,36 @@ describe("deleteLecture", () => {
     expect(h.rpc).not.toHaveBeenCalled();
   });
 });
+
+import { cleanupOrphanUploads } from "./lecture-actions";
+
+describe("cleanupOrphanUploads", () => {
+  it("removes the teacher's own leftovers that my_orphan_slide_images lists", async () => {
+    h.rpc.mockResolvedValue({ data: ["d1/1.webp", "d1/2.webp"], error: null });
+    expect(await cleanupOrphanUploads()).toBe(2);
+    expect(h.rpc).toHaveBeenCalledWith("my_orphan_slide_images");
+    expect(h.from).toHaveBeenCalledWith("slides");
+    expect(h.remove).toHaveBeenCalledWith(["d1/1.webp", "d1/2.webp"]);
+  });
+
+  it("does nothing with no leftovers, signed out, or when the list fails", async () => {
+    h.rpc.mockResolvedValue({ data: [], error: null });
+    expect(await cleanupOrphanUploads()).toBe(0);
+    h.rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    expect(await cleanupOrphanUploads()).toBe(0);
+    h.user = null;
+    expect(await cleanupOrphanUploads()).toBe(0);
+    expect(h.remove).not.toHaveBeenCalled();
+  });
+
+  it("never throws: a failed remove is logged", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    h.rpc.mockResolvedValue({ data: ["d1/1.webp"], error: null });
+    h.remove.mockResolvedValue({ data: null, error: { message: "denied" } });
+    expect(await cleanupOrphanUploads()).toBe(0);
+    h.remove.mockRejectedValue(new TypeError("fetch failed"));
+    expect(await cleanupOrphanUploads()).toBe(0);
+    expect(log).toHaveBeenCalledTimes(2);
+    log.mockRestore();
+  });
+});

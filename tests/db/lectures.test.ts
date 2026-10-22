@@ -47,7 +47,7 @@ const slidesFor = (lectureId: string, count: number) =>
   }));
 
 type Started = { lecture_id: string; code: string };
-type StartOpts = { id?: string; course?: string; name?: string; slides?: unknown; count?: number };
+type StartOpts = { id?: string; course?: string; name?: string; slides?: unknown; count?: number; uploaded?: boolean };
 
 const callStart = async (id: string, opts: StartOpts) =>
   (
@@ -59,9 +59,23 @@ const callStart = async (id: string, opts: StartOpts) =>
     ])
   ).rows[0];
 
+/** Puts the images of these slides in the slides bucket, as the app uploads them before it starts. */
+async function upload(slides: unknown) {
+  if (!Array.isArray(slides)) return;
+  for (const s of slides) {
+    const path = (s as { image_path?: unknown } | null)?.image_path;
+    if (typeof path === "string") {
+      await db.query("insert into storage.objects (bucket_id, name, owner) values ('slides', $1, $2)", [path, MARKO]);
+    }
+  }
+}
+
 function start(claims: Claims | null, opts: StartOpts = {}) {
   const id = opts.id ?? newId();
-  return as(db, claims, () => callStart(id, opts));
+  return (async () => {
+    if (opts.uploaded !== false) await upload(opts.slides === undefined ? slidesFor(id, opts.count ?? 3) : opts.slides);
+    return as(db, claims, () => callStart(id, opts));
+  })();
 }
 
 // Mirrors the random expression inside start_lecture so a test can predict
@@ -341,8 +355,8 @@ describe("slides storage policies", () => {
 
   it("lets the lecture owner read the lecture's objects, and not another teacher", async () => {
     const { lecture_id } = await start(marko, { count: 1 });
-    // Written by the service, so no owner on the row.
-    await db.query("insert into storage.objects (bucket_id, name) values ('slides', $1)", [`${lecture_id}/1.webp`]);
+    // As if written by the service, so no owner on the row.
+    await db.query("update storage.objects set owner = null where name = $1", [`${lecture_id}/1.webp`]);
     const mine = await as(db, marko, async () => (await db.query("select name from storage.objects")).rows);
     expect(mine).toHaveLength(1);
     const theirs = await as(db, other, async () => (await db.query("select name from storage.objects")).rows);

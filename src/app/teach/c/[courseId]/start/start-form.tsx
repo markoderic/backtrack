@@ -8,6 +8,7 @@ import { renderPdf, NotPdfError, PasswordPdfError } from "@/lib/pdf/renderPdf";
 import { ButtonPrimary } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { fieldClass, labelClass, textLinkClass } from "../../../ui";
+import { cleanupOrphanUploads } from "../../../lecture-actions";
 
 const NAME_MAX = 120;
 const UPLOAD_PARALLEL = 4;
@@ -80,6 +81,12 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     return () => thumbs.forEach((u) => URL.revokeObjectURL(u));
   }, [thumbs]);
 
+  // Clears this teacher's slide images left over from a start that failed or was left halfway
+  // more than a day ago (best effort, in the background; nothing waits on it).
+  useEffect(() => {
+    void cleanupOrphanUploads().catch(() => {});
+  }, []);
+
   // Stop a run that is still going when the page goes away.
   useEffect(
     () => () => {
@@ -133,9 +140,11 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
 
     setStarting(true);
     setError(null);
+    const supabase = createBrowserSupabase();
+    // The images that reached storage, so a start that fails can take them back out.
+    const uploadedPaths: string[] = [];
     try {
       const lectureId = crypto.randomUUID();
-      const supabase = createBrowserSupabase();
       const slides = blobs.map((blob, i) => ({
         number: i + 1,
         image_path: `${lectureId}/${i + 1}.${blob.type === "image/webp" ? "webp" : "jpg"}`,
@@ -152,6 +161,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
             .from("slides")
             .upload(slides[i].image_path, blobs[i], { contentType: blobs[i].type, upsert: false });
           if (uploadError) throw new UploadError(uploadError.message);
+          uploadedPaths.push(slides[i].image_path);
           setUpload({ done: ++uploaded, total: blobs.length });
         }
       };
@@ -173,6 +183,15 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
 
       router.push(`/teach/l/${lectureId}/present`);
     } catch (e) {
+      // No lecture uses these images (start_lecture never made one), so they go back out. Best
+      // effort: anything left is removed by the cleanup a day later. Workers still uploading stop
+      // at their next image; one that lands after this is left for that cleanup too.
+      if (uploadedPaths.length > 0) {
+        void supabase.storage
+          .from("slides")
+          .remove([...uploadedPaths])
+          .catch(() => {});
+      }
       if (e instanceof UploadError) setError("Could not upload your slides. Try again.");
       else if (e instanceof StartError) setError("Could not start the lecture. Try again.");
       else setError("Could not start the lecture. Try again.");

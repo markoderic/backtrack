@@ -8,14 +8,18 @@ vi.mock("@/lib/pdf/renderPdf", async (importOriginal) => ({
 }));
 
 const upload = vi.fn();
+const remove = vi.fn();
 const rpc = vi.fn();
-const from = vi.fn(() => ({ upload }));
+const from = vi.fn(() => ({ upload, remove }));
 vi.mock("@/lib/supabase/browser", () => ({
   createBrowserSupabase: () => ({ storage: { from }, rpc }),
 }));
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+const cleanupOrphanUploads = vi.fn();
+vi.mock("../../../lecture-actions", () => ({ cleanupOrphanUploads: () => cleanupOrphanUploads() }));
 
 import { NotPdfError, PasswordPdfError } from "@/lib/pdf/renderPdf";
 import { StartForm } from "./start-form";
@@ -39,6 +43,8 @@ async function chooseReady(name = "slides.pdf") {
 beforeEach(() => {
   renderPdf.mockReset();
   upload.mockReset();
+  remove.mockReset().mockResolvedValue({ data: [], error: null });
+  cleanupOrphanUploads.mockReset().mockResolvedValue(0);
   rpc.mockReset();
   from.mockClear();
   push.mockReset();
@@ -235,5 +241,59 @@ describe("StartForm", () => {
     fireEvent.click(startButton());
     expect(await screen.findByText("Could not start the lecture. Try again.")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("clears the teacher's old leftover uploads in the background when the page opens", async () => {
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await waitFor(() => expect(cleanupOrphanUploads).toHaveBeenCalledTimes(1));
+  });
+
+  it("a failed cleanup changes nothing on the page", async () => {
+    cleanupOrphanUploads.mockRejectedValue(new Error("offline"));
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("takes the uploaded images back out when the database refuses the lecture", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/jpeg")], firstLines: ["", ""] });
+    rpc.mockResolvedValue({ data: null, error: { code: "22023", message: "missing_images" } });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    fireEvent.click(startButton());
+    expect(await screen.findByText("Could not start the lecture. Try again.")).toBeInTheDocument();
+    const id = rpc.mock.calls[0][1].p_lecture_id as string;
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect([...remove.mock.calls[0][0]].sort()).toEqual([`${id}/1.webp`, `${id}/2.jpg`]);
+  });
+
+  it("takes back only what reached storage when an upload fails", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["", ""] });
+    upload.mockImplementation(async (path: string) =>
+      path.endsWith("/1.webp") ? { data: {}, error: null } : { data: null, error: { message: "nope" } },
+    );
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    fireEvent.click(startButton());
+    expect(await screen.findByText("Could not upload your slides. Try again.")).toBeInTheDocument();
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+    expect(remove.mock.calls[0][0]).toHaveLength(1);
+    expect(remove.mock.calls[0][0][0]).toMatch(/\/1\.webp$/);
+  });
+
+  it("removes nothing when nothing was uploaded, and nothing after a start that worked", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    upload.mockResolvedValue({ data: null, error: { message: "nope" } });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    fireEvent.click(startButton());
+    expect(await screen.findByText("Could not upload your slides. Try again.")).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
+
+    upload.mockResolvedValue({ data: {}, error: null });
+    fireEvent.click(startButton());
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(remove).not.toHaveBeenCalled();
   });
 });

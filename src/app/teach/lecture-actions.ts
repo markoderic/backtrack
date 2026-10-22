@@ -52,3 +52,36 @@ export async function deleteLecture(lectureId: string): Promise<DeleteLectureRes
   revalidatePath("/teach");
   redirect(`/teach/c/${row.course_id}?deleted=1`);
 }
+
+/**
+ * Removes the signed in teacher's own slide uploads that no lecture uses and that are over a day
+ * old (a start that failed or was left halfway). The list comes from my_orphan_slide_images; the
+ * Storage API removes them as the teacher (slides_delete_unused). Best effort: returns how many
+ * went, and never throws. Called when the Start lecture page opens; there is no scheduled job.
+ */
+export async function cleanupOrphanUploads(): Promise<number> {
+  try {
+    const supabase = await createServerSupabase();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return 0;
+    const { data, error } = await supabase.rpc("my_orphan_slide_images");
+    if (error || !Array.isArray(data)) return 0;
+    const names = (data as unknown[]).filter((n): n is string => typeof n === "string");
+    let removed = 0;
+    for (let i = 0; i < names.length; i += REMOVE_BATCH) {
+      const batch = names.slice(i, i + REMOVE_BATCH);
+      const { error: removeError } = await supabase.storage.from("slides").remove(batch);
+      if (removeError) {
+        console.error("cleanupOrphanUploads: could not remove leftovers:", removeError.message);
+        break;
+      }
+      removed += batch.length;
+    }
+    return removed;
+  } catch (e) {
+    console.error("cleanupOrphanUploads:", e);
+    return 0;
+  }
+}
