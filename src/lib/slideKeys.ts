@@ -1,7 +1,11 @@
-export type SlideKeyAction = "next" | "prev" | "data" | "close";
+/**
+ * The projector's only keys: the ones a clicker sends to move the slide. No other key does
+ * anything there (Marko, Oct 22: no key binds); Data, End class and Fullscreen are buttons.
+ */
+export type SlideKeyAction = "next" | "prev";
 
-const NEXT = new Set(["ArrowRight", "PageDown", " ", ".", "n"]);
-const PREV = new Set(["ArrowLeft", "PageUp", "b", "p"]);
+const NEXT = new Set(["ArrowRight", "PageDown", " "]);
+const PREV = new Set(["ArrowLeft", "PageUp"]);
 
 function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -21,12 +25,10 @@ export function slideKeyAction(e: {
   altKey?: boolean;
 }): SlideKeyAction | null {
   if (e.repeat || isTyping(e.target)) return null;
-  // Cmd+D, Cmd+P, Ctrl+N and friends belong to the browser. Shift alone is fine.
+  // Cmd+Arrow, Ctrl+Space and friends belong to the browser. Shift alone is fine.
   if (e.metaKey || e.ctrlKey || e.altKey) return null;
   if (NEXT.has(e.key)) return "next";
   if (PREV.has(e.key)) return "prev";
-  if (e.key === "d" || e.key === "D") return "data";
-  if (e.key === "Escape") return "close";
   return null;
 }
 

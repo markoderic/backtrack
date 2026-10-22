@@ -826,7 +826,7 @@ describe("End lecture from ?end=1", () => {
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
   });
 
-  it("Escape closes it the same way instead of leaving for the projector", async () => {
+  it("Escape closes it the same way", async () => {
     renderLive({ confirmEndOnLoad: true });
     key("Escape");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -851,25 +851,16 @@ describe("End lecture from ?end=1", () => {
   });
 });
 
-describe("Escape", () => {
-  it("goes back to the projector", async () => {
+describe("No key binds", () => {
+  it("Escape no longer leaves for the projector; Back to slides is a link instead", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     key("Escape");
-    expect(h.push).toHaveBeenCalledWith(`/teach/l/${LECTURE}/present`);
-  });
-
-  it("is ignored while typing in an input", async () => {
-    renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    const input = document.createElement("input");
-    document.body.appendChild(input);
-    key("Escape", input);
-    input.remove();
     expect(h.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Back to slides" })).toHaveAttribute("href", `/teach/l/${LECTURE}/present`);
   });
 
-  it("closes the confirm instead of leaving when it is open", async () => {
+  it("closes the confirm when it is open (closing a dialog), and leaves nothing", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     fireEvent.click(endButton());
@@ -878,27 +869,29 @@ describe("Escape", () => {
     expect(h.push).not.toHaveBeenCalled();
   });
 
-  it("has no other shortcuts", async () => {
+  it("an Escape typed in an input leaves the confirm open", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    for (const k of ["d", "D", "n", " ", "ArrowRight", "e", "Enter"]) key(k);
+    fireEvent.click(endButton());
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    key("Escape", input);
+    input.remove();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("has no shortcuts at all", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    for (const k of ["d", "D", "n", " ", "ArrowRight", "e", "Enter", "Escape"]) key(k);
     expect(h.push).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("does nothing in past mode", async () => {
+  it("has no Back to slides in past mode", async () => {
     renderLive({ mode: "past" });
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    key("Escape");
-    expect(h.push).not.toHaveBeenCalled();
-  });
-
-  it("stops listening when it unmounts", async () => {
-    const { unmount } = renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    unmount();
-    key("Escape");
-    expect(h.push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: "Back to slides" })).not.toBeInTheDocument();
   });
 });
 

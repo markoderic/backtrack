@@ -315,20 +315,17 @@ export function LectureData({
     [confirmEndOnLoad, lectureId, router],
   );
 
-  // Escape goes back to the projector (D6). Nothing else is a shortcut.
+  // Esc closes the End lecture confirm (closing a dialog). No other key does anything here:
+  // no key binds (Marko, Oct 22), the way back to the projector is a link.
   useEffect(() => {
-    if (!live) return;
+    if (!live || !confirming) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape" || e.repeat || isTyping(e.target)) return;
-      if (confirming) {
-        closeConfirm(true);
-        return;
-      }
-      router.push(`/teach/l/${lectureId}/present`);
+      closeConfirm(true);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [live, confirming, closeConfirm, lectureId, router]);
+  }, [live, confirming, closeConfirm]);
 
   // The confirm is a popover: a press anywhere outside it closes it (not while it is ending).
   useEffect(() => {
@@ -437,6 +434,12 @@ export function LectureData({
             )}
           </div>
           <div className="min-w-0 flex-1" />
+          {/* The way back to the projector (no Esc shortcut): a plain link, so fullscreen stays. */}
+          {live && (
+            <Link href={`/teach/l/${lectureId}/present`} className={`${textLinkClass} ml-auto`}>
+              Back to slides
+            </Link>
+          )}
           {live ? (
             <div
               ref={endArea}
