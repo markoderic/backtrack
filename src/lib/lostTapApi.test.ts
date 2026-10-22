@@ -132,6 +132,12 @@ describe("makeSend", () => {
     expect(f.eqUpdate).toHaveBeenCalledWith("id", TAP.id);
   });
 
+  it("clears the four hl_ values for a null rect (Clear mark)", async () => {
+    const f = fakeSupabase();
+    await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { rect: null } });
+    expect(f.update).toHaveBeenCalledWith({ hl_x: null, hl_y: null, hl_w: null, hl_h: null });
+  });
+
   it("keeps the other patch fields next to the hl_ values", async () => {
     const f = fakeSupabase();
     await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { note: "x", rect: { x: 0, y: 0, w: 1, h: 1 } } });
@@ -201,10 +207,27 @@ describe("loadOwnTaps", () => {
       { id: "b", slide: 7, kind: "save" },
     ]);
     expect(f.from).toHaveBeenCalledWith("lost_taps");
-    expect(f.select).toHaveBeenCalledWith("id, slide_number, kind");
+    expect(f.select).toHaveBeenCalledWith("id, slide_number, kind, note, hl_x, hl_y, hl_w, hl_h");
     expect(f.eqLecture).toHaveBeenCalledWith("lecture_id", LECTURE);
     expect(f.eqAnon).toHaveBeenCalledWith("anon_id", USER);
     expect(f.eqUndone).toHaveBeenCalledWith("undone", false);
+  });
+
+  it("brings back a row's note and mark, so they can be edited or cleared after a reload", async () => {
+    const f = fakeSupabase({
+      select: async () => ({
+        data: [
+          { id: "a", slide_number: 3, kind: "lost", note: "what is a monad", hl_x: 0.1, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 },
+          { id: "b", slide_number: 4, kind: "lost", note: "  ", hl_x: null, hl_y: null, hl_w: null, hl_h: null },
+        ],
+        error: null,
+        status: 200,
+      }),
+    });
+    expect(await loadOwnTaps(f.supabase, LECTURE)).toEqual([
+      { id: "a", slide: 3, kind: "lost", note: "what is a monad", rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } },
+      { id: "b", slide: 4, kind: "lost" },
+    ]);
   });
 
   it("asks only for the signed in user's own rows (a teacher who joined their own lecture gets theirs only)", async () => {

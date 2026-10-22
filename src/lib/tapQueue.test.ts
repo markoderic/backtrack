@@ -353,6 +353,12 @@ describe("TapQueue highlights", () => {
     expect(new TapQueue(LECTURE).pending()).toEqual(want);
   });
 
+  it("keeps an update that clears the rect (rect null, Clear mark) after a reload", () => {
+    const q = new TapQueue(LECTURE);
+    q.update("abc", { rect: null });
+    expect(new TapQueue(LECTURE).pending()).toEqual([{ op: "update", id: "abc", patch: { rect: null } }]);
+  });
+
   it("still loads an op saved before kind and rect existed", () => {
     localStorage.setItem(KEY, JSON.stringify([{ op: "insert", tap: tap(3) }, { op: "update", id: "x", patch: { undone: true } }]));
     expect(new TapQueue(LECTURE).pending()).toEqual([
@@ -368,7 +374,6 @@ describe("TapQueue highlights", () => {
       { op: "insert", tap: { ...tap(5), rect: { x: 0.9, y: 0.2, w: 0.3, h: 0.1 } } },
       { op: "insert", tap: { ...tap(6), rect: "big" } },
       { op: "update", id: "x", patch: { rect: { x: -1, y: 0, w: 0.1, h: 0.1 } } },
-      { op: "update", id: "x", patch: { rect: null } },
     ];
     localStorage.setItem(KEY, JSON.stringify([...bad, { op: "insert", tap: tap(7, { kind: "lost", rect: RECT }) }]));
     expect(new TapQueue(LECTURE).pending()).toEqual([{ op: "insert", tap: tap(7, { kind: "lost", rect: RECT }) }]);

@@ -1,7 +1,10 @@
 import { isRect, type Rect } from "./rect";
 
-/** What the patch of a queued update can change. A rect is stored as the four hl_ columns. */
-export type TapPatch = { undone?: boolean; note?: string; rect?: Rect };
+/**
+ * What the patch of a queued update can change. A rect is stored as the four hl_ columns;
+ * rect null clears them (Clear mark). An empty note takes the note away.
+ */
+export type TapPatch = { undone?: boolean; note?: string; rect?: Rect | null };
 
 export type PendingTap = {
   /** A uuid made in the browser, so a resend can be ignored by the database. */
@@ -63,7 +66,11 @@ function isOp(v: unknown): v is QueueOp {
     );
   }
   if (v.op === "update") {
-    return typeof v.id === "string" && isRecord(v.patch) && (v.patch.rect === undefined || isRect(v.patch.rect));
+    return (
+      typeof v.id === "string" &&
+      isRecord(v.patch) &&
+      (v.patch.rect === undefined || v.patch.rect === null || isRect(v.patch.rect))
+    );
   }
   return false;
 }

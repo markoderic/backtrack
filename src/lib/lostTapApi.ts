@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isRect, type Rect } from "./rect";
 import type { QueueOp, SendResult } from "./tapQueue";
+
+/** One of the student's own rows, as the live screen needs it: which slide, what kind, its note and mark. */
+export type OwnTap = { id: string; slide: number; kind: "lost" | "save"; note?: string; rect?: Rect };
 
 type ErrorLike = { code?: string | null; message?: string; status?: number };
 
@@ -50,9 +54,14 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
   return async (op) => {
     try {
       if (op.op === "update") {
-        // The rect is four columns in the database; there is no rect column.
+        // The rect is four columns in the database; there is no rect column. A null rect clears all four.
         const { rect, ...rest } = op.patch;
-        const patch = rect ? { ...rest, hl_x: rect.x, hl_y: rect.y, hl_w: rect.w, hl_h: rect.h } : rest;
+        const patch =
+          rect === undefined
+            ? rest
+            : rect === null
+              ? { ...rest, hl_x: null, hl_y: null, hl_w: null, hl_h: null }
+              : { ...rest, hl_x: rect.x, hl_y: rect.y, hl_w: rect.w, hl_h: rect.h };
         return classifySend(await supabase.from("lost_taps").update(patch).eq("id", op.id));
       }
       // The session is read from the device, so a tap made offline still has its user.
@@ -89,11 +98,11 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
   };
 }
 
-/** The rows this student already has in a lecture that are not undone, or null when offline. */
-export async function loadOwnTaps(
-  supabase: SupabaseClient,
-  lectureId: string,
-): Promise<{ id: string; slide: number; kind: "lost" | "save" }[] | null> {
+/**
+ * The rows this student already has in a lecture that are not undone, with their note and
+ * mark (so Edit note and Clear mark work after a reload), or null when offline.
+ */
+export async function loadOwnTaps(supabase: SupabaseClient, lectureId: string): Promise<OwnTap[] | null> {
   try {
     // Only this user's own rows: a teacher who joins their own lecture in the same browser
     // could otherwise read every student's lost taps here (the teacher's select policy).
@@ -108,7 +117,7 @@ export async function loadOwnTaps(
     if (!session) return [];
     const { data, error, status } = await supabase
       .from("lost_taps")
-      .select("id, slide_number, kind")
+      .select("id, slide_number, kind, note, hl_x, hl_y, hl_w, hl_h")
       .eq("lecture_id", lectureId)
       .eq("anon_id", session.user.id)
       .eq("undone", false);
@@ -117,11 +126,17 @@ export async function loadOwnTaps(
       throw new Error(error.message);
     }
     // The kind picks the dot: red for I'm lost, open for a save.
-    return (data ?? []).map((r) => ({
-      id: r.id as string,
-      slide: r.slide_number as number,
-      kind: r.kind === "save" ? ("save" as const) : ("lost" as const),
-    }));
+    return (data ?? []).map((r) => {
+      const tap: OwnTap = {
+        id: r.id as string,
+        slide: r.slide_number as number,
+        kind: r.kind === "save" ? "save" : "lost",
+      };
+      if (typeof r.note === "string" && r.note.trim() !== "") tap.note = r.note;
+      const rect = { x: r.hl_x, y: r.hl_y, w: r.hl_w, h: r.hl_h };
+      if (isRect(rect)) tap.rect = rect;
+      return tap;
+    });
   } catch (e) {
     classifyThrown(e); // throws unless the network is down
     return null;
