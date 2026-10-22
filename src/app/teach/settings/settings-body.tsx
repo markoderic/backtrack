@@ -2,15 +2,16 @@ import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { isMiamiEmail } from "@/lib/email";
 import { AddCourseForm } from "../add-course-form";
-import { TeacherPage, labelClass, staggerClass, staggerStyle } from "../ui";
-import { CourseRow } from "./CourseRow";
+import { TeacherPage, labelClass } from "../ui";
+import { CourseList, type SettingsCourse } from "./CourseList";
 import { NameForm } from "./NameForm";
 import { SignOut } from "./SignOut";
 
 /**
- * Settings (Figma 34:1246): the teacher's name, their courses with Rename, Add a course, and
- * who is signed in with Sign out. Left out on purpose: the Theme choice (dark mode comes later),
- * Archive on each course (needs Marko), and recovery codes (the password fallback was never built).
+ * Settings (Figma 34:1246): the teacher's name, their courses with Rename and Archive, Add a
+ * course, the archived courses with Unarchive, and who is signed in with Sign out. Left out on
+ * purpose: the Theme choice (dark mode comes later) and recovery codes (the password fallback was
+ * never built).
  */
 export async function SettingsBody() {
   const supabase = await createServerSupabase();
@@ -29,12 +30,12 @@ export async function SettingsBody() {
 
   const { data: courses, error } = await supabase
     .from("courses")
-    .select("id, name")
+    .select("id, name, archived")
     .eq("teacher_id", user.id)
-    .eq("archived", false)
     .order("created_at");
   if (error) throw new Error(error.message);
-  const list = (courses ?? []) as { id: string; name: string }[];
+  const list = (courses ?? []) as SettingsCourse[];
+  const inUse = list.filter((c) => !c.archived).length;
 
   return (
     <TeacherPage
@@ -50,16 +51,9 @@ export async function SettingsBody() {
           <h2 id="settings-courses" className={labelClass}>
             Courses
           </h2>
-          {list.length > 0 && (
-            <ul className="flex flex-col">
-              {list.map((course, i) => (
-                <li key={course.id} className={`border-t border-hairline ${staggerClass}`} style={staggerStyle(i)}>
-                  <CourseRow courseId={course.id} initialName={course.name} />
-                </li>
-              ))}
-            </ul>
-          )}
-          <AddCourseForm startOpen={list.length === 0} />
+          <CourseList courses={list}>
+            <AddCourseForm startOpen={inUse === 0} />
+          </CourseList>
         </section>
         <SignOut email={user.email ?? null} />
       </main>

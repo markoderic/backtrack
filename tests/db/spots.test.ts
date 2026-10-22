@@ -146,6 +146,20 @@ describe("my spots: the data the page reads", () => {
     expect(joined).toEqual([{ name: "Lecture 1, Oct 26", status: "ended" }]);
     expect((await stats(s1)).length).toBe(10);
   });
+
+  it("archiving the course changes nothing a student reads on My spots", async () => {
+    await as(db, marko, () => db.query("select public.end_lecture($1)", [LECTURE_A]));
+    const read = async () => ({
+      lectures: await rows(s1, "select id, name, status from public.lectures"),
+      slides: await rows(s1, "select number, first_line from public.slides where lecture_id = $1 order by number", [LECTURE_A]),
+      taps: await rows(s1, "select id, kind, note, slide_number from public.lost_taps order by id"),
+      stats: await stats(s1),
+    });
+    const before = await read();
+    await as(db, marko, () => db.query("update public.courses set archived = true"));
+    expect(await read()).toEqual(before);
+    expect(before.lectures).toHaveLength(1);
+  });
 });
 
 describe("my spots: move the marker and edit the note", () => {

@@ -54,7 +54,25 @@ beforeEach(() => {
 });
 
 describe("CourseRow", () => {
-  it("shows the course name and a Rename text action with a 44 px hit area, and no Archive", () => {
+  it("shows Archive only when the list gives it, with a 44 px hit area, and shows the list's note", async () => {
+    const onArchive = vi.fn().mockResolvedValue(true);
+    render(<CourseRow courseId="c1" initialName={NAME} onArchive={onArchive} note="Unarchived." />);
+    const archive = screen.getByRole("button", { name: `Archive ${NAME}` });
+    expect(archive.className).toContain(hitAreaClass);
+    expect(screen.getByText("Unarchived.")).toHaveAttribute("aria-hidden");
+    fireEvent.click(archive);
+    await waitFor(() => expect(onArchive).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says so when Archive fails, and stays put", async () => {
+    render(<CourseRow courseId="c1" initialName={NAME} onArchive={vi.fn().mockResolvedValue(false)} />);
+    fireEvent.click(screen.getByRole("button", { name: `Archive ${NAME}` }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not archive the course.");
+    expect(screen.getByRole("button", { name: `Archive ${NAME}` })).not.toBeDisabled();
+  });
+
+  it("shows the course name and a Rename text action with a 44 px hit area, and no Archive without the list", () => {
     render(<CourseRow courseId="c1" initialName={NAME} />);
     expect(screen.getByText(NAME)).toBeInTheDocument();
     expect(renameLink().className).toContain(hitAreaClass);

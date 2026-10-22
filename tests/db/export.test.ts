@@ -114,6 +114,14 @@ describe("course_export", () => {
     expect(r[4]).toMatchObject({ slide_number: 5, lost_taps: 0, students: 0 });
   });
 
+  it("still exports an archived course, with the same numbers", async () => {
+    await addTap(LECTURE_A, student(1), 4);
+    const before = await exportRows(marko);
+    await as(db, marko, () => db.query("update public.courses set archived = true where id = $1", [MARKO_COURSE]));
+    expect(await exportRows(marko)).toEqual(before);
+    expect(before[3]).toMatchObject({ slide_number: 4, lost_taps: 1, students: 1 });
+  });
+
   it("changes no number for a save or an undone tap", async () => {
     await addTap(LECTURE_A, student(1), 4, { kind: "save" });
     await addTap(LECTURE_A, student(2), 4, { undone: true });

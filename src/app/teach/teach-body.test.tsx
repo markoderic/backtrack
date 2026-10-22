@@ -63,6 +63,11 @@ beforeEach(() => {
 });
 
 describe("TeachBody", () => {
+  it("lists only courses that are not archived", async () => {
+    await TeachBody({ searchParams: search });
+    expect(eqCalls).toContainEqual(["courses", "archived", false]);
+  });
+
   it("asks for live lectures of the signed in teacher's own courses only", async () => {
     await TeachBody({ searchParams: search });
     expect(selects).toContainEqual(["lectures", "id, name, courses!inner(teacher_id)"]);

@@ -187,6 +187,29 @@ describe("CourseBody", () => {
     expect(html).toContain("Export semester CSV");
   });
 
+  it("an archived course still opens, with its past lectures and the CSV, and no Start lecture", async () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452", archived: true }, error: null });
+    lectures.mockResolvedValue({
+      data: [{ id: "l1", name: "Lecture 1, Oct 19", status: "ended", lecture_date: "2026-10-19" }],
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('data-testid="course-archived"');
+    expect(html).toContain(">Archived</span>");
+    expect(html).toMatch(/<a [^>]*href="\/teach\/settings"[^>]*>Unarchive in Settings<\/a>/);
+    expect(html).not.toContain("Start lecture");
+    expect(html).not.toContain('href="/teach/c/c1/start"');
+    expect(html).toContain('href="/teach/l/l1"');
+    expect(html).toContain('href="/teach/c/c1/export"');
+  });
+
+  it("a course in use shows Start lecture and no Archived line", async () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452", archived: false }, error: null });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('href="/teach/c/c1/start"');
+    expect(html).not.toContain("course-archived");
+  });
+
   it("offers no export with only a live lecture, or with no lectures", async () => {
     course();
     lectures.mockResolvedValue({

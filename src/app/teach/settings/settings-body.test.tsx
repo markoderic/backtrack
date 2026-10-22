@@ -44,8 +44,8 @@ beforeEach(() => {
   h.teacher.mockReset().mockResolvedValue({ data: { display_name: "Linda Carter" }, error: null });
   h.courses.mockReset().mockResolvedValue({
     data: [
-      { id: "c1", name: "ACC 221 Intro to Financial Accounting" },
-      { id: "c2", name: "ACC 222 Intro to Managerial Accounting" },
+      { id: "c1", name: "ACC 221 Intro to Financial Accounting", archived: false },
+      { id: "c2", name: "ACC 222 Intro to Managerial Accounting", archived: false },
     ],
     error: null,
   });
@@ -69,9 +69,43 @@ describe("SettingsBody", () => {
     expect(out).toContain(">Sign out</button>");
   });
 
-  it("leaves out the theme, archive, delete and recovery codes", async () => {
+  it("leaves out the theme, delete and recovery codes", async () => {
     const out = await html();
-    for (const word of [/theme/i, /dark/i, /archive/i, /delete/i, /recovery/i]) expect(out).not.toMatch(word);
+    for (const word of [/theme/i, /dark/i, /delete/i, /recovery/i]) expect(out).not.toMatch(word);
+  });
+
+  it("gives each course in use Archive, and no Archived group while none is archived", async () => {
+    const out = await html();
+    expect(out).toContain('aria-label="Archive ACC 221 Intro to Financial Accounting"');
+    expect(out).toContain('aria-label="Archive ACC 222 Intro to Managerial Accounting"');
+    expect(out).not.toContain(">Archived</h3>");
+    expect(out).not.toContain("Unarchive");
+  });
+
+  it("lists archived courses in a quiet Archived group after Add a course, each linking to its page with Unarchive", async () => {
+    h.courses.mockResolvedValue({
+      data: [
+        { id: "c1", name: "ACC 221 Intro to Financial Accounting", archived: false },
+        { id: "c2", name: "ACC 222 Intro to Managerial Accounting", archived: true },
+      ],
+      error: null,
+    });
+    const out = await html();
+    expect(out).toContain('aria-label="Archive ACC 221 Intro to Financial Accounting"');
+    expect(out).not.toContain('aria-label="Rename ACC 222 Intro to Managerial Accounting"');
+    expect(out).toContain('aria-label="Unarchive ACC 222 Intro to Managerial Accounting"');
+    expect(out).toMatch(/<a [^>]*href="\/teach\/c\/c2"[^>]*>ACC 222 Intro to Managerial Accounting<\/a>/);
+    expect(out.indexOf("data-add-course")).toBeLessThan(out.indexOf(">Archived</h3>"));
+    expect(out.indexOf(">Archived</h3>")).toBeLessThan(out.indexOf("Unarchive ACC 222"));
+    // One course still in use: Add a course stays closed.
+    expect(out).toContain('data-add-course="false"');
+  });
+
+  it("opens Add a course when every course is archived", async () => {
+    h.courses.mockResolvedValue({ data: [{ id: "c2", name: "ACC 222", archived: true }], error: null });
+    const out = await html();
+    expect(out).toContain('data-add-course="true"');
+    expect(out).toContain('aria-label="Unarchive ACC 222"');
   });
 
   it("marks Settings in the top bar as the current page", async () => {
@@ -86,11 +120,11 @@ describe("SettingsBody", () => {
     expect(nav.match(/<li/g)).toHaveLength(1);
   });
 
-  it("asks only for the teacher's own courses that are not archived", async () => {
+  it("asks only for the teacher's own courses, archived ones too", async () => {
     await html();
     expect(h.eqs).toContainEqual(["teachers", "id", "u1"]);
     expect(h.eqs).toContainEqual(["courses", "teacher_id", "u1"]);
-    expect(h.eqs).toContainEqual(["courses", "archived", false]);
+    expect(h.eqs.some(([t, c]) => t === "courses" && c === "archived")).toBe(false);
   });
 
   it("opens Add a course when there are no courses", async () => {

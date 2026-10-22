@@ -76,6 +76,24 @@ describe("courses RLS", () => {
     ]);
   });
 
+  it("lets the owner unarchive their course", async () => {
+    await insertCourse(MARKO, "IMS 452");
+    await as(db, marko, () => db.query("update public.courses set archived = true"));
+    await as(db, marko, () => db.query("update public.courses set archived = false"));
+    const rows = await as(db, marko, async () => (await db.query<{ archived: boolean }>("select archived from public.courses")).rows);
+    expect(rows).toEqual([{ archived: false }]);
+  });
+
+  it("does not let another teacher or a student archive a course (no row changes)", async () => {
+    await insertCourse(MARKO, "IMS 452");
+    await as(db, other, () => db.query("update public.courses set archived = true"));
+    await as(db, { sub: "44444444-4444-4444-4444-000000000001", is_anonymous: true, app_metadata: { provider: "anonymous" } }, () =>
+      db.query("update public.courses set archived = true"),
+    );
+    const rows = await db.query<{ archived: boolean }>("select archived from public.courses");
+    expect(rows.rows).toEqual([{ archived: false }]);
+  });
+
   it("does not let a teacher hand a course to someone else", async () => {
     await insertCourse(MARKO, "IMS 452");
     await expect(

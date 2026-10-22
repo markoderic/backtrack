@@ -13,9 +13,25 @@ const NAME_MAX = 120;
  * One course on Settings (Figma 34:1270): the name (Body), then Rename. Rename turns the row into
  * a field; Enter (or Rename) saves, Esc (or Cancel) leaves it as it was. Runs as the signed in
  * teacher, so row level security (courses_update_own) decides whether the update is allowed.
- * The design's Archive action is not built (needs Marko).
+ * Archive (Figma 34:1275) is there when `onArchive` is given: the list moves the course to its
+ * Archived group, and `note` ("Unarchived.") shows next to the name for a moment.
  */
-export function CourseRow({ courseId, initialName }: { courseId: string; initialName: string }) {
+export function CourseRow({
+  courseId,
+  initialName,
+  onArchive,
+  note,
+  focusOnMount,
+}: {
+  courseId: string;
+  initialName: string;
+  /** Archives the course; false when it could not. */
+  onArchive?: () => Promise<boolean>;
+  /** A short status next to the name, for the eye only (the list announces it). */
+  note?: string | null;
+  /** Focus Archive when the row appears (it just came back from the Archived group). */
+  focusOnMount?: boolean;
+}) {
   const router = useRouter();
   const [current, setCurrent] = useState(initialName);
   const [editing, setEditing] = useState(false);
@@ -23,8 +39,27 @@ export function CourseRow({ courseId, initialName }: { courseId: string; initial
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState(false);
   const renameButton = useRef<HTMLButtonElement>(null);
+  const archiveButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef(false);
+
+  useEffect(() => {
+    if (focusOnMount) archiveButton.current?.focus();
+    // Only when the row appears.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function archive() {
+    if (!onArchive || archiving) return;
+    setArchiving(true);
+    setArchiveError(false);
+    setSaved(false);
+    const ok = await onArchive();
+    setArchiving(false);
+    if (!ok) setArchiveError(true);
+  }
 
   const [seenInitial, setSeenInitial] = useState(initialName);
   if (initialName !== seenInitial) {
@@ -99,15 +134,17 @@ export function CourseRow({ courseId, initialName }: { courseId: string; initial
     </p>
   );
 
+  const shownNote = saved ? "Renamed." : (note ?? null);
+
   if (!editing) {
     return (
       <>
         {status}
         <div className="flex min-w-0 items-center gap-6 py-3.5">
           <span className="min-w-0 flex-1 truncate type-body text-ink">{current}</span>
-          {saved && (
+          {shownNote && (
             <p aria-hidden className="shrink-0 animate-fade-in type-small text-secondary">
-              Renamed.
+              {shownNote}
             </p>
           )}
           <button
@@ -119,7 +156,25 @@ export function CourseRow({ courseId, initialName }: { courseId: string; initial
           >
             Rename
           </button>
+          {onArchive && (
+            <button
+              ref={archiveButton}
+              type="button"
+              aria-label={`Archive ${current}`}
+              disabled={archiving}
+              onClick={() => void archive()}
+              className={`${textLinkClass} shrink-0`}
+            >
+              Archive
+            </button>
+          )}
         </div>
+        {archiveError && (
+          <p role="alert" className="flex animate-fade-in items-center gap-2 pb-3 type-small text-ink">
+            <Icon name="alert" size={18} />
+            Could not archive the course.
+          </p>
+        )}
       </>
     );
   }

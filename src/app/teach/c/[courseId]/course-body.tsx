@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { topThree } from "@/lib/stats";
@@ -125,7 +126,7 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
   // the query asks for the teacher's own course explicitly as well.
   const { data: course, error } = await supabase
     .from("courses")
-    .select("id, name")
+    .select("id, name, archived")
     .eq("id", courseId)
     .eq("teacher_id", user.id)
     .maybeSingle();
@@ -169,9 +170,20 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
             <h1 className="type-display break-words text-ink">{code}</h1>
             {title && <p className="type-lecture-l text-secondary">{title}</p>}
           </div>
-          <ButtonPrimaryLink href={`/teach/c/${course.id}/start`} className="w-auto!">
-            Start lecture
-          </ButtonPrimaryLink>
+          {/* An archived course still opens (from Settings or by url) for its past lectures and the
+              CSV; a new lecture waits until it is unarchived. */}
+          {course.archived ? (
+            <p data-testid="course-archived" className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-2">
+              <span className="type-small text-secondary">Archived</span>
+              <Link href="/teach/settings" className={textLinkClass}>
+                Unarchive in Settings
+              </Link>
+            </p>
+          ) : (
+            <ButtonPrimaryLink href={`/teach/c/${course.id}/start`} className="w-auto!">
+              Start lecture
+            </ButtonPrimaryLink>
+          )}
         </div>
 
         {live.length > 0 && (
