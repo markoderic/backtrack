@@ -95,7 +95,7 @@ export function HighlightLayer({ viewing, imageRef, onChoose, chosen = null }: P
 
   const drawing = draft ?? pending?.rect ?? null;
   const item =
-    "press flex items-center gap-2 rounded-sm px-3.5 py-2 type-small-strong text-ink whitespace-nowrap " +
+    "press touch-target relative flex items-center gap-2 rounded-sm px-3.5 py-2 type-small-strong text-ink whitespace-nowrap " +
     "hover:bg-bg focus-ring focus-visible:outline-offset-0";
 
   return (
@@ -159,7 +159,7 @@ export function HighlightLayer({ viewing, imageRef, onChoose, chosen = null }: P
             setTouchOn((on) => !on);
             cancel();
           }}
-          className={`press absolute bottom-2 right-2 z-10 rounded-md border px-3 py-1.5 type-small-strong focus-ring ${
+          className={`press touch-target absolute bottom-2 right-2 z-10 rounded-md border px-3 py-1.5 type-small-strong focus-ring ${
             touchOn ? "border-ink bg-ink text-surface" : "border-hairline bg-surface text-ink"
           }`}
         >

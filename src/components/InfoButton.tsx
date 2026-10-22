@@ -36,7 +36,7 @@ export function InfoButton({ panelClassName = "right-0" }: { panelClassName?: st
         aria-label="Help"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="press flex size-9 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring aria-expanded:bg-surface"
+        className="press touch-target relative flex size-9 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring aria-expanded:bg-surface"
       >
         <Icon name="info" />
       </button>

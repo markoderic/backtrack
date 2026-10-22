@@ -313,7 +313,7 @@ export function SpotsView({
             // Opened from the top bar during the lecture: the way back is top left.
             <Link
               href={`/l/${lectureId}`}
-              className="press -ml-2 flex min-w-0 items-center gap-1 rounded-md p-2 type-small-strong text-ink hover:bg-surface focus-ring"
+              className="press touch-target relative -ml-2 flex min-w-0 items-center gap-1 rounded-md p-2 type-small-strong text-ink hover:bg-surface focus-ring"
             >
               <Icon name="back" />
               <span className="truncate">Back to lecture</span>
@@ -327,7 +327,7 @@ export function SpotsView({
           <div className="min-w-0 flex-1" />
           <Link
             href="/spots"
-            className="press shrink-0 rounded-md p-2 type-small whitespace-nowrap text-secondary hover:bg-surface hover:text-ink focus-ring"
+            className="press touch-target relative shrink-0 rounded-md p-2 type-small whitespace-nowrap text-secondary hover:bg-surface hover:text-ink focus-ring"
           >
             All lectures
           </Link>

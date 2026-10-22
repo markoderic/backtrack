@@ -148,7 +148,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
         </div>
         <Link
           href={`/spots/${lectureId}`}
-          className="press flex shrink-0 items-center gap-1 rounded-md p-2 whitespace-nowrap hover:bg-surface focus-ring"
+          className="press touch-target relative flex shrink-0 items-center gap-1 rounded-md p-2 whitespace-nowrap hover:bg-surface focus-ring"
         >
           <span className="type-small text-secondary">My spots</span>
           <span
@@ -243,7 +243,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
                   <button
                     type="button"
                     onClick={jumpToLive}
-                    className="press rounded-md border border-ink px-3 py-1.5 type-small-strong text-ink hover:bg-surface focus-ring"
+                    className="press touch-target relative rounded-md border border-ink px-3 py-1.5 type-small-strong text-ink hover:bg-surface focus-ring"
                   >
                     Jump to live, slide {state.live}
                   </button>
@@ -282,5 +282,6 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   );
 }
 
+// 36 px as designed; 44 on a touch screen (the two sit side by side, so the box itself grows).
 const arrowClass =
-  "press flex size-9 items-center justify-center rounded-md text-ink hover:enabled:bg-surface focus-ring disabled:opacity-30";
+  "press flex size-9 items-center justify-center rounded-md text-ink hover:enabled:bg-surface focus-ring disabled:opacity-30 pointer-coarse:size-11";

@@ -91,9 +91,9 @@ const action =
   "press relative after:absolute after:-inset-x-1 after:-inset-y-3 after:content-[''] " +
   "rounded-xs type-small-strong text-ink underline underline-offset-2 hover:text-secondary focus-ring " +
   "disabled:cursor-default disabled:opacity-40 disabled:hover:text-ink";
-/** 36 px icon buttons. */
+/** 36 px icon buttons (a 44 px hit area on a touch screen). */
 const iconButton =
-  "press flex size-9 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring " +
+  "press touch-target relative flex size-9 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring " +
   "disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent";
 
 function Alert({ children }: { children: React.ReactNode }) {
@@ -172,7 +172,7 @@ function DrawLayer({
 
   const drawing = draft ?? pending;
   const item =
-    "press flex items-center rounded-sm px-3.5 py-2 type-small-strong text-ink whitespace-nowrap " +
+    "press touch-target relative flex items-center rounded-sm px-3.5 py-2 type-small-strong text-ink whitespace-nowrap " +
     "hover:bg-bg focus-ring focus-visible:outline-offset-0 disabled:cursor-default disabled:opacity-40";
 
   return (
@@ -439,7 +439,7 @@ export function SpotDetail({
           type="button"
           onClick={onBack}
           aria-label="Back to my spots"
-          className="press flex items-center gap-1 rounded-md p-2 type-small-strong text-ink hover:bg-surface focus-ring"
+          className="press touch-target relative flex items-center gap-1 rounded-md p-2 type-small-strong text-ink hover:bg-surface focus-ring"
         >
           <Icon name="back" />
           My spots
@@ -451,12 +451,12 @@ export function SpotDetail({
           onClick={onPrevSpot}
           disabled={!onPrevSpot}
           aria-label="Previous spot"
-          className="press group flex h-9 items-center gap-0 rounded-md text-ink focus-ring disabled:cursor-default disabled:opacity-30"
+          className="press group flex h-9 items-center gap-0 rounded-md text-ink focus-ring disabled:cursor-default disabled:opacity-30 pointer-coarse:h-11"
         >
           <span className="type-small text-secondary group-enabled:group-hover:text-ink max-sm:sr-only">
             Previous spot
           </span>
-          <span className="flex size-9 items-center justify-center rounded-md group-enabled:group-hover:bg-surface">
+          <span className="flex size-9 items-center justify-center rounded-md group-enabled:group-hover:bg-surface pointer-coarse:size-11">
             <Icon name="back" />
           </span>
         </button>
@@ -466,9 +466,9 @@ export function SpotDetail({
           onClick={onNextSpot}
           disabled={!onNextSpot}
           aria-label="Next spot"
-          className="press group flex h-9 items-center gap-0 rounded-md text-ink focus-ring disabled:cursor-default disabled:opacity-30"
+          className="press group flex h-9 items-center gap-0 rounded-md text-ink focus-ring disabled:cursor-default disabled:opacity-30 pointer-coarse:h-11"
         >
-          <span className="flex size-9 items-center justify-center rounded-md group-enabled:group-hover:bg-surface">
+          <span className="flex size-9 items-center justify-center rounded-md group-enabled:group-hover:bg-surface pointer-coarse:size-11">
             <Icon name="forward" />
           </span>
           <span className="type-small text-secondary group-enabled:group-hover:text-ink max-sm:sr-only">

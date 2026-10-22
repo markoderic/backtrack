@@ -222,6 +222,26 @@
   }
 }
 
+/*
+ * Touch screens (coarse pointer): an invisible ::after hit area of at least 44 x 44 px, centered on
+ * the control, so a small control is easy to tap without changing its look or the layout. Only for a
+ * control with room around it (a neighbor's own area is never covered); the control must be positioned
+ * (relative or absolute). Mouse and keyboard see no change.
+ */
+@utility touch-target {
+  @media (pointer: coarse) {
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      translate: -50% -50%;
+    }
+  }
+}
+
 @layer base {
   html {
     background: var(--color-bg);

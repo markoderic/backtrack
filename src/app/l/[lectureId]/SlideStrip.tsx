@@ -54,7 +54,8 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
                 aria-current={isViewing ? "true" : undefined}
                 data-live={isLive ? "" : undefined}
                 onClick={() => onPick(n)}
-                className="press absolute inset-0 cursor-pointer rounded-xs focus-ring focus-visible:outline-offset-0"
+                // On a touch screen the hit area reaches 10 px above and below the 24 px strip (44 tall), no change to the look.
+                className="press absolute inset-0 cursor-pointer rounded-xs focus-ring focus-visible:outline-offset-0 pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:content-['']"
               >
                 {isViewing && !isLive && (
                   <span

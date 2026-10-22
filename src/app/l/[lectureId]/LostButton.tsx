@@ -388,7 +388,7 @@ export function LostButton({
             <button
               type="button"
               onClick={undo}
-              className="press order-2 rounded-xs type-small-strong text-ink underline hover:text-secondary focus-ring sm:order-3"
+              className="press touch-target relative order-2 rounded-xs type-small-strong text-ink underline hover:text-secondary focus-ring sm:order-3"
             >
               Undo
             </button>

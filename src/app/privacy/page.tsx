@@ -16,7 +16,7 @@ export default function PrivacyPage() {
   return (
     <main className="min-h-dvh bg-bg">
       <header className="flex items-center p-4">
-        <Link href="/" className="press focus-ring flex rounded-xs">
+        <Link href="/" className="press focus-ring touch-target relative flex rounded-xs">
           <LogoLockup size="S" />
         </Link>
       </header>

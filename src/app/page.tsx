@@ -17,7 +17,7 @@ export default function Home() {
         <nav className="flex w-full flex-col items-center gap-5">
           <ButtonPrimaryLink href="/join">Join a class</ButtonPrimaryLink>
           {/* inline-block so the press scale applies (an inline link cannot be scaled). */}
-          <Link href="/teach" className="press focus-ring inline-block rounded-xs type-body text-ink underline hover:text-secondary">
+          <Link href="/teach" className="press focus-ring touch-target relative inline-block rounded-xs type-body text-ink underline hover:text-secondary">
             I&apos;m a teacher
           </Link>
         </nav>

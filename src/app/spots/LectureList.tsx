@@ -66,7 +66,7 @@ export function LectureList() {
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
       <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
-        <Link href="/" aria-label="Home" className="press -m-1 rounded-md p-1 focus-ring">
+        <Link href="/" aria-label="Home" className="press touch-target relative -m-1 rounded-md p-1 focus-ring">
           <LogoMark size={22} />
         </Link>
         <div className="min-w-0 flex-1" />
