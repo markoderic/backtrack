@@ -102,7 +102,7 @@ describe("StartForm", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("shows progress while preparing slides, and Cancel drops the file", async () => {
+  it("shows progress while preparing slides, and Remove drops the file", async () => {
     let finish: (v: unknown) => void = () => {};
     let progress: (d: number, t: number) => void = () => {};
     renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void) => {
@@ -121,7 +121,7 @@ describe("StartForm", () => {
     expect(screen.getByText(/^40 pages, /)).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove slides.pdf" }));
     expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
     // The cancelled render stops at its next page and its result is ignored.
     expect(() => progress(13, 40)).toThrow();
@@ -145,19 +145,132 @@ describe("StartForm", () => {
     expect(() => progress(2, 10)).toThrow();
   });
 
-  it("says how many slides are ready and what Start does", async () => {
+  it("says how many slides are ready, with Replace and Remove on the file and no hint under Start", async () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("Week 8 slides.pdf");
     expect(screen.getByText("Week 8 slides.pdf")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("2 slides ready");
     expect(screen.getByText(/^2 pages, /)).toBeInTheDocument();
-    expect(screen.getByText("Opens the projector view with the join code.")).toBeInTheDocument();
-    // Change file is a real button that opens the file picker.
+    // Marko: "no one is gonna read that".
+    expect(screen.queryByText("Opens the projector view with the join code.")).toBeNull();
+    // Replace and Remove are white buttons; Replace opens the file picker for one file.
     const input = screen.getByLabelText("PDF file") as HTMLInputElement;
     const click = vi.spyOn(input, "click").mockImplementation(() => {});
-    fireEvent.click(screen.getByRole("button", { name: "Change file" }));
+    const replaceButton = screen.getByRole("button", { name: "Replace Week 8 slides.pdf" });
+    expect(replaceButton).toHaveTextContent("Replace");
+    expect(replaceButton.className).toContain("border-hairline");
+    fireEvent.click(replaceButton);
     expect(click).toHaveBeenCalledTimes(1);
+    expect(input.multiple).toBe(false);
+    expect(screen.getByRole("button", { name: "Remove Week 8 slides.pdf" })).toHaveTextContent("Remove");
+    // Add another PDF opens it for more files.
+    fireEvent.click(screen.getByRole("button", { name: "Add another PDF" }));
+    expect(click).toHaveBeenCalledTimes(2);
+    expect(input.multiple).toBe(true);
+  });
+
+  it("Remove takes a ready file away and goes back to the drop area", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: ["a"] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("week8.pdf");
+    fireEvent.click(screen.getByRole("button", { name: "Remove week8.pdf" }));
+    expect(screen.queryByText("week8.pdf")).toBeNull();
+    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(startButton()).toBeDisabled();
+    expect(screen.getByTestId("start-status")).toHaveTextContent("");
+  });
+
+  it("Replace swaps the file in place and prepares the new one", async () => {
+    renderPdf
+      .mockResolvedValueOnce({ blobs: [blob("image/webp")], firstLines: ["old"] })
+      .mockResolvedValueOnce({ blobs: [blob("image/webp"), blob("image/webp"), blob("image/webp")], firstLines: ["a", "b", "c"] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("draft.pdf");
+    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    vi.spyOn(input, "click").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
+    choose("final.pdf");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("3 slides ready"));
+    expect(screen.queryByText("draft.pdf")).toBeNull();
+    expect(screen.getByText("final.pdf")).toBeInTheDocument();
+    expect(renderPdf).toHaveBeenCalledTimes(2);
+  });
+
+  it("Add another PDF puts its pages after the first one's: names in order, the combined count, one lecture", async () => {
+    renderPdf
+      .mockResolvedValueOnce({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["Intro", "Goals"] })
+      .mockResolvedValueOnce({ blobs: [blob("image/jpeg")], firstLines: ["Extra"] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("part1.pdf");
+    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    vi.spyOn(input, "click").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Add another PDF" }));
+    choose("part2.pdf");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("3 slides ready"));
+    const names = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(names[0]).toContain("part1.pdf");
+    expect(names[1]).toContain("part2.pdf");
+    // Said on screen as well as in the status line.
+    expect(screen.getAllByText("3 slides ready")).toHaveLength(2);
+
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    const id = rpc.mock.calls[0][1].p_lecture_id as string;
+    expect(rpc.mock.calls[0][1].p_slides).toEqual([
+      { number: 1, image_path: `${id}/1.webp`, first_line: "Intro" },
+      { number: 2, image_path: `${id}/2.webp`, first_line: "Goals" },
+      { number: 3, image_path: `${id}/3.jpg`, first_line: "Extra" },
+    ]);
+  });
+
+  it("removing the first of two PDFs keeps the second, and its pages become the lecture", async () => {
+    renderPdf
+      .mockResolvedValueOnce({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] })
+      .mockResolvedValueOnce({ blobs: [blob("image/webp")], firstLines: ["only"] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("one.pdf");
+    choose("two.pdf");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("3 slides ready"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove one.pdf" }));
+    expect(screen.getByRole("status")).toHaveTextContent("1 slide ready");
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    expect(rpc.mock.calls[0][1].p_slides.map((x: { first_line: string }) => x.first_line)).toEqual(["only"]);
+  });
+
+  it("waits for every PDF: Start stays off while a second one is still being prepared", async () => {
+    renderPdf
+      .mockResolvedValueOnce({ blobs: [blob("image/webp")], firstLines: ["a"] })
+      .mockReturnValueOnce(new Promise(() => {}));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("one.pdf");
+    choose("two.pdf");
+    expect(await screen.findByText("two.pdf")).toBeInTheDocument();
+    expect(startButton()).toBeDisabled();
+  });
+
+  it("a bad second file is dropped with the error, the first stays", async () => {
+    renderPdf.mockResolvedValueOnce({ blobs: [blob("image/webp")], firstLines: ["a"] }).mockRejectedValueOnce(new NotPdfError());
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("good.pdf");
+    choose("bad.pdf");
+    expect(await screen.findByText("That file isn't a PDF.")).toBeInTheDocument();
+    expect(screen.queryByText("bad.pdf")).toBeNull();
+    expect(screen.getByText("good.pdf")).toBeInTheDocument();
+    expect(startButton()).toBeEnabled();
+  });
+
+  it("Start never renders the PDF again: it only uploads the images made when the file was picked", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    const prepared = renderPdf.mock.results[0].value as Promise<{ blobs: Blob[] }>;
+    const { blobs } = await prepared;
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    expect(renderPdf).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls.map((c) => c[1])).toEqual(expect.arrayContaining(blobs));
   });
 
   it("shows an indeterminate bar until the page count is known", async () => {
@@ -183,13 +296,22 @@ describe("StartForm", () => {
     expect(renderPdf).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the upload progress after Start", async () => {
+  it("after Start says it is uploading (not preparing again), next to the button, and keeps the slides in view", async () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
     upload.mockReturnValue(new Promise(() => {}));
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady();
     fireEvent.click(startButton());
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Uploading slide 0 of 2"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Uploading 0 of 2"));
+    expect(screen.getByRole("progressbar", { name: "Uploading slides" })).toHaveAttribute("aria-valuemax", "2");
+    // On screen next to Start lecture, as well as in the status line.
+    expect(screen.getAllByText("Uploading 0 of 2")).toHaveLength(2);
+    expect(screen.queryByRole("progressbar", { name: "Preparing slides" })).toBeNull();
+    // The prepared slides stay on screen; the file can not be changed mid-start.
+    expect(screen.getByText("2 slides ready")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Remove / })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Replace / })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add another PDF" })).toBeDisabled();
     expect(startButton()).toBeDisabled();
     expect(nameField()).toBeDisabled();
   });
@@ -321,7 +443,7 @@ describe("StartForm shown again after a start", () => {
     fireEvent.click(startButton());
     await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
     // Left as it was when the projector opened: the upload done, Start lecture disabled.
-    expect(screen.getByTestId("start-status")).toHaveTextContent("Uploading slide 2 of 2");
+    expect(screen.getByTestId("start-status")).toHaveTextContent("Uploading 2 of 2");
     expect(startButton()).toBeDisabled();
 
     view.rerender(at("hidden"));
@@ -351,6 +473,34 @@ describe("StartForm shown again after a start", () => {
     // The server's count arrives after the refresh.
     view.rerender(at("visible", 3));
     await waitFor(() => expect(nameField().value).toMatch(/^Lecture 4, /));
+  });
+
+  it("a PDF still being prepared when the page was hidden starts preparing again when it is shown", async () => {
+    let calls = 0;
+    renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void) => {
+      calls++;
+      if (calls === 1) {
+        onProgress(1, 3);
+        // The first render is stopped at its next page when the page is hidden.
+        return new Promise((_resolve, reject) => setTimeout(() => {
+          try {
+            onProgress(2, 3);
+          } catch (e) {
+            reject(e);
+          }
+        }, 20));
+      }
+      return Promise.resolve({ blobs: [blob("image/webp"), blob("image/webp"), blob("image/webp")], firstLines: ["", "", ""] });
+    });
+    const view = render(at("visible"));
+    choose("long.pdf");
+    await waitFor(() => expect(screen.getByTestId("start-status")).toHaveTextContent("Preparing slide 1 of 3"));
+    view.rerender(at("hidden"));
+    await act(async () => new Promise((r) => setTimeout(r, 40)));
+    view.rerender(at("visible"));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(renderPdf).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("start-status")).toHaveTextContent("3 slides ready");
   });
 
   it("is left alone when it is shown again without a start (the teacher went to look at something)", async () => {

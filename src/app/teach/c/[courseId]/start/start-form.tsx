@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { defaultLectureName } from "@/lib/lectureName";
 import { renderPdf, NotPdfError, PasswordPdfError } from "@/lib/pdf/renderPdf";
-import { ButtonPrimary } from "@/components/ButtonPrimary";
+import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
-import { fieldClass, labelClass, textLinkClass } from "../../../ui";
+import { fieldClass, labelClass } from "../../../ui";
 import { cleanupOrphanUploads } from "../../../lecture-actions";
 
 const NAME_MAX = 120;
@@ -18,16 +18,23 @@ class UploadError extends Error {}
 class StartError extends Error {}
 
 /**
- * The slides are turned into images as soon as a PDF is picked (Figma 33:1014, "so the
- * progress is real"), and Start lecture stays disabled until every slide is ready. Start then
- * uploads the images and creates the lecture in one database call (D5), as before.
+ * One picked PDF. Its pages are turned into images as soon as it is picked (Figma 33:1014, "so
+ * the progress is real"); Start lecture waits until every PDF is ready, then only uploads those
+ * same images (nothing is rendered twice) and creates the lecture in one database call (D5). A
+ * second PDF ("Add another PDF") adds its pages after the first one's, in the order shown.
  */
-type Prep =
-  | { status: "idle" }
-  | { status: "preparing"; done: number; total: number }
-  | { status: "ready"; blobs: Blob[]; firstLines: string[]; thumbs: string[] };
+type Part = {
+  key: number;
+  file: File;
+  prep:
+    | { status: "preparing"; done: number; total: number }
+    | { status: "ready"; blobs: Blob[]; firstLines: string[] };
+};
 
 type Upload = { done: number; total: number } | null;
+
+/** Where the next file the picker hands back goes: after the others, or in place of one. */
+type PickTarget = { mode: "add" } | { mode: "replace"; key: number };
 
 /** 4404019 -> "4.2 MB", 912345 -> "891 KB". */
 function fileSize(bytes: number): string {
@@ -35,7 +42,9 @@ function fileSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-function ProgressBar({ done, total, label }: { done: number; total: number; label: string }) {
+const slidesWord = (n: number) => `${n} ${n === 1 ? "slide" : "slides"}`;
+
+function ProgressBar({ done, total, label, className = "w-full" }: { done: number; total: number; label: string; className?: string }) {
   const part = total > 0 ? Math.min(1, done / total) : 0;
   // Indeterminate (no value) until the page count is known.
   const value = total > 0 ? { "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done } : {};
@@ -44,7 +53,7 @@ function ProgressBar({ done, total, label }: { done: number; total: number; labe
       role="progressbar"
       aria-label={label}
       {...value}
-      className="h-1.5 w-full overflow-hidden rounded-[3px] bg-hairline"
+      className={`h-1.5 overflow-hidden rounded-[3px] bg-hairline ${className}`}
     >
       {/* Grows with transform only (no width animation), from the left. */}
       <div
@@ -55,10 +64,25 @@ function ProgressBar({ done, total, label }: { done: number; total: number; labe
   );
 }
 
+/**
+ * A preview of one prepared slide. Its blob url lives only while the image is on screen: made
+ * before paint, let go when the image goes (and made again if Next shows the kept-alive page again).
+ */
+function SlidePreview({ blob, ...props }: { blob: Blob } & ImgHTMLAttributes<HTMLImageElement>) {
+  const img = useRef<HTMLImageElement>(null);
+  useLayoutEffect(() => {
+    if (!img.current || typeof URL.createObjectURL !== "function") return;
+    const url = URL.createObjectURL(blob);
+    img.current.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [blob]);
+  // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text -- a local blob preview; alt comes in props
+  return <img ref={img} {...props} />;
+}
+
 export function StartForm({ courseId, existingCount }: { courseId: string; existingCount: number }) {
   const router = useRouter();
-  const [file, setFile] = useState<File | null>(null);
-  const [prep, setPrep] = useState<Prep>({ status: "idle" });
+  const [parts, setParts] = useState<Part[]>([]);
   const [name, setName] = useState("");
   const [starting, setStarting] = useState(false);
   const [upload, setUpload] = useState<Upload>(null);
@@ -66,24 +90,24 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const [dragging, setDragging] = useState(false);
   const touchedName = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  // Each picked file gets a new run; a cancelled or replaced run is ignored and stopped at its next page.
-  const run = useRef(0);
+  const pickTarget = useRef<PickTarget>({ mode: "add" });
+  const nextKey = useRef(0);
+  // The PDFs being prepared right now. A removed or replaced PDF's render (or every render, when
+  // the page is hidden or goes away) is ignored and stopped at its next page.
+  const alive = useRef(new Set<number>());
+  const partsNow = useRef<Part[]>([]);
+  useEffect(() => {
+    partsNow.current = parts;
+  });
   // A start went through and the projector opened. Next keeps this page alive (hidden) after
   // it, with its state; shown again (Back, or Start lecture for the next class) it must be a
-  // fresh form, not the last start's file and its finished upload with Start lecture disabled.
+  // fresh form, not the last start's PDFs and its finished upload with Start lecture disabled.
   const started = useRef(false);
 
   // Filled in after mount so the date is the teacher's own, not the server's.
   useEffect(() => {
     if (!touchedName.current) setName(defaultLectureName(existingCount, new Date()));
   }, [existingCount]);
-
-  // The slide previews are blob urls; let them go when the slides are replaced or the page goes away.
-  const thumbs = prep.status === "ready" ? prep.thumbs : null;
-  useEffect(() => {
-    if (!thumbs) return;
-    return () => thumbs.forEach((u) => URL.revokeObjectURL(u));
-  }, [thumbs]);
 
   // Clears this teacher's slide images left over from a start that failed or was left halfway
   // more than a day ago (best effort, in the background; nothing waits on it).
@@ -96,10 +120,9 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   useLayoutEffect(() => {
     if (!started.current) return;
     started.current = false;
-    run.current++;
+    alive.current.clear();
     touchedName.current = false;
-    setFile(null);
-    setPrep({ status: "idle" });
+    setParts([]);
     setStarting(false);
     setUpload(null);
     setError(null);
@@ -108,56 +131,87 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     router.refresh();
   }, [existingCount, router]);
 
-  // Stop a run that is still going when the page goes away.
-  useEffect(
-    () => () => {
-      run.current++;
-    },
-    [],
-  );
+  // Hidden (Next keeps the page alive) or gone: every render still going stops at its next page,
+  // so a long PDF does not keep the laptop busy for a page nobody sees. Shown again with a PDF that
+  // was still being prepared: that PDF starts preparing again, so it is never stuck halfway.
+  useEffect(() => {
+    for (const part of partsNow.current) {
+      if (part.prep.status === "preparing" && !alive.current.has(part.key)) {
+        alive.current.add(part.key);
+        void prepare(part.key, part.file);
+      }
+    }
+    const running = alive.current;
+    return () => running.clear();
+    // Only when the page is shown and hidden.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function prepare(next: File) {
-    const mine = ++run.current;
-    setFile(next);
-    setError(null);
-    setPrep({ status: "preparing", done: 0, total: 0 });
+  const update = (key: number, prep: Part["prep"]) =>
+    setParts((list) => list.map((p) => (p.key === key ? { ...p, prep } : p)));
+
+  async function prepare(key: number, file: File) {
     try {
-      const result = await renderPdf(next, (done, total) => {
+      const result = await renderPdf(file, (done, total) => {
         // Throwing here stops the render at this page (renderPdf cleans up in its finally).
-        if (run.current !== mine) throw new Error("cancelled");
-        setPrep({ status: "preparing", done, total });
+        if (!alive.current.has(key)) throw new Error("cancelled");
+        update(key, { status: "preparing", done, total });
       });
-      if (run.current !== mine) return;
-      // Small previews of the first slides.
-      const previews =
-        typeof URL.createObjectURL === "function" ? result.blobs.slice(0, THUMBS).map((b) => URL.createObjectURL(b)) : [];
-      setPrep({ status: "ready", blobs: result.blobs, firstLines: result.firstLines, thumbs: previews });
+      if (!alive.current.has(key)) return;
+      alive.current.delete(key);
+      update(key, { status: "ready", blobs: result.blobs, firstLines: result.firstLines });
     } catch (e) {
-      if (run.current !== mine) return;
-      setFile(null);
-      setPrep({ status: "idle" });
+      if (!alive.current.has(key)) return;
+      alive.current.delete(key);
+      setParts((list) => list.filter((p) => p.key !== key));
       if (e instanceof NotPdfError || e instanceof PasswordPdfError) setError(e.message);
       else setError("Could not read that PDF. Try again.");
     }
   }
 
-  function pick(files: FileList | null | undefined) {
-    const next = files?.[0];
-    if (next && !starting) void prepare(next);
+  /** New PDFs go after the others; a replaced one keeps its place in the order. */
+  function pick(files: FileList | File[] | null | undefined, target: PickTarget = { mode: "add" }) {
+    const picked = Array.from(files ?? []);
+    if (picked.length === 0 || starting) return;
+    setError(null);
+    const fresh = (target.mode === "replace" ? picked.slice(0, 1) : picked).map((file) => {
+      const key = ++nextKey.current;
+      alive.current.add(key);
+      return { key, file, prep: { status: "preparing", done: 0, total: 0 } } as Part;
+    });
+    if (target.mode === "replace") {
+      alive.current.delete(target.key);
+      setParts((list) => (list.some((p) => p.key === target.key) ? list.map((p) => (p.key === target.key ? fresh[0] : p)) : [...list, ...fresh]));
+    } else {
+      setParts((list) => [...list, ...fresh]);
+    }
+    for (const part of fresh) void prepare(part.key, part.file);
   }
 
-  function cancel() {
-    run.current++;
-    setFile(null);
-    setPrep({ status: "idle" });
+  function openPicker(target: PickTarget) {
+    pickTarget.current = target;
+    if (fileInput.current) fileInput.current.multiple = target.mode === "add";
+    fileInput.current?.click();
+  }
+
+  function removePart(key: number) {
+    alive.current.delete(key);
+    setParts((list) => list.filter((p) => p.key !== key));
     setError(null);
   }
 
+  const ready = parts.length > 0 && parts.every((p) => p.prep.status === "ready");
+  const readyParts = ready ? (parts.map((p) => p.prep) as Extract<Part["prep"], { status: "ready" }>[]) : [];
+  const totalSlides = readyParts.reduce((n, p) => n + p.blobs.length, 0);
+  const thumbs = readyParts.flatMap((p) => p.blobs).slice(0, THUMBS);
+
   async function start() {
-    if (prep.status !== "ready" || starting) return;
+    if (!ready || starting) return;
     const lectureName = name.trim();
     if (!lectureName) return;
-    const { blobs, firstLines } = prep;
+    // The images made when the PDFs were picked, in order: nothing is rendered again here.
+    const blobs = readyParts.flatMap((p) => p.blobs);
+    const firstLines = readyParts.flatMap((p) => p.blobs.map((_, i) => p.firstLines[i] ?? ""));
 
     setStarting(true);
     setError(null);
@@ -224,19 +278,21 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     }
   }
 
-  const ready = prep.status === "ready";
+  const preparing = parts.find((p) => p.prep.status === "preparing");
+  const preparingText = (prep: { done: number; total: number }) =>
+    prep.total > 0 ? `Preparing slide ${prep.done} of ${prep.total}` : "Preparing slides";
+  // The upload after Start, in words: the slides are not prepared again, they are sent.
+  const uploadText = upload ? `Uploading ${upload.done} of ${upload.total}` : "";
   // One live region that is always there, so screen readers hear the progress as it changes.
   const status =
     starting && upload
-      ? `Uploading slide ${upload.done} of ${upload.total}`
-      : prep.status === "preparing"
-        ? prep.total > 0
-          ? `Preparing slide ${prep.done} of ${prep.total}`
-          : "Preparing slides"
-        : prep.status === "ready"
-          ? `${prep.blobs.length} ${prep.blobs.length === 1 ? "slide" : "slides"} ready`
+      ? uploadText
+      : preparing && preparing.prep.status === "preparing"
+        ? preparingText(preparing.prep)
+        : ready
+          ? `${slidesWord(totalSlides)} ready`
           : "";
-  const pages = prep.status === "ready" ? prep.blobs.length : prep.status === "preparing" ? prep.total : 0;
+  const busy = starting;
 
   return (
     <form
@@ -278,7 +334,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
         className={
           "relative flex min-h-60 w-full flex-col rounded-md bg-surface transition-[border-color,outline-color] duration-(--dur-fast) ease-out " +
           "outline-0 outline-offset-4 outline-transparent has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-ink " +
-          (file
+          (parts.length > 0
             ? `border p-6 ${dragging ? "border-ink" : "border-hairline"}`
             : `border-[1.5px] border-dashed ${dragging ? "border-ink" : "border-strip"}`)
         }
@@ -289,86 +345,113 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
           type="file"
           accept="application/pdf,.pdf"
           aria-label="PDF file"
+          multiple
           disabled={starting}
           onChange={(e) => {
-            pick(e.target.files);
-            // Lets the same file be picked again after Cancel.
+            pick(e.target.files, pickTarget.current);
+            pickTarget.current = { mode: "add" };
+            e.target.multiple = true;
+            // Lets the same file be picked again after Remove.
             e.target.value = "";
           }}
           className="sr-only"
         />
 
-        {!file ? (
+        {parts.length === 0 ? (
           <label
             htmlFor="pdf-file"
             className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-3 p-6 text-center"
           >
             <Icon name="upload" size={28} />
             <span className="type-body-strong text-ink">Drop the slides PDF here</span>
-            <span className="type-small text-ink underline decoration-from-font underline-offset-[3px]">
-              or choose a file
+            {/* Looks like the white button; the whole area is the label that opens the picker. */}
+            <span aria-hidden className={`${buttonSecondaryClass} pointer-events-none mt-1`}>
+              Choose a file
             </span>
           </label>
         ) : (
-          <div className="flex animate-fade-in flex-col gap-3">
-            <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
-              <p className="min-w-0 truncate type-body-strong text-ink">{file.name}</p>
-              <p className="type-small whitespace-nowrap text-secondary">
-                {pages > 0 ? `${pages} ${pages === 1 ? "page" : "pages"}, ${fileSize(file.size)}` : fileSize(file.size)}
-              </p>
-              <div className="min-w-0 flex-1" />
-              {prep.status === "preparing" && (
-                <button type="button" onClick={cancel} className={textLinkClass}>
-                  Cancel
-                </button>
-              )}
-              {ready && !starting && (
-                <button type="button" onClick={() => fileInput.current?.click()} className={textLinkClass}>
-                  Change file
-                </button>
-              )}
-            </div>
+          <div className="flex animate-fade-in flex-col gap-5">
+            <ol className="flex flex-col gap-4">
+              {parts.map((part, i) => (
+                <li key={part.key} className="flex animate-fade-in flex-col gap-3">
+                  <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2">
+                    <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                      {parts.length > 1 && <span className="type-small-strong text-secondary">{i + 1}</span>}
+                      <p className="min-w-0 truncate type-body-strong text-ink">{part.file.name}</p>
+                      <p className="type-small whitespace-nowrap text-secondary">
+                        {(() => {
+                          const pages = part.prep.status === "ready" ? part.prep.blobs.length : part.prep.total;
+                          return pages > 0 ? `${pages} ${pages === 1 ? "page" : "pages"}, ${fileSize(part.file.size)}` : fileSize(part.file.size);
+                        })()}
+                      </p>
+                    </div>
+                    {/* Off (not gone) while the lecture starts, so nothing moves under the pointer. */}
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label={`Replace ${part.file.name}`}
+                        disabled={busy}
+                        onClick={() => openPicker({ mode: "replace", key: part.key })}
+                        className={buttonSecondaryClass}
+                      >
+                        Replace
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${part.file.name}`}
+                        disabled={busy}
+                        onClick={() => removePart(part.key)}
+                        className={buttonSecondaryClass}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  {part.prep.status === "preparing" && (
+                    <>
+                      <ProgressBar done={part.prep.done} total={part.prep.total} label="Preparing slides" />
+                      <p aria-hidden className="type-small text-secondary">
+                        {preparingText(part.prep)}
+                      </p>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ol>
 
-            {prep.status === "preparing" && (
-              <>
-                <ProgressBar done={prep.done} total={prep.total} label="Preparing slides" />
-                <p aria-hidden className="type-small text-secondary">
-                  {prep.total > 0 ? `Preparing slide ${prep.done} of ${prep.total}` : "Preparing slides"}
-                </p>
-              </>
-            )}
-
-            {ready && starting && upload && (
-              <>
-                <ProgressBar done={upload.done} total={upload.total} label="Uploading slides" />
-                <p aria-hidden className="type-small text-secondary">{`Uploading slide ${upload.done} of ${upload.total}`}</p>
-              </>
-            )}
-
-            {ready && !starting && (
-              <>
-                {prep.thumbs.length > 0 && (
+            {ready && (
+              <div className="flex flex-col gap-3 border-t border-hairline pt-5">
+                {thumbs.length > 0 && (
                   <div className="flex items-start gap-2">
-                    {prep.thumbs.map((src, i) => (
-                      // eslint-disable-next-line @next/next/no-img-element -- a local blob preview
-                      <img
-                        key={src}
-                        src={src}
+                    {thumbs.map((blob, i) => (
+                      <SlidePreview
+                        key={i}
+                        blob={blob}
                         alt={`Slide ${i + 1}`}
                         className="aspect-[104/59] h-auto w-26 min-w-0 shrink animate-pop-in rounded-sm bg-surface object-contain shadow-slide [animation-delay:calc(var(--i)*30ms)] motion-reduce:[animation-delay:0ms]"
                         style={{ "--i": i } as React.CSSProperties}
                       />
                     ))}
-                    {prep.blobs.length > prep.thumbs.length && (
-                      <span className="shrink-0 type-small text-secondary">+{prep.blobs.length - prep.thumbs.length}</span>
+                    {totalSlides > thumbs.length && (
+                      <span className="shrink-0 type-small text-secondary">+{totalSlides - thumbs.length}</span>
                     )}
                   </div>
                 )}
                 <p aria-hidden className="type-small text-secondary">
-                  {prep.blobs.length} {prep.blobs.length === 1 ? "slide" : "slides"} ready
+                  {slidesWord(totalSlides)} ready
                 </p>
-              </>
+              </div>
             )}
+
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => openPicker({ mode: "add" })}
+              className={`${buttonSecondaryClass} w-fit`}
+            >
+              <Icon name="upload" size={18} />
+              Add another PDF
+            </button>
           </div>
         )}
       </div>
@@ -384,12 +467,18 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
         </p>
       )}
 
-      <div className="flex flex-wrap items-center gap-4">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <ButtonPrimary type="submit" disabled={!ready || starting || name.trim() === ""} className="w-auto!">
           Start lecture
         </ButtonPrimary>
-        {ready && !starting && (
-          <p className="animate-fade-in type-small text-secondary">Opens the projector view with the join code.</p>
+        {starting && upload && (
+          // The prepared slides are being sent, not prepared again: say so next to the button.
+          <div className="flex min-w-0 flex-1 basis-56 animate-fade-in items-center gap-3">
+            <ProgressBar done={upload.done} total={upload.total} label="Uploading slides" className="w-40 shrink-0" />
+            <p aria-hidden className="type-small whitespace-nowrap text-secondary">
+              {uploadText}
+            </p>
+          </div>
         )}
       </div>
     </form>
