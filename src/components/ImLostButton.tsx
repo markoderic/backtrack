@@ -1,88 +1,90 @@
 "use client";
 
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type Ref } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type MouseEvent, type Ref } from "react";
 import { Icon } from "./Icon";
 
-/** How long the press look holds before Saved shows (Parts: scale 0.96 for 120 ms). */
+/** How long the press look holds before the checked look shows (Parts: scale 0.96 for 120 ms). */
 export const PRESS_MS = 120;
-/** How long Saved (ring and check) shows before the button goes back to Default. */
-export const SAVED_MS = 2000;
 
-type Phase = "default" | "pressed" | "saved";
+type Phase = "default" | "pressed" | "checked";
 
 type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> & {
-  /** Overrides the look, for showing one state on its own. Left out, the button runs its own press then Saved. */
-  phase?: Phase;
   /**
-   * Goes up when something else saved an I'm lost (the highlight menu). Each new
-   * value shows Saved for 2 s, as after a press, without the press.
+   * This slide already has an I'm lost from this student: the button shows "Lost on slide N"
+   * with a check and takes no second tap (Undo, next to it, gives the button back).
    */
-  savedSignal?: number;
-  /** The button itself, so focus can come back to it when the saved line closes. */
+  checked?: boolean;
+  /** The slide on screen, for the checked label. */
+  slide?: number;
+  /** The button itself, so focus can come back to it after Undo. */
   ref?: Ref<HTMLButtonElement>;
 };
 
 /**
- * The I'm lost button from Parts: an 88 round red button. Hover and press darken it
- * (lost-hover); a press scales it to 0.96 for 120 ms, then it shows Saved (a red
- * ring with a check) for 2 s and goes back to Default. With reduced motion there is
- * no scale, the Saved state still shows. Focus is a 2px ink ring 5px out.
+ * The I'm lost button: a full width red button with the shape, radius and height of the
+ * Join button (48 px, radius md). Hover and press darken it; a press scales it to 0.96 for
+ * 120 ms, then the checked look pops in ("Lost on slide 7" with a check, red tinted) and
+ * stays for as long as that slide has the tap. With reduced motion there is no scale; the
+ * checked look still shows.
  *
- * Only the look lives here. What a press records is up to onClick (LostButton).
- * Its name stays "I'm lost" in every state.
+ * While checked it is aria-disabled, not disabled, so keyboard focus stays on it and a
+ * second press does nothing. Only the look lives here: what a press records is up to onClick.
  */
-export function ImLostButton({ phase: forced, savedSignal = 0, onClick, className = "", ...props }: Props) {
-  const [phase, setPhase] = useState<Phase>("default");
-  const [lastSignal, setLastSignal] = useState(savedSignal);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+export function ImLostButton({ checked = false, slide, onClick, className = "", ...props }: Props) {
+  const [pressed, setPressed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    const list = timers;
-    return () => list.current.forEach(clearTimeout);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
 
-  // A save from elsewhere: Saved now, Default 2 s later (the timer is set below).
-  if (savedSignal !== lastSignal) {
-    setLastSignal(savedSignal);
-    setPhase("saved");
+  const shown: Phase = pressed ? "pressed" : checked ? "checked" : "default";
+  const checkedLabel = slide !== undefined ? `Lost on slide ${slide}` : "Lost on this slide";
+
+  function onPress(e: MouseEvent<HTMLButtonElement>) {
+    // One tap per slide: a checked button takes no second one.
+    if (checked) return;
+    if (timer.current) clearTimeout(timer.current);
+    setPressed(true);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setPressed(false);
+    }, PRESS_MS);
+    onClick?.(e);
   }
-  useEffect(() => {
-    if (savedSignal === 0) return;
-    timers.current.forEach(clearTimeout);
-    timers.current = [setTimeout(() => setPhase("default"), SAVED_MS)];
-  }, [savedSignal]);
-
-  const shown = forced ?? phase;
 
   return (
     <button
       type="button"
-      aria-label="I'm lost"
       data-phase={shown}
-      onClick={(e) => {
-        timers.current.forEach(clearTimeout);
-        setPhase("pressed");
-        timers.current = [
-          setTimeout(() => setPhase("saved"), PRESS_MS),
-          setTimeout(() => setPhase("default"), PRESS_MS + SAVED_MS),
-        ];
-        onClick?.(e);
-      }}
+      aria-disabled={checked || undefined}
+      // Named for its state at once, also during the 120 ms press look.
+      aria-label={checked ? checkedLabel : undefined}
+      onClick={onPress}
       className={
-        "flex size-22 shrink-0 items-center justify-center rounded-full type-button " +
-        "focus-ring focus-visible:outline-offset-[5px] " +
-        "transition-[background-color,scale,outline-color] duration-(--dur-fast) ease-out " +
-        (shown === "saved"
-          ? // The ring and check pop in on the spring (fade only with reduced motion).
-            "animate-pop-in border-2 border-lost bg-transparent text-ink"
+        "flex h-12 w-full shrink-0 items-center justify-center gap-2 rounded-md border px-6 type-button whitespace-nowrap " +
+        "focus-ring transition-[background-color,color,border-color,scale,outline-color] duration-(--dur-fast) ease-out " +
+        (shown === "checked"
+          ? "cursor-default border-lost bg-lost-tint text-lost-hover"
           : shown === "pressed"
-            ? "bg-lost-hover text-surface motion-safe:scale-96"
-            : "bg-lost text-surface hover:bg-lost-hover active:bg-lost-hover motion-safe:active:scale-96") +
+            ? "border-transparent bg-lost-hover text-surface motion-safe:scale-96"
+            : "border-transparent bg-lost text-surface hover:bg-lost-hover active:bg-lost-hover motion-safe:active:scale-96") +
         ` ${className}`
       }
       {...props}
     >
-      {shown === "saved" ? <Icon name="check" size={28} /> : <span aria-hidden>I&apos;m lost</span>}
+      {shown === "checked" ? (
+        // The check and label pop in on the spring (fade only with reduced motion).
+        <span key="checked" className="flex animate-pop-in items-center gap-2">
+          <Icon name="check" size={20} />
+          {checkedLabel}
+        </span>
+      ) : (
+        <span key="default">I&apos;m lost</span>
+      )}
     </button>
   );
 }

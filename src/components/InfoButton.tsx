@@ -48,7 +48,7 @@ export function InfoButton({ panelClassName = "right-0" }: { panelClassName?: st
         >
           <p className="type-body-strong">How it works</p>
           <p className="type-small">Lost the thread? Tap I&apos;m lost. The slide is saved and the lecture keeps going.</p>
-          <p className="type-small">Drag across part of a slide to mark exactly what lost you, or save it for later.</p>
+          <p className="type-small">After I&apos;m lost, Mark the spot lets you drag over the exact part. Save this keeps a slide just for you.</p>
           <p className="type-small">Nobody sees your name, not even your teacher. Your spots stay in this browser.</p>
         </div>
       )}

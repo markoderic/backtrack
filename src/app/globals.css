@@ -56,6 +56,22 @@
   --font-serif: "Newsreader", ui-serif, Georgia, serif;
 }
 
+/*
+ * The two layouts of the student live lecture screen (see "Student live lecture" below).
+ * wide: a laptop, or a tablet or phone held sideways (900 px and up, or 700 px and up in landscape).
+ * narrow: everything else (a phone, a portrait tablet, a half width laptop window).
+ */
+@custom-variant wide {
+  @media (min-width: 900px), (min-width: 700px) and (orientation: landscape) {
+    @slot;
+  }
+}
+@custom-variant narrow {
+  @media (max-width: 699.98px), (max-width: 899.98px) and (orientation: portrait) {
+    @slot;
+  }
+}
+
 /* Type styles, one utility per Figma "Final/" text style. Color is set separately (text-ink, text-secondary ...). */
 @utility type-wordmark-l {
   font-family: var(--font-sans);
@@ -261,6 +277,99 @@
     outline: 2px solid var(--color-ink);
     outline-offset: 2px;
   }
+}
+
+/*
+ * Student live lecture (/l/[lectureId]): one markup, two layouts.
+ * Wide: the slide on the left, as big as the height allows (its navigation right under it),
+ * and a sidebar on the right (about 20%, at least 260 px): lecture, Jump to live, the
+ * I'm lost panel, and My spots at the bottom.
+ * Narrow: top bar, the slide edge to edge in a 16 px gutter, the I'm lost panel, then the
+ * slide strip, so nothing important is below the fold on a 390 x 844 phone.
+ * The slide's width comes from the room left (--slide-room) times its shape (--slide-ratio).
+ */
+[data-lecture] {
+  position: fixed;
+  inset: 0;
+  background: var(--color-bg);
+}
+[data-lecture-slide] {
+  width: min(100cqw, max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778));
+  justify-self: center;
+}
+@media (max-width: 699.98px), (max-width: 899.98px) and (orientation: portrait) {
+  [data-lecture] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "top" "slide" "panel" "nav";
+    align-content: start;
+    row-gap: 12px;
+    padding: 0 16px 24px;
+    overflow-y: auto;
+    container-type: size;
+    /* Top bar, I'm lost, the strip and the gaps between them stay on screen under the slide. */
+    --slide-room: calc(100cqh - 232px);
+  }
+  [data-lecture-side],
+  [data-lecture-stage] {
+    display: contents;
+  }
+  [data-lecture-top] {
+    grid-area: top;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 56px;
+    margin-right: -8px;
+  }
+  [data-lecture-slide] { grid-area: slide; }
+  [data-lecture-panel] { grid-area: panel; }
+  [data-lecture-nav] { grid-area: nav; }
+  [data-lecture-jump="side"] { display: none; }
+}
+@media (min-width: 900px), (min-width: 700px) and (orientation: landscape) {
+  [data-lecture] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(260px, 20vw, 380px);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "stage side";
+    column-gap: 24px;
+    padding: 16px;
+    /* A short window (a phone held sideways) scrolls the whole screen to reach the sidebar's end. */
+    overflow-y: auto;
+  }
+  [data-lecture-stage] {
+    grid-area: stage;
+    container-type: size;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+    /* The navigation row (44 px) and the gap above it. */
+    --slide-room: calc(100cqh - 52px);
+  }
+  [data-lecture-nav] {
+    width: max(min(100cqw, 480px), min(100cqw, max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778)));
+  }
+  [data-lecture-side] {
+    grid-area: side;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto 1fr auto;
+    grid-template-areas: "brand info" "jump jump" "panel panel" ". ." "spots spots";
+    align-content: start;
+    row-gap: 16px;
+  }
+  [data-lecture-top] { display: contents; }
+  [data-lecture-brand] { grid-area: brand; align-self: center; }
+  [data-lecture-info] { grid-area: info; }
+  [data-lecture-spots] { grid-area: spots; }
+  [data-lecture-jump="side"] { grid-area: jump; }
+  [data-lecture-panel] { grid-area: panel; }
+  [data-lecture-jump="pill"] { display: none; }
 }
 
 /*

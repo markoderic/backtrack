@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
 import { loadOwnTaps, makeSend } from "@/lib/lostTapApi";
+import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
-import { HighlightLayer, type Highlight } from "./HighlightLayer";
+import { HighlightLayer } from "./HighlightLayer";
 import { LostButton, type Spot } from "./LostButton";
 import { SlideStrip, type SpotKind } from "./SlideStrip";
 
@@ -30,9 +32,17 @@ type Props = {
   initialSlide: number;
 };
 
-// No student component reads or shows the slide count: the screen only knows
-// the slide the teacher is on and the ones before it (the strip runs 1 to live).
-// No keyboard shortcuts, I'm lost included: it is only the button.
+/**
+ * The student's live lecture screen. One markup, two layouts (globals.css, "student live
+ * lecture"): on a laptop or a landscape tablet the slide fills the left (about 80%) with
+ * its navigation right under it, and a sidebar on the right holds the lecture, Jump to
+ * live, the I'm lost panel and My spots; on a phone or a narrow window it stacks the top
+ * bar, the slide, the I'm lost panel and the slide strip.
+ *
+ * No student component reads or shows the slide count: the screen only knows the slide
+ * the teacher is on and the ones before it (the strip runs 1 to live). No keyboard
+ * shortcuts, I'm lost included: it is only the button.
+ */
 export function StudentLecture({ lectureId, lectureName, courseName, initialSlide }: Props) {
   const router = useRouter();
   const { state, back, forward, jumpToLive, goTo, recheck } = useLiveLecture(lectureId, initialSlide);
@@ -60,9 +70,6 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     if (kind === "lost") setCountRed((n) => n + 1);
   }, []);
 
-  // What the saved line is about: its highlight stays drawn on the slide while it shows.
-  const [barInfo, setBarInfo] = useState<{ slide: number; kind: SpotKind; rect?: Highlight["rect"] } | null>(null);
-
   // Counts the times the live connection came back, so the queue is sent again then.
   const conn = state?.conn;
   const [lastConn, setLastConn] = useState(conn);
@@ -79,11 +86,12 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const onFlushReady = useCallback((flush: (ending?: boolean) => Promise<void>) => {
     flushRef.current = flush;
   }, []);
-  // The highlight menu saves through the same queue, bar and Undo as the button.
-  const addRef = useRef<((h: Highlight) => void) | null>(null);
-  const onAddReady = useCallback((add: (h: Highlight) => void) => {
-    addRef.current = add;
+  // Mark the spot: the panel turns it on, the slide takes the drag, the panel saves the box.
+  const markRef = useRef<((rect: Rect) => void) | null>(null);
+  const onMarkReady = useCallback((mark: (rect: Rect) => void) => {
+    markRef.current = mark;
   }, []);
+  const [marking, setMarking] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   // The slide's own shape, from the image once it loads.
   const [ratio, setRatio] = useState(WIDE);
@@ -119,6 +127,13 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const reconnecting = state?.conn === "reconnecting";
   const live = state?.live ?? initialSlide;
 
+  // Another slide ends marking: the box would belong to the slide just left.
+  const [markedSlide, setMarkedSlide] = useState(viewing);
+  if (markedSlide !== viewing) {
+    setMarkedSlide(viewing);
+    if (marking) setMarking(false);
+  }
+
   // The slide changes at once; the loading text only shows when the image is slow.
   const imageKey = url ?? `slide-${viewing}`;
   useEffect(() => {
@@ -127,175 +142,179 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   }, [imageKey]);
   const loading = slowKey === imageKey && loadedSrc !== url;
 
-  const chosen = barInfo?.rect && barInfo.slide === viewing ? { kind: barInfo.kind, rect: barInfo.rect } : null;
+  // The spot on the slide on screen (the I'm lost one, or else the save) and its mark.
+  const active = useMemo(() => {
+    let lost: Spot | null = null;
+    let save: Spot | null = null;
+    for (const s of spots) {
+      if (s.slide !== viewing) continue;
+      if (s.kind === "lost") lost = s;
+      else save = s;
+    }
+    return lost ?? save;
+  }, [spots, viewing]);
+  const shown = active?.rect ? { kind: active.kind, rect: active.rect } : null;
+  // One per slide, as on the My spots page (an older lecture may have two rows on one slide).
+  const spotCount = spotKinds.size;
 
-  // The slide frame is a 16:9 box: the window width less the side padding, never
-  // taller than the room left above the controls, centered; the controls are as wide
-  // as it. A slide of another shape fits inside it at its own shape (an old 4:3 deck
-  // shows the page background on its sides), so the controls never move between decks.
-  const room = "max(calc(100cqh - var(--controls)), 96px)";
-  const frameWidth = `min(100cqw, calc(${room} * ${WIDE}))`;
-  const slideWidth = ratio >= WIDE ? frameWidth : `calc(${frameWidth} * ${ratio / WIDE})`;
+  const jumpLabel = state ? `Jump to live, slide ${state.live}` : "";
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-bg text-ink">
-      <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <LogoMark size={22} />
-          {/* Both truncate; the lecture name gives way first (a shrink factor under 1 would let the course overflow). */}
-          <p className="min-w-0 truncate type-small-strong text-ink">{courseName}</p>
-          <p className="min-w-0 shrink-[4] truncate type-lecture text-secondary max-sm:hidden">{lectureName}</p>
-        </div>
-        <Link
-          href={`/spots/${lectureId}`}
-          className="press touch-target relative flex shrink-0 items-center gap-1 rounded-md p-2 whitespace-nowrap hover:bg-surface focus-ring"
-        >
-          <span className="type-small text-secondary">My spots</span>
-          <span
-            data-count-red={countRed > 0 ? "" : undefined}
-            className={`type-small-strong transition-colors duration-(--dur-slow) ease-out ${
-              countRed > 0 ? "text-lost" : "text-ink"
-            }`}
+    <div data-lecture="" className="text-ink" style={{ "--slide-ratio": ratio } as CSSProperties}>
+      <div data-lecture-side="">
+        <div data-lecture-top="">
+          <div data-lecture-brand="" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <LogoMark size={22} />
+            {/* Both truncate; the lecture name gives way first (a shrink factor under 1 would let the course overflow). */}
+            <p className="min-w-0 flex-1 truncate type-small-strong text-ink narrow:flex-initial">{courseName}</p>
+            <p
+              data-lecture-name=""
+              className="min-w-0 shrink-[4] truncate type-lecture text-secondary max-sm:hidden wide:block wide:basis-full"
+            >
+              {lectureName}
+            </p>
+          </div>
+          <Link
+            href={`/spots/${lectureId}`}
+            data-lecture-spots=""
+            className={`${buttonSecondaryClass} touch-target relative shrink-0 narrow:h-9 wide:w-full`}
           >
-            {spots.length}
-          </span>
-        </Link>
-        {/* The popover lines up with the top bar's right edge, past the theme slot. */}
-        <InfoButton panelClassName="-right-11" />
-        {/* Room for the theme button, which comes with dark mode (not built yet). */}
-        <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
-      </header>
-      {/* Always there, so a screen reader hears when the connection drops (the line above shows it). */}
+            My spots
+            <span
+              data-count-red={countRed > 0 ? "" : undefined}
+              className={`transition-colors duration-(--dur-slow) ease-out ${countRed > 0 ? "text-lost" : "text-ink"}`}
+            >
+              {spotCount}
+            </span>
+          </Link>
+          <div data-lecture-info="" className="flex shrink-0 justify-end">
+            {/* The popover lines up with the top bar's right edge, past the theme slot (the sidebar's edge on a laptop). */}
+            <InfoButton panelClassName="-right-11 wide:right-0" />
+          </div>
+          {/* Room for the theme button, which comes with dark mode (not built yet). */}
+          <span aria-hidden data-theme-slot="" className="size-9 shrink-0 wide:hidden" />
+        </div>
+        {behind && (
+          <button
+            type="button"
+            data-lecture-jump="side"
+            onClick={jumpToLive}
+            className="press focus-ring flex h-12 w-full items-center justify-center rounded-md bg-ink px-4 type-button text-surface hover:bg-ink-hover"
+          >
+            {jumpLabel}
+          </button>
+        )}
+        <LostButton
+          key={lectureId}
+          lectureId={lectureId}
+          viewing={viewing}
+          send={send}
+          loadOwn={loadOwn}
+          onSpots={setSpots}
+          onTap={onTap}
+          reconnects={reconnects}
+          onFlushReady={onFlushReady}
+          marking={marking}
+          onMarkingChange={setMarking}
+          onMarkReady={onMarkReady}
+          // A refused tap usually means the lecture ended: read the status now, and
+          // if it did, leave the same way as when Realtime says so.
+          onRejected={recheck}
+          idle={reconnecting ? <p className="animate-fade-in type-small text-secondary">Reconnecting…</p> : null}
+        />
+      </div>
+      {/* Always there, so a screen reader hears when the connection drops (the panel shows it). */}
       <p role="status" className="sr-only">
         {reconnecting ? "Reconnecting." : ""}
       </p>
 
-      <main
-        className="min-h-0 flex-1 overflow-y-auto px-2 pb-6 pt-2 [--controls:264px] sm:px-4 sm:[--controls:224px]"
-        style={{ containerType: "size" }}
-      >
-        <div className="flex h-full flex-col items-center justify-center gap-2">
+      <div data-lecture-stage="">
+        <div data-lecture-slide="" className="relative shrink-0">
           <div
-            className="flex max-w-full shrink-0 items-center justify-center"
-            style={{ width: frameWidth, aspectRatio: WIDE } as CSSProperties}
+            data-slide=""
+            className="relative w-full rounded-sm bg-surface shadow-slide"
+            style={{ aspectRatio: ratio } as CSSProperties}
           >
-            <div
-              data-slide=""
-              className="relative max-w-full shrink-0 rounded-sm bg-surface shadow-slide"
-              style={{ width: slideWidth, aspectRatio: ratio } as CSSProperties}
-            >
-              {url && (
-                <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    ref={imageRef}
-                    src={url}
-                    alt={`Slide ${viewing}`}
-                    draggable={false}
-                    onLoad={(e) => {
-                      const img = e.currentTarget;
-                      setLoadedSrc(img.getAttribute("src"));
-                      if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
-                    }}
-                    className="absolute inset-0 h-full w-full rounded-sm object-contain"
-                  />
-                  <HighlightLayer
-                    viewing={viewing}
-                    imageRef={imageRef}
-                    onChoose={(h) => addRef.current?.(h)}
-                    chosen={chosen}
-                  />
-                </>
-              )}
-              {loading && (
-                <p className="absolute inset-0 flex animate-fade-in items-center justify-center rounded-sm bg-surface type-small text-secondary">
-                  Loading slide {viewing}
-                </p>
-              )}
-            </div>
+            {url && (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  ref={imageRef}
+                  src={url}
+                  alt={`Slide ${viewing}`}
+                  draggable={false}
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    setLoadedSrc(img.getAttribute("src"));
+                    if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
+                  }}
+                  className="absolute inset-0 h-full w-full rounded-sm object-contain"
+                />
+                <HighlightLayer
+                  imageRef={imageRef}
+                  marking={marking && active !== null}
+                  markingKind={active?.kind}
+                  onMark={(rect) => markRef.current?.(rect)}
+                  onCancel={() => setMarking(false)}
+                  shown={shown}
+                />
+              </>
+            )}
+            {loading && (
+              <p className="absolute inset-0 flex animate-fade-in items-center justify-center rounded-sm bg-surface type-small text-secondary">
+                Loading slide {viewing}
+              </p>
+            )}
           </div>
-
-          {/* At least 560 px (or the window) wide, so the saved line never wraps in a short, wide window. */}
-          <div className="flex max-w-full shrink-0 flex-col gap-2" style={{ width: `max(${frameWidth}, min(100cqw, 560px))` }}>
-            {/* Behind live on a phone, the slide number and Jump to live take a second line, so the strip keeps its room. */}
-            <div
-              data-controls=""
-              className={`flex h-14 w-full items-center gap-3 ${
-                behind ? "max-sm:h-auto max-sm:min-h-14 max-sm:flex-wrap max-sm:gap-y-2" : ""
-              }`}
+          {behind && (
+            // On a phone, Jump to live floats over the bottom edge of the slide (the sidebar has it on a laptop).
+            <button
+              type="button"
+              data-lecture-jump="pill"
+              onClick={jumpToLive}
+              className="press focus-ring absolute bottom-3 left-1/2 z-10 flex h-11 -translate-x-1/2 animate-pop-in items-center rounded-full bg-ink px-4 type-button whitespace-nowrap text-surface shadow-popover hover:bg-ink-hover"
             >
-              <div className="flex shrink-0">
-                <button
-                  type="button"
-                  aria-label="Back"
-                  onClick={back}
-                  disabled={!state || state.viewing <= 1}
-                  className={arrowClass}
-                >
-                  <Icon name="back" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Forward"
-                  onClick={forward}
-                  disabled={!state || state.viewing >= state.live}
-                  className={arrowClass}
-                >
-                  <Icon name="forward" />
-                </button>
-              </div>
-              <SlideStrip live={live} viewing={viewing} spots={spotKinds} onPick={goTo} />
-              <div
-                className={`flex shrink-0 items-center gap-2 whitespace-nowrap ${
-                  behind ? "max-sm:basis-full max-sm:justify-center" : ""
-                }`}
-              >
-                <span data-slide-number="" className="type-number-s text-ink">
-                  {viewing}
-                </span>
-                {behind ? (
-                  <button
-                    type="button"
-                    onClick={jumpToLive}
-                    className="press touch-target relative rounded-md border border-ink px-3 py-1.5 type-small-strong text-ink hover:bg-surface focus-ring"
-                  >
-                    Jump to live, slide {state.live}
-                  </button>
-                ) : (
-                  <span className="type-small text-secondary">{reconnecting ? "reconnecting" : "live"}</span>
-                )}
-              </div>
-            </div>
-            <LostButton
-              key={lectureId}
-              lectureId={lectureId}
-              viewing={viewing}
-              send={send}
-              loadOwn={loadOwn}
-              onSpots={setSpots}
-              onTap={onTap}
-              onBarChange={setBarInfo}
-              reconnects={reconnects}
-              onFlushReady={onFlushReady}
-              onAddReady={onAddReady}
-              // A refused tap usually means the lecture ended: read the status now, and
-              // if it did, leave the same way as when Realtime says so.
-              onRejected={recheck}
-              idle={
-                reconnecting ? (
-                  <p className="animate-fade-in type-small text-secondary">
-                    Reconnecting…
-                  </p>
-                ) : null
-              }
-            />
+              {jumpLabel}
+            </button>
+          )}
+        </div>
+
+        <div data-lecture-nav="" data-controls="" className="flex h-11 min-w-0 items-center">
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={back}
+            disabled={!state || state.viewing <= 1}
+            className={arrowClass}
+          >
+            <Icon name="back" />
+          </button>
+          <SlideStrip live={live} viewing={viewing} spots={spotKinds} onPick={goTo} />
+          <button
+            type="button"
+            aria-label="Forward"
+            onClick={forward}
+            disabled={!state || state.viewing >= state.live}
+            className={arrowClass}
+          >
+            <Icon name="forward" />
+          </button>
+          <div className="ml-auto flex shrink-0 items-baseline gap-2 pl-3 whitespace-nowrap">
+            <span data-slide-number="" className="type-number-s text-ink">
+              {viewing}
+            </span>
+            {reconnecting ? (
+              <span className="type-small text-secondary">reconnecting</span>
+            ) : (
+              !behind && <span className="type-small text-secondary">live</span>
+            )}
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
 
-// 36 px as designed; 44 on a touch screen (the two sit side by side, so the box itself grows).
+// 44 px, a touch target on its own.
 const arrowClass =
-  "press flex size-9 items-center justify-center rounded-md text-ink hover:enabled:bg-surface focus-ring disabled:opacity-30 pointer-coarse:size-11";
+  "press flex size-11 shrink-0 items-center justify-center rounded-md text-ink hover:enabled:bg-surface focus-ring disabled:opacity-30";

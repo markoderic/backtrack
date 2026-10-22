@@ -13,6 +13,20 @@ export const buttonPrimaryClass =
   // the spring (not with reduced motion, not when disabled).
   "press";
 
+/**
+ * The secondary button: white with a hairline border, the same Button type as the primary one,
+ * 44 px tall (a touch target on its own). For every action that is not the one main action, in
+ * place of underlined text links.
+ */
+export const buttonSecondaryClass =
+  "press focus-ring inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-hairline bg-surface px-3 " +
+  "type-button whitespace-nowrap text-ink hover:border-strip hover:bg-bg disabled:cursor-default disabled:text-secondary";
+
+/** The primary look at the secondary size (44 px), for a main action inside a panel (Save note). */
+export const buttonPrimarySmallClass =
+  "press focus-ring inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-md bg-ink px-4 " +
+  "type-button whitespace-nowrap text-surface hover:bg-ink-hover disabled:cursor-default disabled:bg-strip";
+
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
 
 export function ButtonPrimary({ className = "", type = "button", ...props }: ButtonProps) {

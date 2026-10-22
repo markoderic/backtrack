@@ -20,7 +20,7 @@ describe("InfoButton", () => {
     expect(screen.getByRole("button", { name: "Help" })).toHaveAttribute("aria-expanded", "true");
     expect(panel).toHaveTextContent("How it works");
     expect(panel).toHaveTextContent(HELP);
-    expect(panel).toHaveTextContent("Drag across part of a slide to mark exactly what lost you, or save it for later.");
+    expect(panel).toHaveTextContent("After I'm lost, Mark the spot lets you drag over the exact part. Save this keeps a slide just for you.");
     expect(panel).toHaveTextContent("Nobody sees your name, not even your teacher. Your spots stay in this browser.");
     expect(panel.querySelectorAll("p")).toHaveLength(4);
   });
