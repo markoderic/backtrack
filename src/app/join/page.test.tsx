@@ -395,4 +395,9 @@ describe("Join page", () => {
     fireEvent.click(joinButton());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not join. Try again.");
   });
+
+  it("has a quiet Privacy link in the footer", () => {
+    render(<JoinPage />);
+    expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/privacy");
+  });
 });

@@ -7,6 +7,7 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { ButtonPrimary } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { LogoLockup } from "@/components/Logo";
+import { PrivacyLink } from "@/components/PrivacyLink";
 
 // One message for a code that ended and one that never existed: join_lecture cannot tell them apart.
 const NOT_ACTIVE = "That code isn't active.";
@@ -162,7 +163,7 @@ export default function JoinPage() {
   const shake = error === NOT_ACTIVE && wrongCount > 0 ? (wrongCount % 2 ? "animate-shake" : "animate-shake-again") : "";
 
   return (
-    <main className="flex min-h-dvh flex-col bg-bg">
+    <main className="relative flex min-h-dvh flex-col bg-bg">
       <header className="flex items-center p-4">
         <Link href="/" className="press focus-ring flex rounded-xs">
           <LogoLockup size="S" />
@@ -247,6 +248,9 @@ export default function JoinPage() {
           {!error && <div aria-hidden className="h-5" />}
         </div>
       </form>
+      <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-4">
+        <PrivacyLink />
+      </footer>
     </main>
   );
 }

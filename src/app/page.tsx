@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 import { LogoLockup } from "@/components/Logo";
+import { PrivacyLink } from "@/components/PrivacyLink";
 
 /**
  * Home (Figma 31:74): the logo and two choices, Join a class (the one primary button) and I'm a teacher.
@@ -8,7 +9,7 @@ import { LogoLockup } from "@/components/Logo";
  */
 export default function Home() {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-bg px-4">
+    <main className="relative flex min-h-dvh flex-col items-center justify-center bg-bg px-4">
       <div className="flex w-full animate-page-in flex-col items-center gap-10">
         <h1>
           <LogoLockup size="L" />
@@ -21,6 +22,10 @@ export default function Home() {
           </Link>
         </nav>
       </div>
+      {/* Quiet footer: out of the flow, so the logo and the two choices stay exactly centered. */}
+      <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-6">
+        <PrivacyLink />
+      </footer>
     </main>
   );
 }
