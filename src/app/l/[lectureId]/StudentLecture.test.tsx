@@ -81,11 +81,23 @@ beforeEach(() => {
 });
 
 describe("StudentLecture", () => {
-  it("shows the class, the lecture name and LIVE", () => {
+  it("shows the class and the lecture name in the top bar, and live next to the slide number", () => {
     show();
-    expect(screen.getByText("IMS 452")).toBeInTheDocument();
-    expect(screen.getByText("Lecture 3, Oct 26")).toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    const bar = screen.getByRole("banner");
+    expect(within(bar).getByText("IMS 452")).toBeInTheDocument();
+    expect(within(bar).getByText("Lecture 3, Oct 26")).toBeInTheDocument();
+    // The lecture name hides on a phone.
+    expect(within(bar).getByText("Lecture 3, Oct 26").className).toContain("max-sm:hidden");
+    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
+    expect(screen.getByText("live")).toBeInTheDocument();
+  });
+
+  it("has a My spots link with the count in the top bar, and no theme button yet", () => {
+    show();
+    const link = within(screen.getByRole("banner")).getByRole("link", { name: /My spots/ });
+    expect(link).toHaveAttribute("href", `/spots/${LECTURE}`);
+    expect(link).toHaveTextContent("My spots0");
+    expect(within(screen.getByRole("banner")).getAllByRole("button")).toHaveLength(1);
   });
 
   it("shows the live slide as large as it can, at its own shape", () => {
@@ -122,13 +134,15 @@ describe("StudentLecture", () => {
     const { container } = show(7);
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
     expect(numberShown("7")).toHaveLength(1);
-    expect(container.textContent ?? "").not.toMatch(/\bof\b/i);
+    // The help text says "part of a slide", so look for a count like "7 of 10" rather than the word alone.
+    expect(container.textContent ?? "").not.toMatch(/\d\s*of\s*\d/i);
+    expect(container.textContent ?? "").not.toMatch(/10/);
   });
 
   it("has the help button in the layout", () => {
     show();
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Nobody sees your name.");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Nobody sees your name, not even your teacher.");
   });
 
   it("Forward is disabled at the live slide and there is no jump button", () => {
@@ -181,18 +195,22 @@ describe("StudentLecture", () => {
     expect(screen.queryByRole("button", { name: /Jump to live/ })).not.toBeInTheDocument();
   });
 
-  it("shows a Reconnecting... bar while the channel is down and clears it when it is back", async () => {
-    show();
-    expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument();
+  it("shows Reconnecting… while the channel is down and clears it when it is back", async () => {
+    const { container } = show();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
     act(() => channel.status?.("CHANNEL_ERROR"));
-    expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
+    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+    // In the saved row, and the word next to the slide number says so too.
+    expect(container.querySelector("[data-bar]")).toContainElement(screen.getByText("Reconnecting…"));
+    expect(screen.getByText("reconnecting")).toBeInTheDocument();
+    expect(screen.queryByText("live")).not.toBeInTheDocument();
     single.mockResolvedValue({ data: { current_slide: 9, status: "live", slide_count: 10 }, error: null });
     await act(async () => channel.status?.("SUBSCRIBED"));
-    await waitFor(() => expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument());
     expect(shownSrc()).toBe("https://signed/9.webp");
   });
 
-  it("keeps the Reconnecting... bar when the read after a drop fails, then jumps to live on a retry", async () => {
+  it("keeps Reconnecting… when the read after a drop fails, then jumps to live on a retry", async () => {
     vi.useFakeTimers();
     try {
       show();
@@ -201,12 +219,12 @@ describe("StudentLecture", () => {
       act(() => channel.status?.("CHANNEL_ERROR"));
       single.mockResolvedValue({ data: null, error: { message: "Failed to fetch" } });
       await act(async () => channel.status?.("SUBSCRIBED"));
-      expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
       expect(shownSrc()).toBe("https://signed/6.webp");
 
       single.mockResolvedValue({ data: { current_slide: 9, status: "live", slide_count: 10 }, error: null });
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument();
+      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
       expect(shownSrc()).toBe("https://signed/9.webp");
     } finally {
       vi.useRealTimers();
@@ -247,6 +265,39 @@ describe("StudentLecture", () => {
     for (const call of from.mock.calls as unknown as string[][]) expect(["lectures", "lost_taps"]).toContain(call[0]);
   });
 
+  it("says Loading slide 7 only when the image takes over 300 ms", async () => {
+    vi.useFakeTimers();
+    try {
+      show(7);
+      await act(async () => vi.advanceTimersByTimeAsync(299));
+      expect(screen.queryByText("Loading slide 7")).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(screen.getByText("Loading slide 7")).toBeInTheDocument();
+      fireEvent.load(screen.getByRole("img"));
+      expect(screen.queryByText("Loading slide 7")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows a slide that loaded in time with no loading text, and takes the slide's own shape from the image", async () => {
+    vi.useFakeTimers();
+    try {
+      show(7);
+      const img = screen.getByRole("img");
+      Object.defineProperty(img, "naturalWidth", { value: 1024, configurable: true });
+      Object.defineProperty(img, "naturalHeight", { value: 768, configurable: true });
+      fireEvent.load(img);
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(screen.queryByText(/Loading slide/)).not.toBeInTheDocument();
+      const box = img.parentElement as HTMLElement;
+      expect(box).toHaveAttribute("data-slide");
+      expect(box.style.aspectRatio).toMatch(/^1\.333/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("has no total anywhere in its markup, even for the jump button", () => {
     const { container } = show(7);
     fireEvent.click(back());
@@ -283,19 +334,55 @@ describe("StudentLecture", () => {
     });
 
     it("shows a dot on each slide where the student already has a row", async () => {
-      ownRows.mockResolvedValue({ data: [{ id: "a", slide_number: 3 }, { id: "b", slide_number: 5 }], error: null, status: 200 });
+      ownRows.mockResolvedValue({
+        data: [
+          { id: "a", slide_number: 3, kind: "lost" },
+          { id: "b", slide_number: 5, kind: "save" },
+        ],
+        error: null,
+        status: 200,
+      });
       show(7);
-      await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 3, saved" })).toBeInTheDocument());
+      await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 3, lost" })).toBeInTheDocument());
       expect(within(strip()).getByRole("button", { name: "Slide 5, saved" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /My spots/ })).toHaveTextContent("My spots2");
       expect(within(strip()).getByRole("button", { name: "Slide 7, live, viewing" })).toBeInTheDocument();
     });
   });
 
   describe("I'm lost", () => {
-    it("sits in the bottom row with Back and Forward", () => {
+    it("sits alone in its own row under the strip row, which holds Back, Forward, the strip and the number", () => {
       show();
-      expect(lost().parentElement).toContainElement(back());
-      expect(lost().parentElement).toContainElement(forward());
+      const row = lost().parentElement as HTMLElement;
+      expect(row.children).toHaveLength(1);
+      expect(row).not.toContainElement(back());
+      const stripRow = strip().parentElement as HTMLElement;
+      expect(stripRow).toContainElement(back());
+      expect(stripRow).toContainElement(forward());
+      expect(numberShown("7")[0]).toHaveAttribute("data-slide-number");
+      expect(stripRow).toContainElement(numberShown("7")[0]);
+      expect(stripRow.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("turns the My spots count red for 2 seconds after a tap, and counts it", async () => {
+      vi.useFakeTimers();
+      try {
+        show(7);
+        await act(async () => {});
+        const count = () => screen.getByRole("link", { name: /My spots/ }).lastElementChild as HTMLElement;
+        expect(count()).not.toHaveAttribute("data-count-red");
+        fireEvent.click(lost());
+        expect(count()).toHaveTextContent("1");
+        expect(count()).toHaveAttribute("data-count-red");
+        expect(count().className).toContain("text-lost");
+        await act(async () => vi.advanceTimersByTimeAsync(1999));
+        expect(count()).toHaveAttribute("data-count-red");
+        await act(async () => vi.advanceTimersByTimeAsync(1));
+        expect(count()).not.toHaveAttribute("data-count-red");
+        expect(count().className).toContain("text-ink");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("records the slide being viewed, shows Saved slide 6 and puts a dot on it", async () => {
@@ -304,7 +391,7 @@ describe("StudentLecture", () => {
       fireEvent.click(back());
       fireEvent.click(lost());
       expect(screen.getByText("Saved slide 6")).toBeInTheDocument();
-      expect(within(strip()).getByRole("button", { name: "Slide 6, viewing, saved" })).toBeInTheDocument();
+      expect(within(strip()).getByRole("button", { name: "Slide 6, viewing, lost" })).toBeInTheDocument();
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
       expect(from).toHaveBeenCalledWith("lost_taps");
       expect(upsert.mock.calls[0][0]).toMatchObject({
@@ -337,7 +424,7 @@ describe("StudentLecture", () => {
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
       act(() => channel.status?.("CHANNEL_ERROR"));
       await act(async () => channel.status?.("SUBSCRIBED"));
-      await waitFor(() => expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument());
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(2));
       expect(upsert.mock.calls[1][0]).toEqual(upsert.mock.calls[0][0]);
     });
@@ -489,8 +576,16 @@ describe("StudentLecture highlighting", () => {
       hl_w: 0.2,
       hl_h: 0.2,
     });
-    expect(screen.getByText("Saved slide 6")).toBeInTheDocument();
+    expect(screen.getByText("Saved slide 6, just for you")).toBeInTheDocument();
     expect(within(strip()).getByRole("button", { name: "Slide 6, viewing, saved" })).toBeInTheDocument();
+    // A save is not an I'm lost: the count goes up but does not turn red, and the button keeps its look.
+    const count = screen.getByRole("link", { name: /My spots/ }).lastElementChild as HTMLElement;
+    expect(count).toHaveTextContent("1");
+    expect(count).not.toHaveAttribute("data-count-red");
+    expect(lost()).toHaveAttribute("data-phase", "default");
+    // The box stays drawn with the save look while the saved line shows.
+    const box = document.querySelector("[data-highlight-box]") as HTMLElement;
+    expect(box.className).toContain("border-ink");
   });
 
   it("I'm lost from the menu sends kind lost with the box", async () => {
@@ -500,6 +595,11 @@ describe("StudentLecture highlighting", () => {
     fireEvent.click(within(menu()).getByRole("button", { name: "I'm lost" }));
     await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
     expect(upsert.mock.calls[0][0]).toMatchObject({ kind: "lost", slide_number: 7, hl_x: 0.1, hl_w: 0.2 });
+    // The button shows Saved, the box stays in the lost look, and it goes when the student undoes it.
+    expect(lost()).toHaveAttribute("data-phase", "saved");
+    expect((document.querySelector("[data-highlight-box]") as HTMLElement).className).toContain("bg-lost-tint");
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(document.querySelector("[data-highlight-box]")).toBeNull();
   });
 
   it("the plain I'm lost button sends no highlight", async () => {

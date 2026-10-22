@@ -2,7 +2,7 @@ import { Component, type ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import type { QueueOp, SendResult } from "@/lib/tapQueue";
-import { LostButton } from "./LostButton";
+import { LostButton, UNDO_WINDOW_MS, type Spot } from "./LostButton";
 
 class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -23,18 +23,23 @@ const okSend = () => vi.fn<Send>(async () => "ok");
 
 function setup(over: Partial<Parameters<typeof LostButton>[0]> = {}) {
   const send = (over.send as ReturnType<typeof okSend> | undefined) ?? okSend();
-  const onSpots = vi.fn<(s: Set<number>) => void>();
-  const loadOwn = vi.fn(async () => [] as { id: string; slide: number }[] | null);
+  const onSpots = vi.fn<(s: Spot[]) => void>();
+  const loadOwn = vi.fn(async () => [] as { id: string; slide: number; kind?: "lost" | "save" }[] | null);
   const view = render(
     <LostButton lectureId={LECTURE} viewing={7} send={send} loadOwn={loadOwn} onSpots={onSpots} {...over} />,
   );
-  const lastSpots = () => [...(onSpots.mock.lastCall?.[0] ?? [])].sort((a, b) => a - b);
+  // The slides that have a dot (one per slide, however many rows it has).
+  const lastSpots = () => [...new Set((onSpots.mock.lastCall?.[0] ?? []).map((x) => x.slide))].sort((a, b) => a - b);
   return { ...view, send, onSpots, loadOwn, lastSpots };
 }
 
 const press = () => fireEvent.click(screen.getByRole("button", { name: "I'm lost" }));
 const undo = () => fireEvent.click(screen.getByRole("button", { name: "Undo" }));
 const settle = () => act(async () => {});
+const noteField = () => screen.getByRole("textbox", { name: "Add a note" });
+const typeNote = (text: string) => fireEvent.change(noteField(), { target: { value: text } });
+// Enter in the note field submits its form.
+const sendNote = () => fireEvent.submit(noteField().closest("form") as HTMLFormElement);
 const ops = (send: ReturnType<typeof okSend>) => send.mock.calls.map((c) => c[0]);
 
 beforeEach(() => {
@@ -162,13 +167,17 @@ describe("LostButton", () => {
     });
   });
 
-  describe("8 second window", () => {
-    it("closes the bar and the Undo button after 8 seconds", async () => {
+  describe("10 second window", () => {
+    it("is 10 seconds", () => {
+      expect(UNDO_WINDOW_MS).toBe(10000);
+    });
+
+    it("closes the bar and the Undo button after 10 seconds", async () => {
       vi.useFakeTimers();
       setup();
       await settle();
       press();
-      await act(async () => vi.advanceTimersByTime(7999));
+      await act(async () => vi.advanceTimersByTime(9999));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
       await act(async () => vi.advanceTimersByTime(1));
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
@@ -180,7 +189,7 @@ describe("LostButton", () => {
       const { lastSpots } = setup();
       await settle();
       press();
-      await act(async () => vi.advanceTimersByTime(8000));
+      await act(async () => vi.advanceTimersByTime(10000));
       expect(lastSpots()).toEqual([7]);
     });
 
@@ -189,64 +198,106 @@ describe("LostButton", () => {
       const { send } = setup({ viewing: 7 });
       await settle();
       press();
-      await act(async () => vi.advanceTimersByTime(5000));
+      await act(async () => vi.advanceTimersByTime(6000));
       press();
-      await act(async () => vi.advanceTimersByTime(5000));
+      await act(async () => vi.advanceTimersByTime(6000));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
-      await act(async () => vi.advanceTimersByTime(3000));
+      await act(async () => vi.advanceTimersByTime(4000));
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
       expect(ops(send).filter((o) => o.op === "insert")).toHaveLength(2);
     });
 
-    it("gives 8 more seconds while the student types a note", async () => {
+    it("stays open while a note is being typed, and 10 seconds after it is sent", async () => {
       vi.useFakeTimers();
       setup();
       await settle();
       press();
-      await act(async () => vi.advanceTimersByTime(7000));
-      fireEvent.change(screen.getByPlaceholderText("What lost you? Optional"), { target: { value: "the second step" } });
-      await act(async () => vi.advanceTimersByTime(7000));
+      await act(async () => vi.advanceTimersByTime(9000));
+      typeNote("the second step");
+      await act(async () => vi.advanceTimersByTime(30000));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
-      await act(async () => vi.advanceTimersByTime(1000));
+      sendNote();
+      await act(async () => vi.advanceTimersByTime(9999));
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(1));
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    });
+
+    it("Esc drops the note being typed and the 10 seconds start over", async () => {
+      vi.useFakeTimers();
+      const { send } = setup();
+      await settle();
+      press();
+      typeNote("never mind");
+      await act(async () => vi.advanceTimersByTime(20000));
+      fireEvent.keyDown(noteField(), { key: "Escape" });
+      expect(noteField()).toHaveValue("");
+      await act(async () => vi.advanceTimersByTime(9999));
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+      // The tap stays, no note went out.
+      expect(ops(send).map((o) => o.op)).toEqual(["insert"]);
+    });
+
+    it("closes on the next slide, but not while a note is being typed", async () => {
+      const { rerender, send, loadOwn, onSpots, lastSpots } = setup({ viewing: 7 });
+      await settle();
+      press();
+      rerender(<LostButton lectureId={LECTURE} viewing={8} send={send} loadOwn={loadOwn} onSpots={onSpots} />);
+      expect(screen.queryByText("Saved slide 7")).not.toBeInTheDocument();
+      press();
+      expect(screen.getByText("Saved slide 8")).toBeInTheDocument();
+      typeNote("hm");
+      rerender(<LostButton lectureId={LECTURE} viewing={9} send={send} loadOwn={loadOwn} onSpots={onSpots} />);
+      expect(screen.getByText("Saved slide 8")).toBeInTheDocument();
+      // The dots stay either way.
+      expect(lastSpots()).toEqual([7, 8]);
     });
   });
 
   describe("note", () => {
-    it("has a one line input limited to 140 characters and a Save button", async () => {
+    it("is the saved line: Saved slide 7, a one line Add a note field limited to 140 characters, Undo, and no Save button", async () => {
       setup();
       await settle();
       press();
-      const input = screen.getByPlaceholderText("What lost you? Optional");
+      const input = screen.getByPlaceholderText("Add a note");
+      expect(input).toBe(noteField());
       expect(input).toHaveAttribute("maxLength", "140");
       expect(input.tagName).toBe("INPUT");
-      expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+      const line = screen.getByText("Saved slide 7").parentElement as HTMLElement;
+      expect(line).toContainElement(input);
+      expect(line).toContainElement(screen.getByRole("button", { name: "Undo" }));
     });
 
-    it("Save queues a note update for the tap and sends it", async () => {
+    it("Enter queues a note update for the tap and sends it", async () => {
       const { send } = setup();
       await settle();
       press();
       await settle();
-      fireEvent.change(screen.getByPlaceholderText("What lost you? Optional"), { target: { value: "  the second step  " } });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      typeNote("  the second step  ");
+      sendNote();
       await settle();
       const [insert, update] = ops(send);
       if (insert.op !== "insert") throw new Error("expected an insert");
       expect(update).toEqual({ op: "update", id: insert.tap.id, patch: { note: "the second step" } });
-      expect(screen.getByText("Note saved")).toBeInTheDocument();
-      expect(screen.queryByPlaceholderText("What lost you? Optional")).not.toBeInTheDocument();
+      expect(screen.getByText("Note saved:")).toBeInTheDocument();
+      expect(screen.getByText("the second step")).toBeInTheDocument();
+      expect(screen.queryByPlaceholderText("Add a note")).not.toBeInTheDocument();
     });
 
-    it("Save does nothing for a blank note", async () => {
+    it("Enter does nothing for a blank note", async () => {
       const { send } = setup();
       await settle();
       press();
       await settle();
-      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-      fireEvent.change(screen.getByPlaceholderText("What lost you? Optional"), { target: { value: "   " } });
-      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      sendNote();
+      typeNote("   ");
+      sendNote();
+      await settle();
       expect(send).toHaveBeenCalledTimes(1);
+      expect(noteField()).toBeInTheDocument();
     });
 
     it("Undo after a note on an unsent tap sends neither", async () => {
@@ -255,8 +306,8 @@ describe("LostButton", () => {
       await settle();
       press();
       await settle();
-      fireEvent.change(screen.getByPlaceholderText("What lost you? Optional"), { target: { value: "x" } });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      typeNote("x");
+      sendNote();
       await settle();
       undo();
       act(() => {
@@ -460,11 +511,95 @@ describe("LostButton", () => {
     });
   });
 
-  it("puts what it is given before and after the button", async () => {
-    setup({ before: <span>BEFORE</span>, after: <span>AFTER</span> });
+  it("puts the button alone in its 104 px row, centered, above the saved row", async () => {
+    const { container } = setup();
     await settle();
     const row = screen.getByRole("button", { name: "I'm lost" }).parentElement as HTMLElement;
-    expect(row.textContent).toBe("BEFOREI'm lostAFTER");
+    expect(row.children).toHaveLength(1);
+    expect(row.className).toMatch(/\bh-26\b/);
+    expect(row.className).toContain("justify-center");
+    const bar = container.querySelector("[data-bar]") as HTMLElement;
+    expect(row.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows idle content (Reconnecting…) in the saved row only while there is nothing else to say", async () => {
+    setup({ idle: <p>Reconnecting…</p> });
+    await settle();
+    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+    press();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+    expect(screen.getByText("Saved slide 7")).toBeInTheDocument();
+  });
+
+  it("tells the page about each tap, after it is queued", async () => {
+    const order: string[] = [];
+    const send = vi.fn<Send>(async () => {
+      order.push("send");
+      return "ok";
+    });
+    const onTap = vi.fn(() => order.push("tap"));
+    setup({ send, onTap });
+    await settle();
+    press();
+    expect(onTap).toHaveBeenCalledWith("lost");
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toHaveLength(1);
+  });
+
+  it("shows Saved on the button right after a press (ring and check)", async () => {
+    vi.useFakeTimers();
+    setup();
+    await settle();
+    press();
+    const button = screen.getByRole("button", { name: "I'm lost" });
+    expect(button).toHaveAttribute("data-phase", "pressed");
+    await act(async () => vi.advanceTimersByTime(120));
+    expect(button).toHaveAttribute("data-phase", "saved");
+    await act(async () => vi.advanceTimersByTime(2000));
+    expect(button).toHaveAttribute("data-phase", "default");
+  });
+
+  describe("from the highlight menu", () => {
+    const RECT = { x: 0.1, y: 0.2, w: 0.3, h: 0.1 };
+    function withAdd(over: Partial<Parameters<typeof LostButton>[0]> = {}) {
+      let add: ((h: { kind: "lost" | "save"; rect: typeof RECT }) => void) | undefined;
+      const onBarChange = vi.fn();
+      const onTap = vi.fn();
+      const view = setup({ onAddReady: (a) => (add = a), onBarChange, onTap, ...over });
+      return { ...view, add: (kind: "lost" | "save") => act(() => add?.({ kind, rect: RECT })), onBarChange, onTap };
+    }
+
+    it("I'm lost gives the button its Saved look and reports the box for the slide", async () => {
+      vi.useFakeTimers();
+      const { add, onBarChange, onTap } = withAdd();
+      await settle();
+      add("lost");
+      expect(screen.getByRole("button", { name: "I'm lost" })).toHaveAttribute("data-phase", "saved");
+      expect(screen.getByText("Saved slide 7")).toBeInTheDocument();
+      expect(onBarChange).toHaveBeenLastCalledWith({ slide: 7, kind: "lost", rect: RECT });
+      expect(onTap).toHaveBeenCalledWith("lost");
+      await act(async () => vi.advanceTimersByTime(2000));
+      expect(screen.getByRole("button", { name: "I'm lost" })).toHaveAttribute("data-phase", "default");
+    });
+
+    it("Save this leaves the button as it is and says it is just for you", async () => {
+      const { add, onBarChange, onTap, lastSpots, onSpots } = withAdd();
+      await settle();
+      add("save");
+      expect(screen.getByRole("button", { name: "I'm lost" })).toHaveAttribute("data-phase", "default");
+      expect(screen.getByText("Saved slide 7, just for you")).toBeInTheDocument();
+      expect(onBarChange).toHaveBeenLastCalledWith({ slide: 7, kind: "save", rect: RECT });
+      expect(onTap).toHaveBeenCalledWith("save");
+      expect(lastSpots()).toEqual([7]);
+      expect(onSpots.mock.lastCall?.[0]).toEqual([{ slide: 7, kind: "save" }]);
+    });
+
+    it("reports null when the saved line goes (Undo)", async () => {
+      const { add, onBarChange } = withAdd();
+      await settle();
+      add("lost");
+      undo();
+      expect(onBarChange).toHaveBeenLastCalledWith(null);
+    });
   });
 
   it("keeps a row of the same height before and after a tap", async () => {

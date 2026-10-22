@@ -2,32 +2,47 @@ import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { InfoButton } from "./InfoButton";
 
-const HELP = "Tap I'm lost when you lose track. Backtrack saves the slide so you can come back to it after class.";
+const HELP = "Lost the thread? Tap I'm lost. The slide is saved and the lecture keeps going.";
 
 describe("InfoButton", () => {
-  it("shows only the button until it is pressed", () => {
-    render(<InfoButton />);
+  it("shows only the info icon button until it is pressed", () => {
+    const { container } = render(<InfoButton />);
     expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
+    expect(container.querySelector('[data-icon="info"]')).not.toBeNull();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByText(HELP)).not.toBeInTheDocument();
   });
 
-  it("opens a panel with the three lines", () => {
+  it("opens the How it works popover with the three lines", () => {
     render(<InfoButton />);
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
     const panel = screen.getByRole("dialog");
+    expect(screen.getByRole("button", { name: "Help" })).toHaveAttribute("aria-expanded", "true");
+    expect(panel).toHaveTextContent("How it works");
     expect(panel).toHaveTextContent(HELP);
-    expect(panel).toHaveTextContent(
-      "Drag on the slide to highlight a part, then pick I'm lost or Save this. Saves are only for you.",
-    );
-    expect(panel).toHaveTextContent("Nobody sees your name.");
-    expect(panel.querySelectorAll("p")).toHaveLength(3);
+    expect(panel).toHaveTextContent("Drag across part of a slide to mark exactly what lost you, or save it for later.");
+    expect(panel).toHaveTextContent("Nobody sees your name, not even your teacher. Your spots stay in this browser.");
+    expect(panel.querySelectorAll("p")).toHaveLength(4);
   });
 
-  it("closes with the Close button", () => {
+  it("closes when the button is pressed again", () => {
     render(<InfoButton />);
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes on a press outside it, not on a press inside it", () => {
+    render(
+      <>
+        <InfoButton />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    fireEvent.pointerDown(screen.getByRole("dialog"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

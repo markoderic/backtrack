@@ -195,10 +195,29 @@
 
 /* The focus ring from Parts: 2px ink, set off from the control (4px for buttons, 5px for I'm lost). */
 @utility focus-ring {
-  outline: none;
+  /* No ring until keyboard focus; then it fades in (an element with \`press\` transitions outline-color). */
+  outline: 0 solid transparent;
+  outline-offset: 4px;
   &:focus-visible {
     outline: 2px solid var(--color-ink);
     outline-offset: 4px;
+  }
+}
+
+/*
+ * Press feedback for anything clickable (Marko, 2:18 AM): hover colors ease out over
+ * 120 ms, the focus ring fades in, and a press scales to .97 on the spring. With
+ * reduced motion there is no scale; the color changes stay.
+ */
+@utility press {
+  transition-property: color, background-color, border-color, opacity, outline-color, scale;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out),
+    var(--ease-spring);
+  @media (prefers-reduced-motion: no-preference) {
+    &:active:not(:disabled) {
+      scale: 0.97;
+    }
   }
 }
 

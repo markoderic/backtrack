@@ -14,18 +14,20 @@ type Props = {
   imageRef: RefObject<HTMLImageElement | null>;
   /** The student picked I'm lost or Save this for the box they drew. */
   onChoose: (highlight: Highlight) => void;
+  /** A box that was just chosen on this slide, drawn in its kind's look while its saved line shows. */
+  chosen?: { kind: Highlight["kind"]; rect: Rect } | null;
 };
 
 const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
 
-/** The menu is about 106 px tall (note field, buttons, padding); a little extra keeps it clear of the edge. */
-const MENU_HEIGHT = 116;
+/** The menu is 46 px tall (one row of two items, padding, border); a little extra keeps it clear of the edge. */
+export const MENU_HEIGHT = 52;
 const MENU_GAP = 8;
 
 /**
  * Where the menu's top edge goes, in px from the top of the slide: under the box if
  * there is room, else above it, else inside the slide against the box's bottom edge.
- * It never leaves the slide, so the note field and both buttons are always on screen.
+ * It never leaves the slide, so both buttons are always on screen.
  */
 export function menuTop(rect: Rect, slideHeight: number): number {
   const top = rect.y * slideHeight;
@@ -37,29 +39,25 @@ export function menuTop(rect: Rect, slideHeight: number): number {
 }
 
 /**
- * Sits over the slide image. A drag with a mouse or pen draws a box and opens a
- * small menu by it: I'm lost, Save this, and an optional note. On a touch screen
+ * Sits over the slide image. A drag with a mouse or pen draws a dashed box and opens
+ * a small menu under it: I'm lost or Save this (a note can be added in the saved
+ * line after). On a touch screen
  * a small Highlight button turns drawing on first, so the page still scrolls. A
  * click, or a drag under 2% of the slide in both directions, does nothing. Esc or
  * a press anywhere else cancels. There is no keyboard shortcut.
  */
-export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
+export function HighlightLayer({ viewing, imageRef, onChoose, chosen = null }: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState<{ rect: Rect; slide: number } | null>(null);
-  const [note, setNote] = useState("");
   const [touchOn, setTouchOn] = useState(false);
   const [coarse, setCoarse] = useState(false);
 
   // A box drawn on another slide is not this slide's.
-  if (pending && pending.slide !== viewing) {
-    setPending(null);
-    setNote("");
-  }
+  if (pending && pending.slide !== viewing) setPending(null);
 
   function cancel() {
     setPending(null);
-    setNote("");
   }
 
   const { box, draft, handlers } = useDragRect({
@@ -108,13 +106,14 @@ export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
 
   function choose(kind: Highlight["kind"]) {
     if (!pending) return;
-    const text = note.trim();
-    onChoose({ kind, rect: pending.rect, ...(text ? { note: text } : {}) });
+    onChoose({ kind, rect: pending.rect });
     cancel();
   }
 
-  const shown = draft ?? pending?.rect ?? null;
-  const centre = pending ? pending.rect.x + pending.rect.w / 2 : 0;
+  const drawing = draft ?? pending?.rect ?? null;
+  const item =
+    "press flex items-center gap-2 rounded-sm px-3.5 py-2 type-small-strong text-ink whitespace-nowrap " +
+    "hover:bg-bg focus-ring focus-visible:outline-offset-0";
 
   return (
     <>
@@ -128,35 +127,40 @@ export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
         onPointerUp={handlers.onPointerUp}
         onPointerCancel={handlers.onPointerCancel}
       >
-        {/* The box of the slide itself, so the rects are fractions of the slide and not of the black bars. */}
+        {/* The box of the slide itself, so the rects are fractions of the slide and not of the space around it. */}
         <div className="absolute" style={slideBoxStyle(box)}>
-          {shown && <HighlightBoxes rects={[shown]} />}
+          {drawing ? (
+            // Dashed until they choose.
+            <HighlightBoxes rects={[drawing]} boxClassName="rounded-xs border-[1.5px] border-dashed border-ink bg-ink/5" />
+          ) : chosen ? (
+            <HighlightBoxes
+              rects={[chosen.rect]}
+              boxClassName={
+                chosen.kind === "lost"
+                  ? "rounded-xs border-2 border-lost bg-lost-tint mix-blend-multiply animate-fade-in"
+                  : "rounded-xs border-[1.5px] border-ink animate-fade-in"
+              }
+            />
+          ) : null}
           {pending && (
+            // A full width row at the menu's height: the spacer puts the menu under the box's left
+            // edge and shrinks when the menu would run past the slide's right edge.
             <div
               ref={menuRef}
               role="group"
               aria-label="Highlight"
-              className="absolute z-10 flex w-64 max-w-full cursor-auto select-text flex-col gap-2 border border-white bg-black p-2 text-white"
-              style={{
-                left: pct(centre),
-                transform: `translateX(-${pct(centre)})`,
-                top: menuTop(pending.rect, box?.height ?? 0),
-              }}
+              className="pointer-events-none absolute left-0 right-0 z-10 flex cursor-auto select-text"
+              style={{ top: menuTop(pending.rect, box?.height ?? 0) }}
             >
-              <input
-                type="text"
-                maxLength={140}
-                placeholder="Add a note. Optional"
-                aria-label="Note, optional"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                className="h-10 min-w-0 border border-white bg-transparent px-2"
-              />
-              <div className="flex gap-2">
-                <button type="button" onClick={() => choose("lost")} className="h-10 flex-1 border border-white px-3">
+              <div aria-hidden className="min-w-0 shrink" style={{ flexBasis: pct(pending.rect.x) }} />
+              <div className="pointer-events-auto flex shrink-0 animate-pop-in items-center rounded-md border border-hairline bg-surface p-1 shadow-popover origin-top-left">
+                <button type="button" onClick={() => choose("lost")} className={item}>
+                  <span aria-hidden className="size-2 rounded-full bg-lost" />
                   I&apos;m lost
                 </button>
-                <button type="button" onClick={() => choose("save")} className="h-10 flex-1 border border-white px-3">
+                <span aria-hidden className="h-5 w-px bg-hairline" />
+                <button type="button" onClick={() => choose("save")} className={item}>
+                  <span aria-hidden className="size-2 rounded-full border-[1.5px] border-ink" />
                   Save this
                 </button>
               </div>
@@ -172,7 +176,9 @@ export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
             setTouchOn((on) => !on);
             cancel();
           }}
-          className={`absolute bottom-2 right-2 z-10 border border-white px-3 py-2 text-sm ${touchOn ? "bg-white text-black" : "bg-black text-white"}`}
+          className={`press absolute bottom-2 right-2 z-10 rounded-md border px-3 py-1.5 type-small-strong focus-ring ${
+            touchOn ? "border-ink bg-ink text-surface" : "border-hairline bg-surface text-ink"
+          }`}
         >
           Highlight
         </button>

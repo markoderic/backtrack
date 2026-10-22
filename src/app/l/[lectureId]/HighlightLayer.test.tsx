@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
 import { useRef } from "react";
 import type { QueueOp, SendResult } from "@/lib/tapQueue";
-import { HighlightLayer } from "./HighlightLayer";
+import { HighlightLayer, MENU_HEIGHT } from "./HighlightLayer";
 import { LostButton } from "./LostButton";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
@@ -75,13 +75,15 @@ describe("HighlightLayer", () => {
     expect(screen.queryByRole("button", { name: "Highlight" })).not.toBeInTheDocument();
   });
 
-  it("a mouse drag draws a box and opens the menu with I'm lost, Save this and a note", () => {
+  it("a mouse drag draws a dashed box and opens the menu with I'm lost and Save this (the note comes after, in the saved line)", () => {
     const { container } = render(<Stage onChoose={vi.fn()} />);
     drag([300, 200], [100, 100]);
     const m = within(menu()!);
     expect(m.getByRole("button", { name: "I'm lost" })).toBeInTheDocument();
     expect(m.getByRole("button", { name: "Save this" })).toBeInTheDocument();
-    expect(m.getByRole("textbox", { name: /note/i })).toHaveAttribute("maxlength", "140");
+    expect(m.getAllByRole("button")).toHaveLength(2);
+    expect(m.queryByRole("textbox")).not.toBeInTheDocument();
+    expect((container.querySelector("[data-highlight-box]") as HTMLElement).className).toContain("border-dashed");
     const box = container.querySelector("[data-highlight-box]") as HTMLElement;
     expect(box.style.left).toBe("10%");
     expect(box.style.top).toBe("20%");
@@ -90,11 +92,11 @@ describe("HighlightLayer", () => {
   });
 
   describe("where the menu goes", () => {
-    // The slide is 1000 x 500 px; the menu is about 106 px tall.
+    // The slide is 1000 x 500 px; the menu is one row, MENU_HEIGHT tall.
     const top = () => parseFloat((menu() as HTMLElement).style.top);
     const insideSlide = () => {
       expect(top()).toBeGreaterThanOrEqual(0);
-      expect(top() + 106).toBeLessThanOrEqual(500);
+      expect(top() + MENU_HEIGHT).toBeLessThanOrEqual(500);
     };
 
     it("goes under a small box high on the slide", () => {
@@ -124,13 +126,22 @@ describe("HighlightLayer", () => {
     });
 
     it("stays inside the slide when the slide is shorter than the menu", () => {
-      mockLayerSize(1000, 90);
+      mockLayerSize(1000, 40);
       render(<Stage onChoose={vi.fn()} />);
-      drag([100, 10], [300, 80]);
+      drag([100, 5], [300, 35]);
       expect(top()).toBe(0);
     });
 
-    it("lets the buttons and the note field be used: the menu is selectable text with a normal cursor", () => {
+    it("lines the menu up with the box's left edge, and keeps it from running off the right edge", () => {
+      render(<Stage onChoose={vi.fn()} />);
+      drag([100, 100], [300, 200]);
+      const spacer = menu()!.firstElementChild as HTMLElement;
+      expect(spacer.style.flexBasis).toBe("10%");
+      expect(spacer.className).toMatch(/\bshrink\b/);
+      expect(spacer.className).toMatch(/\bmin-w-0\b/);
+    });
+
+    it("lets the buttons be used: the menu is selectable text with a normal cursor", () => {
       render(<Stage onChoose={vi.fn()} />);
       drag([100, 100], [300, 200]);
       expect(menu()!.className).toContain("select-text");
@@ -163,13 +174,28 @@ describe("HighlightLayer", () => {
     expect(container.querySelector("[data-highlight-box]")).not.toBeInTheDocument();
   });
 
-  it("I'm lost hands over kind lost, with the note trimmed", () => {
+  it("I'm lost hands over kind lost and the rect", () => {
     const onChoose = vi.fn();
     render(<Stage onChoose={onChoose} />);
     drag([100, 100], [300, 200]);
-    fireEvent.change(within(menu()!).getByRole("textbox", { name: /note/i }), { target: { value: "  the arrow  " } });
     fireEvent.click(within(menu()!).getByRole("button", { name: "I'm lost" }));
-    expect(onChoose).toHaveBeenCalledWith({ kind: "lost", rect: { x: 0.1, y: 0.2, w: 0.2, h: 0.2 }, note: "the arrow" });
+    expect(onChoose).toHaveBeenCalledWith({ kind: "lost", rect: { x: 0.1, y: 0.2, w: 0.2, h: 0.2 } });
+  });
+
+  it("draws a chosen box in its kind's look: lost tint and red border, or an ink border for a save", () => {
+    const rect = { x: 0.1, y: 0.2, w: 0.2, h: 0.2 };
+    const { container, rerender } = render(<Stage onChoose={vi.fn()} />);
+    const ref = { current: null };
+    rerender(<HighlightLayer viewing={3} imageRef={ref} onChoose={vi.fn()} chosen={{ kind: "lost", rect }} />);
+    let box = container.querySelector("[data-highlight-box]") as HTMLElement;
+    expect(box.className).toContain("border-lost");
+    expect(box.className).toContain("bg-lost-tint");
+    expect(box.style.left).toBe("10%");
+    rerender(<HighlightLayer viewing={3} imageRef={ref} onChoose={vi.fn()} chosen={{ kind: "save", rect }} />);
+    box = container.querySelector("[data-highlight-box]") as HTMLElement;
+    expect(box.className).toContain("border-ink");
+    expect(box.className).not.toContain("border-dashed");
+    expect(box.className).not.toContain("bg-lost-tint");
   });
 
   it("a plain click on the slide does nothing", () => {
@@ -221,7 +247,7 @@ describe("HighlightLayer", () => {
   it("pressing inside the menu does not cancel it", () => {
     render(<Stage onChoose={vi.fn()} />);
     drag([100, 100], [300, 200]);
-    fireEvent.pointerDown(within(menu()!).getByRole("textbox", { name: /note/i }), { ...mouse });
+    fireEvent.pointerDown(within(menu()!).getByRole("button", { name: "Save this" }), { ...mouse });
     expect(menu()).toBeInTheDocument();
   });
 
@@ -371,21 +397,27 @@ describe("HighlightLayer with the I'm lost bar", () => {
       op: "insert",
       tap: { kind: "save", tappedOnSlide: 5, rect: { x: 0.1, y: 0.2, w: 0.2, h: 0.2 } },
     });
-    expect(screen.getByText("Saved slide 5")).toBeInTheDocument();
+    expect(screen.getByText("Saved slide 5, just for you")).toBeInTheDocument();
   });
 
-  it("I'm lost from the menu queues kind lost with the rect and the note", async () => {
+  it("I'm lost from the menu queues kind lost with the rect, and the note added after goes on that tap", async () => {
     render(<Screen viewing={5} />);
     drag([100, 100], [300, 200]);
-    fireEvent.change(within(menu()!).getByRole("textbox", { name: /note/i }), { target: { value: "why" } });
     choose("I'm lost");
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    expect(send.mock.calls[0][0]).toMatchObject({
+    const insert = send.mock.calls[0][0];
+    expect(insert).toMatchObject({
       op: "insert",
-      tap: { kind: "lost", tappedOnSlide: 5, note: "why", rect: { x: 0.1, y: 0.2, w: 0.2, h: 0.2 } },
+      tap: { kind: "lost", tappedOnSlide: 5, rect: { x: 0.1, y: 0.2, w: 0.2, h: 0.2 } },
     });
     expect(screen.getByText("Saved slide 5")).toBeInTheDocument();
-    expect(screen.getByText("Note saved")).toBeInTheDocument();
+    const field = screen.getByRole("textbox", { name: "Add a note" });
+    fireEvent.change(field, { target: { value: " why " } });
+    fireEvent.submit(field.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    if (insert.op !== "insert") throw new Error("expected an insert");
+    expect(send.mock.calls[1][0]).toEqual({ op: "update", id: insert.tap.id, patch: { note: "why" } });
+    expect(screen.getByText("Note saved:")).toBeInTheDocument();
   });
 
   it("Undo takes the highlight back", async () => {

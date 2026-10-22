@@ -1,18 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
+import { LogoMark } from "@/components/Logo";
 import { loadOwnTaps, makeSend } from "@/lib/lostTapApi";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { HighlightLayer, type Highlight } from "./HighlightLayer";
-import { LostButton } from "./LostButton";
-import { SlideStrip } from "./SlideStrip";
+import { LostButton, type Spot } from "./LostButton";
+import { SlideStrip, type SpotKind } from "./SlideStrip";
 
 const END_FLUSH_MS = 3000;
+/** "Loading slide 7" shows only if the image takes longer than this. The next slide is preloaded, so it is rare. */
+const LOADING_TEXT_MS = 300;
+/** The My spots count is red this long after an I'm lost. */
+const COUNT_RED_MS = 2000;
+const WIDE = 16 / 9;
 
 type Props = {
   lectureId: string;
@@ -33,7 +41,27 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   // The client is made when a tap is sent, not while rendering.
   const send = useMemo(() => (op: QueueOp) => makeSend(createBrowserSupabase(), lectureId)(op), [lectureId]);
   const loadOwn = useMemo(() => () => loadOwnTaps(createBrowserSupabase(), lectureId), [lectureId]);
-  const [spots, setSpots] = useState<Set<number>>(new Set());
+  const [spots, setSpots] = useState<Spot[]>([]);
+  // One dot per slide: red if any row there is an I'm lost, open if they are all saves.
+  const spotKinds = useMemo(() => {
+    const kinds = new Map<number, SpotKind>();
+    for (const s of spots) if (kinds.get(s.slide) !== "lost") kinds.set(s.slide, s.kind);
+    return kinds;
+  }, [spots]);
+
+  // The My spots count turns red for 2 s after an I'm lost (a new one starts the 2 s over).
+  const [countRed, setCountRed] = useState(0);
+  useEffect(() => {
+    if (countRed === 0) return;
+    const timer = setTimeout(() => setCountRed(0), COUNT_RED_MS);
+    return () => clearTimeout(timer);
+  }, [countRed]);
+  const onTap = useCallback((kind: SpotKind) => {
+    if (kind === "lost") setCountRed((n) => n + 1);
+  }, []);
+
+  // What the saved line is about: its highlight stays drawn on the slide while it shows.
+  const [barInfo, setBarInfo] = useState<{ slide: number; kind: SpotKind; rect?: Highlight["rect"] } | null>(null);
 
   // Counts the times the live connection came back, so the queue is sent again then.
   const conn = state?.conn;
@@ -57,7 +85,17 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     addRef.current = add;
   }, []);
   const imageRef = useRef<HTMLImageElement>(null);
+  // The slide's own shape, from the image once it loads.
+  const [ratio, setRatio] = useState(WIDE);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [slowKey, setSlowKey] = useState<string | null>(null);
   const ended = state?.ended ?? false;
+  // Kept in a ref so a re-render (the count turning back from red, the loading text)
+  // never restarts the 3 second bound below.
+  const routerRef = useRef(router);
+  useEffect(() => {
+    routerRef.current = router;
+  });
   useEffect(() => {
     if (!ended) return;
     let left = false;
@@ -65,7 +103,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       if (left) return;
       left = true;
       clearTimeout(bound);
-      router.replace(`/spots/${lectureId}`);
+      routerRef.current.replace(`/spots/${lectureId}`);
     };
     const bound = setTimeout(leave, END_FLUSH_MS);
     void (flushRef.current?.(true) ?? Promise.resolve()).then(leave);
@@ -73,92 +111,171 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       left = true;
       clearTimeout(bound);
     };
-  }, [ended, lectureId, router]);
+  }, [ended, lectureId]);
 
   const viewing = state?.viewing ?? initialSlide;
   const url = state ? urlFor(viewing) : undefined;
   const behind = state !== null && !state.following && state.viewing < state.live;
+  const reconnecting = state?.conn === "reconnecting";
+  const live = state?.live ?? initialSlide;
+
+  // The slide changes at once; the loading text only shows when the image is slow.
+  const imageKey = url ?? `slide-${viewing}`;
+  useEffect(() => {
+    const timer = setTimeout(() => setSlowKey(imageKey), LOADING_TEXT_MS);
+    return () => clearTimeout(timer);
+  }, [imageKey]);
+  const loading = slowKey === imageKey && loadedSrc !== url;
+
+  const chosen = barInfo?.rect && barInfo.slide === viewing ? { kind: barInfo.kind, rect: barInfo.rect } : null;
+
+  // The slide frame is a 16:9 box: the window width less the side padding, never
+  // taller than the room left above the controls, centered; the controls are as wide
+  // as it. A slide of another shape fits inside it at its own shape (an old 4:3 deck
+  // shows the page background on its sides), so the controls never move between decks.
+  const room = "max(calc(100cqh - var(--controls)), 96px)";
+  const frameWidth = `min(100cqw, calc(${room} * ${WIDE}))`;
+  const slideWidth = ratio >= WIDE ? frameWidth : `calc(${frameWidth} * ${ratio / WIDE})`;
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-black text-white">
-      <header className="flex items-start justify-between gap-3 p-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm">{courseName}</p>
-          <p className="truncate">{lectureName}</p>
+    <div className="fixed inset-0 flex flex-col bg-bg text-ink">
+      <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <LogoMark size={22} />
+          <p className="shrink-0 whitespace-nowrap type-small-strong text-ink">{courseName}</p>
+          <p className="min-w-0 truncate type-lecture text-secondary max-sm:hidden">{lectureName}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <span className="flex items-center gap-2 text-sm font-semibold">
-            <span aria-hidden className="inline-block h-2 w-2 rounded-full bg-red-500" />
-            LIVE
+        <Link
+          href={`/spots/${lectureId}`}
+          className="press flex shrink-0 items-center gap-1 rounded-md p-2 whitespace-nowrap hover:bg-surface focus-ring"
+        >
+          <span className="type-small text-secondary">My spots</span>
+          <span
+            data-count-red={countRed > 0 ? "" : undefined}
+            className={`type-small-strong transition-colors duration-(--dur-slow) ease-out ${
+              countRed > 0 ? "text-lost" : "text-ink"
+            }`}
+          >
+            {spots.length}
           </span>
-          <InfoButton />
-        </div>
+        </Link>
+        {/* The popover lines up with the top bar's right edge, past the theme slot. */}
+        <InfoButton panelClassName="-right-11" />
+        {/* Room for the theme button, which comes with dark mode (not built yet). */}
+        <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
       </header>
 
-      {state?.conn === "reconnecting" && (
-        <p role="status" className="bg-white px-3 py-2 text-center text-black">
-          Reconnecting...
-        </p>
-      )}
-
-      <div className="relative min-h-0 flex-1">
-        {url && (
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imageRef}
-              src={url}
-              alt={`Slide ${viewing}`}
-              draggable={false}
-              className="absolute inset-0 h-full w-full object-contain"
-            />
-            <HighlightLayer viewing={viewing} imageRef={imageRef} onChoose={(h) => addRef.current?.(h)} />
-          </>
-        )}
-      </div>
-
-      <footer className="flex flex-col gap-3 p-3">
-        {behind && (
-          <button type="button" onClick={jumpToLive} className="w-full border border-white px-4 py-3">
-            Jump to live, slide {state.live}
-          </button>
-        )}
-        <SlideStrip live={state?.live ?? initialSlide} viewing={viewing} spotSlides={spots} onPick={goTo} />
-        <LostButton
-          key={lectureId}
-          lectureId={lectureId}
-          viewing={viewing}
-          send={send}
-          loadOwn={loadOwn}
-          onSpots={setSpots}
-          reconnects={reconnects}
-          onFlushReady={onFlushReady}
-          onAddReady={onAddReady}
-          before={
-            <>
-              <button
-                type="button"
-                onClick={back}
-                disabled={!state || state.viewing <= 1}
-                className="min-w-20 border border-white px-3 py-3 disabled:opacity-40"
-              >
-                Back
-              </button>
-              <span className="min-w-8 text-center text-2xl">{viewing}</span>
-            </>
-          }
-          after={
-            <button
-              type="button"
-              onClick={forward}
-              disabled={!state || state.viewing >= state.live}
-              className="min-w-20 border border-white px-3 py-3 disabled:opacity-40"
+      <main
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-6 pt-2 [--controls:264px] sm:px-4 sm:[--controls:224px]"
+        style={{ containerType: "size" }}
+      >
+        <div className="flex h-full flex-col items-center justify-center gap-2">
+          <div
+            className="flex max-w-full shrink-0 items-center justify-center"
+            style={{ width: frameWidth, aspectRatio: WIDE } as CSSProperties}
+          >
+            <div
+              data-slide=""
+              className="relative max-w-full shrink-0 rounded-sm bg-surface shadow-slide"
+              style={{ width: slideWidth, aspectRatio: ratio } as CSSProperties}
             >
-              Forward
-            </button>
-          }
-        />
-      </footer>
+              {url && (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    ref={imageRef}
+                    src={url}
+                    alt={`Slide ${viewing}`}
+                    draggable={false}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      setLoadedSrc(img.getAttribute("src"));
+                      if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
+                    }}
+                    className="absolute inset-0 h-full w-full rounded-sm object-contain"
+                  />
+                  <HighlightLayer
+                    viewing={viewing}
+                    imageRef={imageRef}
+                    onChoose={(h) => addRef.current?.(h)}
+                    chosen={chosen}
+                  />
+                </>
+              )}
+              {loading && (
+                <p className="absolute inset-0 flex animate-fade-in items-center justify-center rounded-sm bg-surface type-small text-secondary">
+                  Loading slide {viewing}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex max-w-full shrink-0 flex-col gap-2" style={{ width: frameWidth }}>
+            <div className="flex h-14 w-full items-center gap-3">
+              <div className="flex shrink-0">
+                <button
+                  type="button"
+                  aria-label="Back"
+                  onClick={back}
+                  disabled={!state || state.viewing <= 1}
+                  className={arrowClass}
+                >
+                  <Icon name="back" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Forward"
+                  onClick={forward}
+                  disabled={!state || state.viewing >= state.live}
+                  className={arrowClass}
+                >
+                  <Icon name="forward" />
+                </button>
+              </div>
+              <SlideStrip live={live} viewing={viewing} spots={spotKinds} onPick={goTo} />
+              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                <span data-slide-number="" className="type-number-s text-ink">
+                  {viewing}
+                </span>
+                {behind ? (
+                  <button
+                    type="button"
+                    onClick={jumpToLive}
+                    className="press rounded-md border border-ink px-3 py-1.5 type-small-strong text-ink hover:bg-surface focus-ring"
+                  >
+                    Jump to live, slide {state.live}
+                  </button>
+                ) : (
+                  <span className="type-small text-secondary">{reconnecting ? "reconnecting" : "live"}</span>
+                )}
+              </div>
+            </div>
+            <LostButton
+              key={lectureId}
+              lectureId={lectureId}
+              viewing={viewing}
+              send={send}
+              loadOwn={loadOwn}
+              onSpots={setSpots}
+              onTap={onTap}
+              onBarChange={setBarInfo}
+              reconnects={reconnects}
+              onFlushReady={onFlushReady}
+              onAddReady={onAddReady}
+              idle={
+                reconnecting ? (
+                  <p role="status" className="animate-fade-in type-small text-secondary">
+                    Reconnecting…
+                  </p>
+                ) : null
+              }
+            />
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
+
+const arrowClass =
+  "press flex size-9 items-center justify-center rounded-md text-ink hover:enabled:bg-surface focus-ring disabled:opacity-30";

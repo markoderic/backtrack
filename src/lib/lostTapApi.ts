@@ -79,18 +79,23 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
 export async function loadOwnTaps(
   supabase: SupabaseClient,
   lectureId: string,
-): Promise<{ id: string; slide: number }[] | null> {
+): Promise<{ id: string; slide: number; kind: "lost" | "save" }[] | null> {
   try {
     const { data, error, status } = await supabase
       .from("lost_taps")
-      .select("id, slide_number")
+      .select("id, slide_number, kind")
       .eq("lecture_id", lectureId)
       .eq("undone", false);
     if (error) {
       if (classifyError(error, status) === "offline") return null;
       throw new Error(error.message);
     }
-    return (data ?? []).map((r) => ({ id: r.id as string, slide: r.slide_number as number }));
+    // The kind picks the dot: red for I'm lost, open for a save.
+    return (data ?? []).map((r) => ({
+      id: r.id as string,
+      slide: r.slide_number as number,
+      kind: r.kind === "save" ? ("save" as const) : ("lost" as const),
+    }));
   } catch (e) {
     classifyThrown(e); // throws unless the network is down
     return null;

@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Icon } from "@/components/Icon";
+import { ImLostButton } from "@/components/ImLostButton";
 import type { Rect } from "@/lib/rect";
 import { TapQueue, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
 
-const UNDO_WINDOW_MS = 8000;
+/** The saved line (and with it Undo) stays this long, or until the next slide. Typing a note holds it open. */
+export const UNDO_WINDOW_MS = 10000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
 
@@ -15,10 +18,14 @@ type Props = {
   viewing: number;
   /** Sends one queued op to the database. */
   send: (op: QueueOp) => Promise<SendResult>;
-  /** The student's rows already saved for this lecture, or null while offline. */
-  loadOwn: () => Promise<{ id: string; slide: number }[] | null>;
-  /** Called with every slide that has a tap that is not undone. */
-  onSpots: (spots: Set<number>) => void;
+  /** The student's rows already saved for this lecture, or null while offline. A row without kind is lost. */
+  loadOwn: () => Promise<{ id: string; slide: number; kind?: Kind }[] | null>;
+  /** Called with every row that is not undone (one entry per tap), whenever they change. */
+  onSpots: (spots: Spot[]) => void;
+  /** Called right after a tap or a highlight is recorded, with its kind. */
+  onTap?: (kind: Kind) => void;
+  /** Called with what the saved line is about (slide, kind and the highlight box, if any), or null when it closes. */
+  onBarChange?: (bar: { slide: number; kind: Kind; rect?: Rect } | null) => void;
   /** Goes up each time the live connection comes back. */
   reconnects?: number;
   /**
@@ -31,12 +38,13 @@ type Props = {
    * on the slide on screen. It goes through the same queue, bar and Undo as the button.
    */
   onAddReady?: (add: (highlight: { kind: "lost" | "save"; rect: Rect; note?: string }) => void) => void;
-  /** Shown in the same row, left and right of the button. */
-  before?: ReactNode;
-  after?: ReactNode;
+  /** Shown in the saved row while it has nothing else to say (the page puts Reconnecting… here). */
+  idle?: ReactNode;
 };
 
-type Bar = { id: string; slide: number; note: string; saved: boolean; kind: "lost" | "save" };
+type Kind = "lost" | "save";
+export type Spot = { slide: number; kind: Kind };
+type Bar = { id: string; slide: number; note: string; saved: boolean; kind: Kind; rect?: Rect };
 
 function newId(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -48,22 +56,24 @@ function newId(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-/** Taps in a queue that have not been taken back, as id to slide. */
-function pendingTaps(ops: QueueOp[]): Map<string, number> {
-  const taps = new Map<string, number>();
+/** Taps in a queue that have not been taken back, as id to slide and kind. */
+function pendingTaps(ops: QueueOp[]): Map<string, Spot> {
+  const taps = new Map<string, Spot>();
   for (const op of ops) {
-    if (op.op === "insert") taps.set(op.tap.id, op.tap.tappedOnSlide);
+    if (op.op === "insert") taps.set(op.tap.id, { slide: op.tap.tappedOnSlide, kind: op.tap.kind ?? "lost" });
     else if (op.patch.undone) taps.delete(op.id);
   }
   return taps;
 }
 
 /**
- * The I'm lost button, and the bar above it that says what was saved. A press is
- * written to a queue (kept in localStorage) and shown at once; the queue is sent
- * in the background and sent again when the connection comes back. The bar holds
- * Undo and an optional note for 8 seconds, in a row of fixed height so nothing
- * moves.
+ * The I'm lost button (in its 104 px row) and, under it, the saved row that says
+ * what was saved. A press is written to a queue (kept in localStorage) and shown at
+ * once, before any animation; the queue is sent in the background and sent again
+ * when the connection comes back. The saved line ("Saved slide 7 · Add a note ·
+ * Undo") stays for 10 seconds or until the slide changes, and longer while a note
+ * is being typed: Enter sends the note, Esc drops it. Its row is always reserved,
+ * so nothing moves.
  */
 export function LostButton({
   lectureId,
@@ -74,11 +84,15 @@ export function LostButton({
   reconnects = 0,
   onFlushReady,
   onAddReady,
-  before,
-  after,
+  onTap,
+  onBarChange,
+  idle,
 }: Props) {
-  const [taps, setTaps] = useState<ReadonlyMap<string, number>>(new Map());
+  const [taps, setTaps] = useState<ReadonlyMap<string, Spot>>(new Map());
   const [bar, setBar] = useState<Bar | null>(null);
+  // Goes up when the highlight menu saves an I'm lost, so the button shows Saved too.
+  const [savedSignal, setSavedSignal] = useState(0);
+  const [lastViewing, setLastViewing] = useState(viewing);
   const [rejected, setRejected] = useState<string | null>(null);
   const [fatal, setFatal] = useState<Error | null>(null);
 
@@ -86,6 +100,7 @@ export function LostButton({
   const sendRef = useRef(send);
   const loadOwnRef = useRef(loadOwn);
   const onSpotsRef = useRef(onSpots);
+  const onBarChangeRef = useRef(onBarChange);
   const mounted = useRef(false);
   const loaded = useRef(false);
   const loading = useRef(false);
@@ -94,6 +109,7 @@ export function LostButton({
     sendRef.current = send;
     loadOwnRef.current = loadOwn;
     onSpotsRef.current = onSpots;
+    onBarChangeRef.current = onBarChange;
   });
 
   // Made on first use, in the browser, never while rendering: the queue reads localStorage.
@@ -142,7 +158,7 @@ export function LostButton({
       loaded.current = true;
       setTaps((prev) => {
         const next = new Map(prev);
-        for (const r of rows) if (!takenBack.current.has(r.id)) next.set(r.id, r.slide);
+        for (const r of rows) if (!takenBack.current.has(r.id)) next.set(r.id, { slide: r.slide, kind: r.kind ?? "lost" });
         return next;
       });
     } catch (e) {
@@ -162,7 +178,7 @@ export function LostButton({
       if (left.size === 0) return;
       setTaps((prev) => {
         const next = new Map(prev);
-        for (const [id, slide] of left) if (!takenBack.current.has(id)) next.set(id, slide);
+        for (const [id, spot] of left) if (!takenBack.current.has(id)) next.set(id, spot);
         return next;
       });
     });
@@ -186,29 +202,54 @@ export function LostButton({
   }, [reconnects, flush, loadSaved]);
 
   useEffect(() => {
-    onSpotsRef.current(new Set(taps.values()));
+    onSpotsRef.current([...taps.values()]);
   }, [taps]);
 
-  // The bar closes itself, which ends the Undo window. Typing starts the 8 seconds over.
+  // A note being typed (not sent yet) holds the saved line open.
+  const typing = !!bar && !bar.saved && bar.note !== "";
+  const barId = bar?.id;
+
+  // The next slide closes the saved line, unless a note is being typed.
+  if (viewing !== lastViewing) {
+    setLastViewing(viewing);
+    if (bar && !typing) setBar(null);
+  }
+
+  // The saved line closes itself after 10 seconds, which ends the Undo window.
+  // Typing holds it; sending or dropping the note starts the 10 seconds over.
   useEffect(() => {
-    if (!bar) return;
+    if (!barId || typing) return;
     const timer = setTimeout(() => setBar(null), UNDO_WINDOW_MS);
     return () => clearTimeout(timer);
-  }, [bar]);
+  }, [barId, typing]);
+
+  const barSlide = bar?.slide;
+  const barKind = bar?.kind;
+  const barRect = bar?.rect;
+  useEffect(() => {
+    onBarChangeRef.current?.(barSlide !== undefined && barKind ? { slide: barSlide, kind: barKind, rect: barRect } : null);
+  }, [barSlide, barKind, barRect]);
 
   function record(extra: Pick<PendingTap, "kind" | "rect" | "note"> = {}) {
     const id = newId();
+    const kind = extra.kind ?? "lost";
+    // Recorded and queued first; everything you see follows.
     queue().enqueue({ id, tappedOnSlide: viewing, tappedAt: new Date().toISOString(), ...extra });
-    setTaps((prev) => new Map(prev).set(id, viewing));
+    setTaps((prev) => new Map(prev).set(id, { slide: viewing, kind }));
     setRejected(null);
-    // A note typed in the highlight menu is already on the tap.
-    setBar({ id, slide: viewing, note: extra.note ?? "", saved: !!extra.note, kind: extra.kind ?? "lost" });
+    // A note that came with the tap is already on it.
+    setBar({ id, slide: viewing, note: extra.note ?? "", saved: !!extra.note, kind, rect: extra.rect });
     void flush();
+    onTap?.(kind);
   }
 
   // The page calls this from the highlight menu. It always reads the slide on screen now.
   useEffect(() => {
-    onAddReady?.((h) => record({ kind: h.kind, rect: h.rect, ...(h.note ? { note: h.note } : {}) }));
+    onAddReady?.((h) => {
+      record({ kind: h.kind, rect: h.rect, ...(h.note ? { note: h.note } : {}) });
+      // I'm lost from the menu gives the button its Saved look too. Save this leaves it as it is.
+      if (h.kind === "lost") setSavedSignal((n) => n + 1);
+    });
   });
 
   if (fatal) throw fatal;
@@ -232,51 +273,73 @@ export function LostButton({
     const note = bar.note.trim();
     if (!note) return;
     queue().update(bar.id, { note });
-    setBar({ ...bar, saved: true });
+    setBar({ ...bar, note, saved: true });
     void flush();
   }
 
+  // Esc drops the note (not the tap).
+  function onNoteKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape" && bar) {
+      e.preventDefault();
+      setBar({ ...bar, note: "" });
+    }
+  }
+
+  const message = bar ? `Saved slide ${bar.slide}${bar.kind === "save" ? ", just for you" : ""}` : "";
+
   return (
-    <div className="flex flex-col gap-3">
-      <div data-bar className="flex h-20 flex-col justify-center gap-2">
+    <>
+      <div className="flex h-26 w-full shrink-0 items-center justify-center">
+        <ImLostButton onClick={press} savedSignal={savedSignal} />
+      </div>
+      <div data-bar className="flex h-20 w-full shrink-0 items-center justify-center sm:h-10">
         {bar ? (
-          <>
-            <div className="flex items-center justify-between gap-3">
-              <p role="status">{`Saved slide ${bar.slide}`}</p>
-              <button type="button" onClick={undo} className="h-10 border border-white px-4">
-                Undo
-              </button>
+          <div
+            key={bar.id}
+            className="flex max-w-full animate-rise-in flex-wrap items-center justify-center gap-x-4 gap-y-2 max-sm:w-75"
+          >
+            <p role="status" className="order-1 whitespace-nowrap type-small-strong text-ink">
+              {message}
+            </p>
+            <div className="order-3 h-8 border-b border-hairline py-1 transition-colors duration-(--dur-fast) focus-within:border-ink max-sm:w-full sm:order-2 sm:w-60">
+              {bar.saved ? (
+                <p className="truncate type-note text-ink" title={bar.note}>
+                  <span className="sr-only">Note saved: </span>
+                  {bar.note}
+                </p>
+              ) : (
+                <form onSubmit={saveNote}>
+                  <input
+                    type="text"
+                    maxLength={140}
+                    placeholder="Add a note"
+                    aria-label="Add a note"
+                    enterKeyHint="send"
+                    value={bar.note}
+                    onChange={(e) => setBar({ ...bar, note: e.target.value })}
+                    onKeyDown={onNoteKeyDown}
+                    className="block h-6 w-full min-w-0 bg-transparent type-note text-ink outline-hidden placeholder:text-secondary"
+                  />
+                </form>
+              )}
             </div>
-            {bar.saved ? (
-              <p>Note saved</p>
-            ) : (
-              <form onSubmit={saveNote} className="flex gap-2">
-                <input
-                  type="text"
-                  maxLength={140}
-                  placeholder={bar.kind === "save" ? "Add a note. Optional" : "What lost you? Optional"}
-                  aria-label={bar.kind === "save" ? "Add a note. Optional" : "What lost you? Optional"}
-                  value={bar.note}
-                  onChange={(e) => setBar({ ...bar, note: e.target.value })}
-                  className="h-10 min-w-0 flex-1 border border-white bg-transparent px-2"
-                />
-                <button type="submit" disabled={!bar.note.trim()} className="h-10 border border-white px-4 disabled:opacity-40">
-                  Save
-                </button>
-              </form>
-            )}
-          </>
+            <button
+              type="button"
+              onClick={undo}
+              className="press order-2 rounded-xs type-small-strong text-ink underline hover:text-secondary focus-ring sm:order-3"
+            >
+              Undo
+            </button>
+          </div>
         ) : rejected ? (
-          <p role="alert">{rejected}</p>
-        ) : null}
+          <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
+            <Icon name="alert" size={18} />
+            {rejected}
+          </p>
+        ) : (
+          idle
+        )}
       </div>
-      <div className="flex items-center gap-2">
-        {before}
-        <button type="button" onClick={press} className="min-w-0 flex-1 border border-white px-3 py-3">
-          I&apos;m lost
-        </button>
-        {after}
-      </div>
-    </div>
+    </>
   );
 }

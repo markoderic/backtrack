@@ -47,6 +47,21 @@ describe("ImLostButton", () => {
     expect(b).toHaveAttribute("data-phase", "saved");
   });
 
+  it("shows Saved for 2 s, with no press, each time savedSignal goes up (I'm lost from the highlight menu)", () => {
+    vi.useFakeTimers();
+    const onClick = vi.fn();
+    const { rerender } = render(<ImLostButton onClick={onClick} savedSignal={0} />);
+    const b = screen.getByRole("button", { name: "I'm lost" });
+    expect(b).toHaveAttribute("data-phase", "default");
+    rerender(<ImLostButton onClick={onClick} savedSignal={1} />);
+    expect(b).toHaveAttribute("data-phase", "saved");
+    act(() => vi.advanceTimersByTime(SAVED_MS - 1));
+    expect(b).toHaveAttribute("data-phase", "saved");
+    act(() => vi.advanceTimersByTime(1));
+    expect(b).toHaveAttribute("data-phase", "default");
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
   it("shows a forced phase", () => {
     render(<ImLostButton phase="saved" />);
     expect(screen.getByRole("button", { name: "I'm lost" })).toHaveAttribute("data-phase", "saved");

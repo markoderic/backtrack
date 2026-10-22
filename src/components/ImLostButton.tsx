@@ -13,6 +13,11 @@ type Phase = "default" | "pressed" | "saved";
 type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> & {
   /** Overrides the look, for showing one state on its own. Left out, the button runs its own press then Saved. */
   phase?: Phase;
+  /**
+   * Goes up when something else saved an I'm lost (the highlight menu). Each new
+   * value shows Saved for 2 s, as after a press, without the press.
+   */
+  savedSignal?: number;
 };
 
 /**
@@ -24,14 +29,26 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> 
  * Only the look lives here. What a press records is up to onClick (LostButton).
  * Its name stays "I'm lost" in every state.
  */
-export function ImLostButton({ phase: forced, onClick, className = "", ...props }: Props) {
+export function ImLostButton({ phase: forced, savedSignal = 0, onClick, className = "", ...props }: Props) {
   const [phase, setPhase] = useState<Phase>("default");
+  const [lastSignal, setLastSignal] = useState(savedSignal);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    const list = timers.current;
-    return () => list.forEach(clearTimeout);
+    const list = timers;
+    return () => list.current.forEach(clearTimeout);
   }, []);
+
+  // A save from elsewhere: Saved now, Default 2 s later (the timer is set below).
+  if (savedSignal !== lastSignal) {
+    setLastSignal(savedSignal);
+    setPhase("saved");
+  }
+  useEffect(() => {
+    if (savedSignal === 0) return;
+    timers.current.forEach(clearTimeout);
+    timers.current = [setTimeout(() => setPhase("default"), SAVED_MS)];
+  }, [savedSignal]);
 
   const shown = forced ?? phase;
 
@@ -52,7 +69,7 @@ export function ImLostButton({ phase: forced, onClick, className = "", ...props 
       className={
         "flex size-22 shrink-0 items-center justify-center rounded-full type-button " +
         "focus-ring focus-visible:outline-offset-[5px] " +
-        "transition-[background-color,scale] duration-(--dur-fast) ease-out " +
+        "transition-[background-color,scale,outline-color] duration-(--dur-fast) ease-out " +
         (shown === "saved"
           ? // The ring and check pop in on the spring (fade only with reduced motion).
             "animate-pop-in border-2 border-lost bg-transparent text-ink"

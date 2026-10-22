@@ -177,14 +177,23 @@ describe("makeSend", () => {
 });
 
 describe("loadOwnTaps", () => {
-  it("reads this student's rows that are not undone", async () => {
-    const f = fakeSupabase({ select: async () => ({ data: [{ id: "a", slide_number: 3 }, { id: "b", slide_number: 7 }], error: null, status: 200 }) });
+  it("reads this student's rows that are not undone, with their kind", async () => {
+    const f = fakeSupabase({
+      select: async () => ({
+        data: [
+          { id: "a", slide_number: 3, kind: "lost" },
+          { id: "b", slide_number: 7, kind: "save" },
+        ],
+        error: null,
+        status: 200,
+      }),
+    });
     expect(await loadOwnTaps(f.supabase, LECTURE)).toEqual([
-      { id: "a", slide: 3 },
-      { id: "b", slide: 7 },
+      { id: "a", slide: 3, kind: "lost" },
+      { id: "b", slide: 7, kind: "save" },
     ]);
     expect(f.from).toHaveBeenCalledWith("lost_taps");
-    expect(f.select).toHaveBeenCalledWith("id, slide_number");
+    expect(f.select).toHaveBeenCalledWith("id, slide_number, kind");
     expect(f.eqLecture).toHaveBeenCalledWith("lecture_id", LECTURE);
     expect(f.eqUndone).toHaveBeenCalledWith("undone", false);
   });
