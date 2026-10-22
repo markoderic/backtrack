@@ -5,6 +5,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { isMiamiEmail } from "@/lib/email";
 import { SignInButton } from "./sign-in-button";
 import { AddCourseForm } from "./add-course-form";
+import { LiveLectureRow } from "./LiveLectureRow";
 
 export async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
   const supabase = await createServerSupabase();
@@ -40,12 +41,7 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
           <h1 className="text-4xl font-semibold">Backtrack</h1>
           <p>{teacher.display_name}</p>
           {(live ?? []).map((lecture) => (
-            <p key={lecture.id} className="flex flex-wrap items-center gap-3">
-              <Link href={`/teach/l/${lecture.id}/present`} className="border border-current px-4 py-2">
-                Live now: Resume
-              </Link>
-              <span>{lecture.name}</span>
-            </p>
+            <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
           ))}
           <h2 className="text-2xl font-semibold">Courses</h2>
           <ul className="flex flex-col gap-2">

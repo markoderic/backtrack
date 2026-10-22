@@ -39,6 +39,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CourseBody } from "./course-body";
 
 const params = Promise.resolve({ courseId: "c1" });
+// Text and href of every link to a lecture page, in order.
+const links = (html: string) =>
+  [...html.matchAll(/<a [^>]*href="(\/teach\/l\/[^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[2], m[1].replace(/&amp;/g, "&")]);
 
 beforeEach(() => {
   eqCalls.length = 0;
@@ -77,7 +80,7 @@ describe("CourseBody", () => {
     await expect(CourseBody({ params })).rejects.toThrow("lectures broke");
   });
 
-  it("shows Live now: Resume for a live lecture and lists ended ones as past", async () => {
+  it("shows Live now with Resume, Data and End lecture for a live lecture and lists ended ones as past", async () => {
     maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
     lectures.mockResolvedValue({
       data: [
@@ -87,8 +90,13 @@ describe("CourseBody", () => {
       error: null,
     });
     const html = renderToStaticMarkup(await CourseBody({ params }));
-    expect(html).toContain('href="/teach/l/l2/present"');
-    expect(html).toContain("Live now: Resume");
+    expect(html).toContain("Live now");
+    expect(html).toContain("Lecture 2, Oct 26");
+    expect(links(html).filter(([, href]) => href.startsWith("/teach/l/l2"))).toEqual([
+      ["Resume", "/teach/l/l2/present"],
+      ["Data", "/teach/l/l2/live"],
+      ["End lecture", "/teach/l/l2/live?end=1"],
+    ]);
     expect(html).toContain("Lecture 1, Oct 19");
     expect(html).not.toContain("No lectures yet.");
     expect(html).not.toContain('href="/teach/l/l1/present"');
@@ -166,14 +174,15 @@ describe("CourseBody", () => {
     });
     const live = renderToStaticMarkup(await CourseBody({ params }));
     expect(live).not.toContain("Export semester CSV");
-    expect(live).toContain("Live now: Resume");
+    expect(live).toContain("Live now");
+    expect(live).toContain('href="/teach/l/l1/present"');
     expect(live).toContain("No lectures yet.");
 
     lectures.mockResolvedValue({ data: [], error: null });
     expect(renderToStaticMarkup(await CourseBody({ params }))).not.toContain("/export");
   });
 
-  it("keeps Live now: Resume next to the past lectures and the export", async () => {
+  it("keeps the live lecture row next to the past lectures and the export", async () => {
     course();
     lectures.mockResolvedValue({
       data: [

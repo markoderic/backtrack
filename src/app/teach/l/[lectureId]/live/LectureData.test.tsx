@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   lectureQuery: vi.fn(),
   rpc: vi.fn(),
   push: vi.fn(),
+  replace: vi.fn(),
   removeChannel: vi.fn(),
   slideUrls: vi.fn(),
 }));
@@ -66,7 +67,7 @@ vi.mock("@/lib/supabase/browser", () => ({
     rpc: h.rpc,
   }),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, replace: h.replace }) }));
 vi.mock("@/lib/useSlideUrls", () => ({
   useSlideUrls: (lectureId: string, wanted: number[]) => h.slideUrls(lectureId, wanted),
 }));
@@ -111,7 +112,7 @@ beforeEach(() => {
   h.handlers = {};
   h.filters = {};
   h.status = null;
-  [h.push, h.removeChannel, channel.on, channel.subscribe].forEach((m) => m.mockClear());
+  [h.push, h.replace, h.removeChannel, channel.on, channel.subscribe].forEach((m) => m.mockClear());
   h.tapsQuery.mockReset().mockResolvedValue({
     data: [row("a", { slide_number: 2 }), row("b", { slide_number: 2, anon_id: "s2" }), row("c", { slide_number: 4 })],
     error: null,
@@ -513,6 +514,63 @@ describe("End lecture", () => {
     expect(screen.queryByRole("button", { name: "End lecture" })).not.toBeInTheDocument();
     expect(screen.getByText("Lecture ended.")).toBeInTheDocument();
     expect(h.removeChannel).toHaveBeenCalledWith(channel);
+  });
+});
+
+describe("End lecture from ?end=1", () => {
+  const DIALOG_TEXT = "End lecture? The code stops working and students go to My spots.";
+
+  it("opens the confirm on load for a live lecture", async () => {
+    renderLive({ confirmEndOnLoad: true });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(DIALOG_TEXT)).toBeInTheDocument();
+    expect(h.rpc).not.toHaveBeenCalled();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+  });
+
+  it("does not open without the flag", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("ignores the flag for an ended lecture", async () => {
+    renderLive({ mode: "past", confirmEndOnLoad: true });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("Cancel closes it, ends nothing and removes ?end=1 from the url", async () => {
+    renderLive({ confirmEndOnLoad: true });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(h.replace).toHaveBeenCalledWith(`/teach/l/${LECTURE}/live`);
+    expect(h.rpc).not.toHaveBeenCalled();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+  });
+
+  it("Escape closes it the same way instead of leaving for the projector", async () => {
+    renderLive({ confirmEndOnLoad: true });
+    key("Escape");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(h.replace).toHaveBeenCalledWith(`/teach/l/${LECTURE}/live`);
+    expect(h.push).not.toHaveBeenCalled();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+  });
+
+  it("End ends the lecture", async () => {
+    renderLive({ confirmEndOnLoad: true });
+    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
+    expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
+  });
+
+  it("a Cancel on a dialog opened by the button leaves the url alone", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    fireEvent.click(screen.getByRole("button", { name: "End lecture" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(h.replace).not.toHaveBeenCalled();
   });
 });
 

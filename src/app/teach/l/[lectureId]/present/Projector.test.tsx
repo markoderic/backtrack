@@ -251,4 +251,38 @@ describe("Projector", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
     expect(requestFullscreen).toHaveBeenCalled();
   });
+
+  it("has a Data link and an End lecture link next to Fullscreen", () => {
+    show();
+    expect(screen.getByRole("link", { name: "Data" })).toHaveAttribute("href", `/teach/l/${LECTURE}/live`);
+    expect(screen.getByRole("link", { name: "End lecture" })).toHaveAttribute("href", `/teach/l/${LECTURE}/live?end=1`);
+    expect(screen.getByRole("button", { name: "Fullscreen" })).toBeInTheDocument();
+  });
+
+  it("arrow keys and Space still move the slide while a link has focus, and the link does nothing", async () => {
+    show();
+    press("ArrowRight"); // hides the join card
+    const link = screen.getByRole("link", { name: "Data" });
+    link.focus();
+    expect(link).toHaveFocus();
+    // Not prevented would let Space scroll the page or click the focused link.
+    expect(fireEvent.keyDown(link, { key: " " })).toBe(false);
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/2.webp"));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({ current_slide: 2 });
+    expect(push).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(link, { key: "ArrowRight" })).toBe(false);
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/3.webp"));
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("clicking a link changes no slide", () => {
+    show();
+    press("ArrowRight"); // hides the join card
+    const end = screen.getByRole("link", { name: "End lecture" });
+    end.addEventListener("click", (e) => e.preventDefault()); // jsdom cannot navigate
+    fireEvent.click(end);
+    expect(update).not.toHaveBeenCalled();
+    expect(shownSlide()).toBe("https://signed/1.webp");
+  });
 });

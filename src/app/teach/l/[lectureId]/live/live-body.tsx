@@ -2,8 +2,17 @@ import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { LectureData } from "./LectureData";
 
-export async function LiveBody({ params }: { params: Promise<{ lectureId: string }> }) {
+export type LiveSearchParams = Promise<{ end?: string | string[] }>;
+
+export async function LiveBody({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ lectureId: string }>;
+  searchParams: LiveSearchParams;
+}) {
   const { lectureId } = await params;
+  const { end } = await searchParams;
 
   const supabase = await createServerSupabase();
   const {
@@ -45,6 +54,8 @@ export async function LiveBody({ params }: { params: Promise<{ lectureId: string
       slides={slides}
       initialCurrentSlide={lecture.current_slide}
       courseId={lecture.course_id}
+      // ?end=1 comes from the End lecture links. A lecture that already ended ignores it.
+      confirmEndOnLoad={end === "1" && lecture.status !== "ended"}
     />
   );
 }

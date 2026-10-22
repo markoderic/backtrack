@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { formatLectureDate } from "@/lib/lectureDate";
+import { LiveLectureRow } from "../../LiveLectureRow";
 
 export async function CourseBody({ params }: { params: Promise<{ courseId: string }> }) {
   const { courseId } = await params;
@@ -41,12 +42,7 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
         Start lecture
       </Link>
       {live.map((lecture) => (
-        <p key={lecture.id} className="flex flex-wrap items-center gap-3">
-          <Link href={`/teach/l/${lecture.id}/present`} className="border border-current px-4 py-2">
-            Live now: Resume
-          </Link>
-          <span>{lecture.name}</span>
-        </p>
+        <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
       ))}
       <h2 className="text-2xl font-semibold">Past lectures</h2>
       {past.length === 0 ? (

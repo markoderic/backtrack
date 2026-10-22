@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
 
 const maybeSingle = vi.fn();
 const slidesQuery = vi.fn();
@@ -42,6 +42,7 @@ vi.mock("./LectureData", () => ({
 import { LiveBody } from "./live-body";
 
 const params = Promise.resolve({ lectureId: "l1" });
+const noSearch = Promise.resolve({});
 const lecture = {
   id: "l1",
   course_id: "c1",
@@ -70,17 +71,17 @@ beforeEach(() => {
 describe("LiveBody", () => {
   it("sends a signed out visitor to /teach", async () => {
     getUser.mockResolvedValue({ data: { user: null } });
-    await expect(LiveBody({ params })).rejects.toThrow("REDIRECT:/teach");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("REDIRECT:/teach");
   });
 
   it("is a 404 when the lecture is not the teacher's", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
-    await expect(LiveBody({ params })).rejects.toThrow("NOT_FOUND");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("NOT_FOUND");
   });
 
   it("asks only for a lecture of the signed in teacher's own courses, so a joined student gets a 404", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
-    await expect(LiveBody({ params })).rejects.toThrow("NOT_FOUND");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("NOT_FOUND");
     expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id)")]);
     expect(eqCalls).toContainEqual(["lectures", "id", "l1"]);
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
@@ -89,23 +90,23 @@ describe("LiveBody", () => {
 
   it("is a 404 for a malformed uuid in the url", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } });
-    await expect(LiveBody({ params })).rejects.toThrow("NOT_FOUND");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("NOT_FOUND");
   });
 
   it("throws on any other query error", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: { code: "42P01", message: "lectures broke" } });
-    await expect(LiveBody({ params })).rejects.toThrow("lectures broke");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("lectures broke");
   });
 
   it("throws when the slides cannot be read", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
     slidesQuery.mockResolvedValue({ data: null, error: { message: "slides broke" } });
-    await expect(LiveBody({ params })).rejects.toThrow("slides broke");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("slides broke");
   });
 
   it("gives the live data view the lecture name, every slide with its first line and the current slide", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
-    render(await LiveBody({ params }));
+    render(await LiveBody({ params, searchParams: noSearch }));
     expect(eqCalls).toContainEqual(["slides", "lecture_id", "l1"]);
     expect(JSON.parse(screen.getByTestId("data").textContent!)).toEqual({
       lectureId: "l1",
@@ -118,12 +119,33 @@ describe("LiveBody", () => {
       ],
       initialCurrentSlide: 2,
       courseId: "c1",
+      confirmEndOnLoad: false,
     });
+  });
+
+  const shown = async (status: string, search: Promise<{ end?: string | string[] }>) => {
+    maybeSingle.mockResolvedValue({ data: { ...lecture, status }, error: null });
+    render(await LiveBody({ params, searchParams: search }));
+    return JSON.parse(screen.getByTestId("data").textContent!);
+  };
+
+  it("asks the data view to open the End lecture confirm for ?end=1 on a live lecture", async () => {
+    expect((await shown("live", Promise.resolve({ end: "1" }))).confirmEndOnLoad).toBe(true);
+  });
+
+  it("does not for other values, or for an ended lecture", async () => {
+    expect((await shown("live", Promise.resolve({ end: "0" }))).confirmEndOnLoad).toBe(false);
+    cleanup();
+    expect((await shown("live", Promise.resolve({ end: ["1", "2"] }))).confirmEndOnLoad).toBe(false);
+    cleanup();
+    const ended = await shown("ended", Promise.resolve({ end: "1" }));
+    expect(ended.mode).toBe("past");
+    expect(ended.confirmEndOnLoad).toBe(false);
   });
 
   it("shows an ended lecture in past mode", async () => {
     maybeSingle.mockResolvedValue({ data: { ...lecture, status: "ended" }, error: null });
-    render(await LiveBody({ params }));
+    render(await LiveBody({ params, searchParams: noSearch }));
     expect(JSON.parse(screen.getByTestId("data").textContent!).mode).toBe("past");
   });
 });

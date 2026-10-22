@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
@@ -113,13 +114,17 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={toggleFullscreen}
-        className="absolute right-4 top-4 border border-white bg-black px-3 py-1"
-      >
-        Fullscreen
-      </button>
+      <div className="absolute right-4 top-4 flex gap-2">
+        <Link href={`/teach/l/${lectureId}/live`} className="border border-white bg-black px-3 py-1">
+          Data
+        </Link>
+        <Link href={`/teach/l/${lectureId}/live?end=1`} className="border border-white bg-black px-3 py-1">
+          End lecture
+        </Link>
+        <button type="button" onClick={toggleFullscreen} className="border border-white bg-black px-3 py-1">
+          Fullscreen
+        </button>
+      </div>
 
       {error && (
         <p role="alert" className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black px-3 py-1">

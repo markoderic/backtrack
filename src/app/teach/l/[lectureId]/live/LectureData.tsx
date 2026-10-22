@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
@@ -23,6 +23,8 @@ type Props = {
   initialCurrentSlide?: number;
   /** Past mode links back to this course. */
   courseId?: string;
+  /** Open the End lecture confirm on load (the url has ?end=1). Only a live lecture uses it. */
+  confirmEndOnLoad?: boolean;
   /** YYYY-MM-DD, shown as "Oct 21" under the name. */
   lectureDate?: string;
   /** Shown under the heading, e.g. the rename field on the past lecture page. */
@@ -86,6 +88,7 @@ export function LectureData({
   slides,
   initialCurrentSlide,
   courseId,
+  confirmEndOnLoad,
   lectureDate,
   children,
 }: Props) {
@@ -97,7 +100,7 @@ export function LectureData({
   const [current, setCurrent] = useState(initialCurrentSlide ?? 1);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState(mode === "live" && !!confirmEndOnLoad);
   const [ending, setEnding] = useState(false);
   const [endError, setEndError] = useState(false);
 
@@ -216,20 +219,26 @@ export function LectureData({
     };
   }, [lectureId, live]);
 
+  // Closing the confirm also drops ?end=1, or a reload would ask again.
+  const closeConfirm = useCallback(() => {
+    setConfirming(false);
+    if (confirmEndOnLoad) router.replace(`/teach/l/${lectureId}/live`);
+  }, [confirmEndOnLoad, lectureId, router]);
+
   // Escape goes back to the projector (D6). Nothing else is a shortcut.
   useEffect(() => {
     if (!live) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape" || e.repeat || isTyping(e.target)) return;
       if (confirming) {
-        setConfirming(false);
+        closeConfirm();
         return;
       }
       router.push(`/teach/l/${lectureId}/present`);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [live, confirming, lectureId, router]);
+  }, [live, confirming, closeConfirm, lectureId, router]);
 
   async function endLecture() {
     setEnding(true);
@@ -362,7 +371,7 @@ export function LectureData({
                 type="button"
                 autoFocus
                 disabled={ending}
-                onClick={() => setConfirming(false)}
+                onClick={closeConfirm}
                 className="border border-current px-4 py-2"
               >
                 Cancel

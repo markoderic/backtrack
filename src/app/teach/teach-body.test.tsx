@@ -39,6 +39,9 @@ vi.mock("./add-course-form", () => ({ AddCourseForm: () => <form /> }));
 import { TeachBody } from "./page";
 
 const search = Promise.resolve({});
+// Text and href of every link to a lecture page, in order.
+const links = (html: string) =>
+  [...html.matchAll(/<a [^>]*href="(\/teach\/l\/[^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[2], m[1].replace(/&amp;/g, "&")]);
 
 beforeEach(() => {
   selects.length = 0;
@@ -58,15 +61,20 @@ describe("TeachBody", () => {
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
   });
 
-  it("shows Live now: Resume for each live lecture", async () => {
+  it("shows Live now with the name and Resume, Data and End lecture links for each live lecture", async () => {
     live.mockResolvedValue({
       data: [{ id: "l2", name: "Lecture 2, Oct 26", courses: { teacher_id: "u1" } }],
       error: null,
     });
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
     expect(html).toContain('href="/teach/l/l2/present"');
-    expect(html).toContain("Live now: Resume");
+    expect(html).toContain("Live now");
     expect(html).toContain("Lecture 2, Oct 26");
+    expect(links(html)).toEqual([
+      ["Resume", "/teach/l/l2/present"],
+      ["Data", "/teach/l/l2/live"],
+      ["End lecture", "/teach/l/l2/live?end=1"],
+    ]);
   });
 
   it("throws when the live lectures query fails", async () => {
