@@ -155,6 +155,10 @@ export function LectureData({
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const backLink = useRef<HTMLAnchorElement>(null);
+  // True from a press inside the End area until that press is done. A blur it causes (Safari and
+  // Firefox on macOS don't focus a pressed button, so focus goes nowhere) must not close the
+  // confirm, or End lecture could never be clicked there.
+  const pressingInside = useRef(false);
   const bars = useRef<HTMLOListElement>(null);
   // Columns too narrow for every slide number (measured, so it follows the window).
   const [dense, setDense] = useState(false);
@@ -413,9 +417,17 @@ export function LectureData({
               ref={endArea}
               className="relative ml-auto"
               // A non-modal popover: Tab past Keep going (or anywhere else) closes it, so it never
-              // stays open over the page with focus behind it. Switching windows leaves it open.
+              // stays open over the page with focus behind it. A press inside it never closes it,
+              // and switching windows leaves it open. A press outside closes it (pointerdown above).
+              onPointerDown={() => {
+                pressingInside.current = true;
+                // The blur a press causes comes in the same task; after it the flag is done.
+                setTimeout(() => {
+                  pressingInside.current = false;
+                }, 0);
+              }}
               onBlur={(e) => {
-                if (!confirming || ending || !document.hasFocus()) return;
+                if (!confirming || ending || pressingInside.current || !document.hasFocus()) return;
                 if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
                 closeConfirm(false);
               }}
@@ -440,7 +452,9 @@ export function LectureData({
                   role="dialog"
                   aria-labelledby="end-lecture-title"
                   aria-describedby="end-lecture-text"
-                  className="absolute top-full right-0 z-30 mt-px flex w-80 max-w-[calc(100vw-32px)] origin-top-right animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-5 shadow-popover"
+                  // A press on its text or padding moves focus here, still inside, instead of nowhere.
+                  tabIndex={-1}
+                  className="absolute top-full right-0 z-30 mt-px flex outline-hidden w-80 max-w-[calc(100vw-32px)] origin-top-right animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-5 shadow-popover"
                 >
                   <p id="end-lecture-title" className="type-body-strong text-ink">
                     End the lecture?

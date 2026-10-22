@@ -579,6 +579,52 @@ describe("End lecture", () => {
     expect(h.rpc).not.toHaveBeenCalled();
   });
 
+  it("a press inside that sends focus nowhere (Safari, Firefox on macOS) keeps it open, and End lecture still ends", async () => {
+    await open();
+    const dialog = screen.getByRole("dialog");
+    const keep = within(dialog).getByRole("button", { name: "Keep going" });
+    const end = within(dialog).getByRole("button", { name: "End lecture" });
+    // The press on End lecture: pointerdown, then Keep going loses focus to nothing.
+    fireEvent.pointerDown(end);
+    fireEvent.blur(keep, { relatedTarget: null });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(end);
+    await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
+    expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
+  });
+
+  it("a press on the confirm's text or padding keeps it open (focus moves to the confirm itself)", async () => {
+    await open();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveAttribute("tabindex", "-1");
+    const keep = within(dialog).getByRole("button", { name: "Keep going" });
+    fireEvent.pointerDown(dialog);
+    fireEvent.blur(keep, { relatedTarget: dialog });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByText(DIALOG_TEXT));
+    fireEvent.blur(keep, { relatedTarget: null });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("an inside press only covers its own blur: a later Tab out to nothing still closes it", async () => {
+    vi.useFakeTimers();
+    try {
+      renderLive();
+      await act(async () => {});
+      fireEvent.click(endButton());
+      const keep = within(screen.getByRole("dialog")).getByRole("button", { name: "Keep going" });
+      fireEvent.pointerDown(keep);
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      // Focus leaves the page content (Tab out to the browser's own UI): relatedTarget is null.
+      fireEvent.blur(keep, { relatedTarget: null });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(h.rpc).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("focus moving inside the confirm keeps it open", async () => {
     await open();
     const dialog = screen.getByRole("dialog");
@@ -1029,6 +1075,33 @@ describe("LectureData with many slides", () => {
     expect(screen.getByTestId("bars")).toHaveAttribute("data-dense", "false");
     expect(shown(2)).toBe(true);
     expect(label(23).textContent).toBe("23\u00a0now");
+  });
+
+  it("exactly 40 px a slide is not dense, just under is", async () => {
+    await renderMany(2000);
+    expect(screen.getByTestId("bars")).toHaveAttribute("data-dense", "false");
+    expect(shown(2)).toBe(true);
+    act(() => resize?.(1999.5));
+    expect(screen.getByTestId("bars")).toHaveAttribute("data-dense", "true");
+    expect(shown(2)).toBe(false);
+  });
+
+  it("99 slides thin to every 5th, 100 slides to every 10th", async () => {
+    const deck = (n: number) => Array.from({ length: n }, (_, i) => ({ number: i + 1, first_line: "" }));
+    const { unmount } = renderLive({ slides: deck(99), initialCurrentSlide: 1 });
+    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    act(() => resize?.(876));
+    expect(shown(95)).toBe(true);
+    expect(shown(15)).toBe(true);
+    expect(shown(96)).toBe(false);
+    unmount();
+    renderLive({ slides: deck(100), initialCurrentSlide: 1 });
+    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    act(() => resize?.(876));
+    expect(shown(90)).toBe(true);
+    expect(shown(100)).toBe(true);
+    expect(shown(95)).toBe(false);
+    expect(shown(15)).toBe(false);
   });
 
   it("thins to every 10th past 99 slides", async () => {
