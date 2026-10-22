@@ -34,6 +34,9 @@ describe("NameForm", () => {
   it("keeps an empty status line in the page so the save is announced", () => {
     render(<NameForm initialName="Linda Carter" />);
     expect(status()).toHaveTextContent("");
+    // Empty it is visually hidden but still in the accessibility tree (display:none would drop it).
+    expect(status().className).toContain("empty:sr-only");
+    expect(status().className).not.toContain("empty:hidden");
   });
 
   it("gives Save a 44 px target", () => {

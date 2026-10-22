@@ -131,7 +131,7 @@ export function NameForm({ initialName }: { initialName: string }) {
           </>
         )}
         {/* Always in the page, so screen readers announce the text when it appears. */}
-        <p role="status" className="type-small text-secondary empty:hidden">
+        <p role="status" className="type-small text-secondary empty:sr-only">
           {!changed && saved ? "Saved." : ""}
         </p>
       </div>
