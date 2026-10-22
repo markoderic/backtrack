@@ -107,6 +107,11 @@ export function LostButton({
   const [focusedBar, setFocusedBar] = useState<string | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
   const [fatal, setFatal] = useState<Error | null>(null);
+  // Focus in the saved line (the note field or Undo). When that control goes (Undo, the note sent,
+  // the line closing) focus would fall to the page, so it comes back to the I'm lost button.
+  const lostRef = useRef<HTMLButtonElement>(null);
+  const barRowRef = useRef<HTMLDivElement>(null);
+  const focusInBar = useRef(false);
 
   const queueRef = useRef<TapQueue | null>(null);
   const sendRef = useRef(send);
@@ -312,6 +317,14 @@ export function LostButton({
     });
   });
 
+  useEffect(() => {
+    if (!focusInBar.current) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && barRowRef.current?.contains(active)) return;
+    focusInBar.current = false;
+    if (!active || active === document.body) lostRef.current?.focus();
+  });
+
   if (fatal) throw fatal;
 
   function press() {
@@ -350,15 +363,29 @@ export function LostButton({
   return (
     <>
       <div className="flex h-26 w-full shrink-0 items-center justify-center">
-        <ImLostButton onClick={press} savedSignal={savedSignal} />
+        <ImLostButton ref={lostRef} onClick={press} savedSignal={savedSignal} />
       </div>
-      <div data-bar className="flex h-20 w-full shrink-0 items-center justify-center sm:h-10">
+      <div
+        ref={barRowRef}
+        data-bar
+        className="relative flex h-20 w-full shrink-0 items-center justify-center sm:h-10"
+        onFocus={() => {
+          focusInBar.current = true;
+        }}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusInBar.current = false;
+        }}
+      >
+        {/* Always there, so a screen reader says each save (a new line per tap, even on the same slide). */}
+        <p role="status" className="sr-only">
+          {bar && <span key={bar.id}>{`${message}.${bar.saved && bar.note ? " Note saved." : ""}`}</span>}
+        </p>
         {bar ? (
           <div
             key={bar.id}
             className="flex max-w-full animate-rise-in flex-wrap items-center justify-center gap-x-4 gap-y-2 max-sm:w-75"
           >
-            <p role="status" className="order-1 whitespace-nowrap type-small-strong text-ink">
+            <p className="order-1 whitespace-nowrap type-small-strong text-ink">
               {message}
             </p>
             <div className="order-3 h-8 border-b border-hairline py-1 transition-colors duration-(--dur-fast) focus-within:border-ink max-sm:w-full sm:order-2 sm:w-60">

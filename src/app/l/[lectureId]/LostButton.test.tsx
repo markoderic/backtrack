@@ -823,6 +823,79 @@ describe("LostButton", () => {
     });
   });
 
+  describe("screen readers and keyboard", () => {
+    it("says each save in a status line that is always there, a new line per tap even on the same slide", async () => {
+      setup();
+      await settle();
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent(/^$/);
+      press();
+      expect(screen.getByRole("status")).toBe(status);
+      expect(status).toHaveTextContent("Saved slide 7.");
+      const first = status.firstElementChild;
+      press();
+      expect(status).toHaveTextContent("Saved slide 7.");
+      expect(status.firstElementChild).not.toBe(first);
+    });
+
+    it("says the note was saved, and says nothing once the line is gone", async () => {
+      setup();
+      await settle();
+      press();
+      typeNote("too fast");
+      sendNote();
+      expect(screen.getByRole("status")).toHaveTextContent("Saved slide 7. Note saved.");
+      undo();
+      expect(screen.getByRole("status")).toHaveTextContent(/^$/);
+    });
+
+    it("puts focus back on I'm lost after Undo, so it never falls to the page", async () => {
+      setup();
+      await settle();
+      press();
+      const button = screen.getByRole("button", { name: "Undo" });
+      act(() => button.focus());
+      undo();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "I'm lost" }));
+    });
+
+    it("puts focus back on I'm lost after Enter sends the note", async () => {
+      setup();
+      await settle();
+      press();
+      act(() => noteField().focus());
+      typeNote("too fast");
+      sendNote();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "I'm lost" }));
+    });
+
+    it("puts focus back on I'm lost when the saved line closes by itself while Undo has focus", async () => {
+      vi.useFakeTimers();
+      setup();
+      await settle();
+      press();
+      act(() => screen.getByRole("button", { name: "Undo" }).focus());
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "I'm lost" }));
+    });
+
+    it("leaves focus alone when it went somewhere else first", async () => {
+      const { container } = render(<button type="button">Elsewhere</button>);
+      setup();
+      await settle();
+      press();
+      act(() => screen.getByRole("button", { name: "Undo" }).focus());
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      act(() => elsewhere.focus());
+      undo();
+      expect(document.activeElement).toBe(elsewhere);
+      expect(container).toBeTruthy();
+    });
+  });
+
   it("keeps a row of the same height before and after a tap", async () => {
     const { container } = setup();
     await settle();

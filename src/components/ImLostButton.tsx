@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ButtonHTMLAttributes } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type Ref } from "react";
 import { Icon } from "./Icon";
 
 /** How long the press look holds before Saved shows (Parts: scale 0.96 for 120 ms). */
@@ -18,6 +18,8 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> 
    * value shows Saved for 2 s, as after a press, without the press.
    */
   savedSignal?: number;
+  /** The button itself, so focus can come back to it when the saved line closes. */
+  ref?: Ref<HTMLButtonElement>;
 };
 
 /**

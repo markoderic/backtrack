@@ -260,9 +260,12 @@ describe("StudentLecture", () => {
     expect(container.querySelector("[data-bar]")).toContainElement(screen.getByText("Reconnecting…"));
     expect(screen.getByText("reconnecting")).toBeInTheDocument();
     expect(screen.queryByText("live")).not.toBeInTheDocument();
+    // A screen reader hears it from a status line that is always on the page.
+    expect(screen.getAllByRole("status").map((s) => s.textContent)).toContain("Reconnecting.");
     single.mockResolvedValue({ data: { current_slide: 9, status: "live", slide_count: 10 }, error: null });
     await act(async () => channelStatus("SUBSCRIBED"));
     await waitFor(() => expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument());
+    expect(screen.getAllByRole("status").map((s) => s.textContent)).not.toContain("Reconnecting.");
     expect(shownSrc()).toBe("https://signed/9.webp");
   });
 

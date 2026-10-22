@@ -165,6 +165,10 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
         {/* Room for the theme button, which comes with dark mode (not built yet). */}
         <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
       </header>
+      {/* Always there, so a screen reader hears when the connection drops (the line above shows it). */}
+      <p role="status" className="sr-only">
+        {reconnecting ? "Reconnecting." : ""}
+      </p>
 
       <main
         className="min-h-0 flex-1 overflow-y-auto px-2 pb-6 pt-2 [--controls:264px] sm:px-4 sm:[--controls:224px]"
@@ -269,7 +273,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
               onRejected={recheck}
               idle={
                 reconnecting ? (
-                  <p role="status" className="animate-fade-in type-small text-secondary">
+                  <p className="animate-fade-in type-small text-secondary">
                     Reconnecting…
                   </p>
                 ) : null
