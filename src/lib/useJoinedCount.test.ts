@@ -83,6 +83,22 @@ describe("useJoinedCount", () => {
     expect(result.current).toBe(6);
   });
 
+  it("an insert for a student the count already had settles back to the exact count", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useJoinedCount(LECTURE));
+      await act(async () => {});
+      expect(result.current).toBe(4);
+      // The 4 already include this student: the read ran after the row was written.
+      act(() => channel.insert?.({ new: { lecture_id: LECTURE } }));
+      expect(result.current).toBe(5);
+      await act(async () => vi.advanceTimersByTimeAsync(800));
+      expect(result.current).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("counts again every time the channel reports SUBSCRIBED", async () => {
     const { result } = renderHook(() => useJoinedCount(LECTURE));
     await waitFor(() => expect(result.current).toBe(4));

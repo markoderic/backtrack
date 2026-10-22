@@ -474,6 +474,26 @@ describe("LectureData live", () => {
     expect(screen.getByText("8 joined")).toBeInTheDocument();
   });
 
+  it("does not stay one too high when a participant insert was already in the count", async () => {
+    vi.useFakeTimers();
+    try {
+      renderLive();
+      await act(async () => {});
+      await act(async () => {});
+      expect(screen.getByText("7 joined")).toBeInTheDocument();
+      // The read that showed 7 already counted this student.
+      act(() => h.handlers["participants:INSERT"]({ new: { lecture_id: LECTURE } }));
+      expect(screen.getByText("8 joined")).toBeInTheDocument();
+      const taps = h.tapsQuery.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(800));
+      expect(screen.getByText("7 joined")).toBeInTheDocument();
+      // Only the count is read again, not every tap.
+      expect(h.tapsQuery.mock.calls.length).toBe(taps);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("moves the current slide marker when the lecture row updates", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));

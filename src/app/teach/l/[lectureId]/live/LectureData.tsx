@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { openChannel } from "@/lib/supabase/realtime";
+import { createJoinedCounter } from "@/lib/joinedCounter";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { ButtonPrimary } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
@@ -193,6 +194,9 @@ export function LectureData({
     // For each read still running: what Realtime changed meanwhile. Those win
     // over what the read brings back, which may be older.
     const inflight = new Set<Set<string>>();
+    // The joined count: a join event adds one at once and a recount follows, so it can't
+    // stay one too high when an event is for a student a read already counted.
+    const joinedCount = createJoinedCounter(() => readJoined(supabase, lectureId), setJoined);
 
     const retry = () => {
       if (cancelled) return;
@@ -207,6 +211,7 @@ export function LectureData({
       timer = undefined;
       const touched = new Set<string>();
       inflight.add(touched);
+      const joinedMark = joinedCount.begin();
       try {
         const [list, count, lecture] = await Promise.all([
           readTaps(supabase, lectureId),
@@ -224,8 +229,7 @@ export function LectureData({
           }
           return next;
         });
-        // People never leave, so a smaller number is an older one.
-        setJoined((prev) => Math.max(prev ?? 0, count));
+        joinedCount.settle(count, joinedMark);
         if (lecture) {
           if (lecture.status === "ended") {
             setLive(false);
@@ -271,7 +275,7 @@ export function LectureData({
           .on(
             "postgres_changes",
             { event: "INSERT", schema: "public", table: "participants", filter: `lecture_id=eq.${lectureId}` },
-            () => setJoined((n) => (n ?? 0) + 1),
+            () => joinedCount.joined(),
           )
           .on(
             "postgres_changes",
@@ -300,6 +304,7 @@ export function LectureData({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      joinedCount.stop();
       close?.();
     };
   }, [lectureId, live]);
