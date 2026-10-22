@@ -644,15 +644,15 @@ describe("LectureData live", () => {
   });
 });
 
-const TITLE = "End the lecture?";
+const TITLE = "End class?";
 const DIALOG_TEXT = "The code stops working and students land on My spots.";
-/** The End lecture button in the heading (not the one inside the confirm). */
-const endButton = () => screen.getAllByRole("button", { name: "End lecture" })[0];
-/** The End lecture button inside the confirm. */
-const confirmEnd = () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "End lecture" }));
+/** The End class button in the heading (not the one inside the confirm). */
+const endButton = () => screen.getAllByRole("button", { name: "End class" })[0];
+/** The End class button inside the confirm. */
+const confirmEnd = () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "End class" }));
 const keepGoing = () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep going" }));
 
-describe("End lecture", () => {
+describe("End class", () => {
   async function open() {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
@@ -678,16 +678,16 @@ describe("End lecture", () => {
     const dialog = screen.getByRole("dialog", { name: TITLE });
     expect(within(dialog).getByText(DIALOG_TEXT)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Keep going" })).toHaveFocus();
-    expect(within(dialog).getByRole("button", { name: "End lecture" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "End class" })).toBeInTheDocument();
     expect(endButton()).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("Keep going closes the confirm, ends nothing and gives focus back to End lecture", async () => {
+  it("Keep going closes the confirm, ends nothing and gives focus back to End class", async () => {
     await open();
     keepGoing();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.rpc).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "End lecture" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "End class" })).toHaveFocus();
   });
 
   it("a press outside the confirm closes it and ends nothing", async () => {
@@ -706,10 +706,10 @@ describe("End lecture", () => {
     expect(h.rpc).not.toHaveBeenCalled();
   });
 
-  it("a press inside the End area never moves focus (mousedown is cancelled), and End lecture still ends", async () => {
+  it("a press inside the End area never moves focus (mousedown is cancelled), and End class still ends", async () => {
     await open();
     const dialog = screen.getByRole("dialog");
-    const end = within(dialog).getByRole("button", { name: "End lecture" });
+    const end = within(dialog).getByRole("button", { name: "End class" });
     // fireEvent returns false when the event's default was prevented: no focus change, so no blur.
     expect(fireEvent.mouseDown(end)).toBe(false);
     expect(fireEvent.mouseDown(dialog)).toBe(false);
@@ -718,11 +718,11 @@ describe("End lecture", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(dialog).toHaveAttribute("tabindex", "-1");
     fireEvent.click(end);
-    await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Class ended.")).toBeInTheDocument());
     expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
   });
 
-  it("tapping the End lecture toggle while the confirm is open closes it and it stays closed", async () => {
+  it("tapping the End class toggle while the confirm is open closes it and it stays closed", async () => {
     await open();
     // A touch tap: the compat mousedown is cancelled, so focus never leaves (no blur), then the click.
     expect(fireEvent.mouseDown(endButton())).toBe(false);
@@ -749,7 +749,7 @@ describe("End lecture", () => {
     await open();
     const dialog = screen.getByRole("dialog");
     const keep = within(dialog).getByRole("button", { name: "Keep going" });
-    fireEvent.blur(keep, { relatedTarget: within(dialog).getByRole("button", { name: "End lecture" }) });
+    fireEvent.blur(keep, { relatedTarget: within(dialog).getByRole("button", { name: "End class" }) });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
@@ -759,13 +759,13 @@ describe("End lecture", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("End lecture in the confirm calls end_lecture, then switches to past mode in place and says Lecture ended.", async () => {
+  it("End class in the confirm calls end_lecture, then switches to past mode in place and says Class ended.", async () => {
     await open();
     confirmEnd();
-    await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Class ended.")).toBeInTheDocument());
     expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "End lecture" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "End class" })).not.toBeInTheDocument();
     expect(h.removeChannel).toHaveBeenCalledWith(channel);
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     expect(screen.getByText("7 joined")).toBeInTheDocument();
@@ -782,15 +782,15 @@ describe("End lecture", () => {
     h.rpc.mockResolvedValue({ data: null, error: { message: "Not allowed." } });
     await open();
     confirmEnd();
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the lecture."));
-    expect(screen.queryByText("Lecture ended.")).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("button", { name: "End lecture" })).toHaveFocus());
-    expect(screen.getByRole("button", { name: "End lecture" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the class."));
+    expect(screen.queryByText("Class ended.")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "End class" })).toHaveFocus());
+    expect(screen.getByRole("button", { name: "End class" })).toBeInTheDocument();
     expect(h.removeChannel).not.toHaveBeenCalled();
     h.rpc.mockResolvedValue({ data: null, error: null });
     fireEvent.click(endButton());
     confirmEnd();
-    await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Class ended.")).toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -798,8 +798,8 @@ describe("End lecture", () => {
     h.rpc.mockRejectedValue(new TypeError("Failed to fetch"));
     await open();
     confirmEnd();
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the lecture."));
-    expect(screen.getByRole("button", { name: "End lecture" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the class."));
+    expect(screen.getByRole("button", { name: "End class" })).toBeInTheDocument();
   });
 
   it("switches to past mode when the lecture row says ended, whoever ended it", async () => {
@@ -808,15 +808,15 @@ describe("End lecture", () => {
     const bar = within(slideRow(2)).getByRole("button");
     act(() => bar.focus());
     act(() => h.handlers["lectures:UPDATE"]({ new: { current_slide: 3, status: "ended" } }));
-    expect(screen.queryByRole("button", { name: "End lecture" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "End class" })).not.toBeInTheDocument();
     // Ended by someone else: focus is left where the teacher had it.
     expect(bar).toHaveFocus();
-    expect(screen.getByText("Lecture ended.")).toBeInTheDocument();
+    expect(screen.getByText("Class ended.")).toBeInTheDocument();
     expect(h.removeChannel).toHaveBeenCalledWith(channel);
   });
 });
 
-describe("End lecture from ?end=1", () => {
+describe("End class from ?end=1", () => {
   it("opens the confirm on load for a live lecture", async () => {
     renderLive({ confirmEndOnLoad: true });
     const dialog = screen.getByRole("dialog");
@@ -855,10 +855,10 @@ describe("End lecture from ?end=1", () => {
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
   });
 
-  it("End lecture in it ends the lecture", async () => {
+  it("End class in it ends the lecture", async () => {
     renderLive({ confirmEndOnLoad: true });
     confirmEnd();
-    await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Class ended.")).toBeInTheDocument());
     expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
   });
 
@@ -868,6 +868,34 @@ describe("End lecture from ?end=1", () => {
     fireEvent.click(endButton());
     keepGoing();
     expect(h.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("Live header buttons", () => {
+  it("Back to slides is the primary black button (as Home's Join a class) and End class a white secondary one", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    const back = screen.getByRole("link", { name: "Back to slides" });
+    expect(back.className).toContain("bg-ink");
+    expect(back.className).toContain("text-surface");
+    expect(back.className).not.toContain("underline");
+    const end = endButton();
+    expect(end).toHaveTextContent("End class");
+    expect(end.className).toContain("bg-surface");
+    expect(end.className).not.toContain("bg-ink");
+    expect(end.className).not.toContain("border-ink");
+  });
+
+  it("the confirm says End class with a white Keep going button, no underlined link", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    fireEvent.click(endButton());
+    const dialog = screen.getByRole("dialog", { name: "End class?" });
+    expect(dialog).toHaveTextContent("The code stops working and students land on My spots.");
+    expect(within(dialog).getByRole("button", { name: "End class" })).toBeInTheDocument();
+    const keep = within(dialog).getByRole("button", { name: "Keep going" });
+    expect(keep.className).toContain("bg-surface");
+    expect(keep.className).not.toContain("underline");
   });
 });
 
@@ -921,8 +949,8 @@ describe("LectureData past", () => {
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     expect(channel.on).not.toHaveBeenCalled();
     expect(channel.subscribe).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "End lecture" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Lecture ended.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "End class" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Class ended.")).not.toBeInTheDocument();
     expect(h.tapsQuery).toHaveBeenCalledTimes(1);
   });
 

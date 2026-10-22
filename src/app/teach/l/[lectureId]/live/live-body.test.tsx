@@ -155,7 +155,7 @@ describe("LiveBody", () => {
     return JSON.parse(screen.getByTestId("data").textContent!);
   };
 
-  it("asks the data view to open the End lecture confirm for ?end=1 on a live lecture", async () => {
+  it("asks the data view to open the End class confirm for ?end=1 on a live lecture", async () => {
     expect((await shown("live", Promise.resolve({ end: "1" }))).confirmEndOnLoad).toBe(true);
   });
 

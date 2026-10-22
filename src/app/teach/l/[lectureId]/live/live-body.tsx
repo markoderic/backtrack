@@ -73,7 +73,7 @@ export async function LiveBody({
         initialCurrentSlide={lecture.current_slide}
         courseId={lecture.course_id}
         code={lecture.code}
-        // ?end=1 comes from the End lecture links.
+        // ?end=1 comes from the End class links.
         confirmEndOnLoad={end === "1"}
         teacherId={user.id}
       />

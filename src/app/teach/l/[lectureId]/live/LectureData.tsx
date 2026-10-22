@@ -7,7 +7,7 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { openChannel } from "@/lib/supabase/realtime";
 import { createJoinedCounter } from "@/lib/joinedCounter";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
-import { ButtonPrimary } from "@/components/ButtonPrimary";
+import { ButtonPrimary, buttonPrimaryClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { highlightsBySlide, notesBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
 import { useSlideUrls } from "@/lib/useSlideUrls";
@@ -40,7 +40,7 @@ type Props = {
   courseId?: string;
   /** The join code, shown in the live heading as "Code 482 916". */
   code?: string | null;
-  /** Open the End lecture confirm on load (the url has ?end=1). Only a live lecture uses it. */
+  /** Open the End class confirm on load (the url has ?end=1). Only a live lecture uses it. */
   confirmEndOnLoad?: boolean;
   /** The signed in teacher, so "Hide notes" is remembered for them on this browser. */
   teacherId?: string;
@@ -137,10 +137,13 @@ function writeNotesHidden(key: string, hidden: boolean): void {
 /** "482916" -> "482 916", as the design shows a code. */
 const spacedCode = (code: string) => (code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code);
 
-/** The outlined End lecture button (Figma 34:890): 140 x 44, 1 px ink, radius md, Button type. */
-const endButtonClass =
-  "press focus-ring inline-flex h-11 w-35 shrink-0 items-center justify-center rounded-md border border-ink px-5 " +
-  "type-button whitespace-nowrap text-ink hover:bg-ink/5";
+/**
+ * The header's two actions, the same pair as Home: Back to slides is the primary black button
+ * (Home's Join a class, at its natural width), End class the white secondary one at the same
+ * 48 px height.
+ */
+const backToSlidesClass = `${buttonPrimaryClass} w-auto! px-6`;
+const endButtonClass = `${buttonSecondaryClass} h-12! shrink-0 px-5`;
 
 export function LectureData({
   lectureId,
@@ -184,7 +187,7 @@ export function LectureData({
   // Columns too narrow for every slide number (measured, so it follows the window).
   const [dense, setDense] = useState(false);
   // Where focus goes once the confirm it was in is gone: the way back after ending here,
-  // or End lecture again after a failure. Ended by someone else, focus is left alone.
+  // or End class again after a failure. Ended by someone else, focus is left alone.
   const focusAfterEnd = useRef<"back" | "end" | null>(null);
   useEffect(() => {
     const supabase = createBrowserSupabase();
@@ -310,7 +313,7 @@ export function LectureData({
   }, [lectureId, live]);
 
   // Closing the confirm also drops ?end=1, or a reload would ask again. Esc and Keep going
-  // hand focus back to the End lecture button; a click somewhere else leaves it there.
+  // hand focus back to the End class button; a click somewhere else leaves it there.
   const closeConfirm = useCallback(
     (refocus: boolean) => {
       setConfirming(false);
@@ -320,7 +323,7 @@ export function LectureData({
     [confirmEndOnLoad, lectureId, router],
   );
 
-  // Esc closes the End lecture confirm (closing a dialog). No other key does anything here:
+  // Esc closes the End class confirm (closing a dialog). No other key does anything here:
   // no key binds (Marko, Oct 22), the way back to the projector is a link.
   useEffect(() => {
     if (!live || !confirming) return;
@@ -424,7 +427,7 @@ export function LectureData({
               ) : (
                 justEnded && (
                   <span role="status" className="animate-fade-in type-small-strong text-ink">
-                    Lecture ended.
+                    Class ended.
                   </span>
                 )
               )}
@@ -434,14 +437,14 @@ export function LectureData({
             {endError && (
               <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
                 <Icon name="alert" size={18} />
-                Could not end the lecture.
+                Could not end the class.
               </p>
             )}
           </div>
           <div className="min-w-0 flex-1" />
           {/* The way back to the projector (no Esc shortcut): a plain link, so fullscreen stays. */}
           {live && (
-            <Link href={`/teach/l/${lectureId}/present`} className={`${textLinkClass} ml-auto`}>
+            <Link href={`/teach/l/${lectureId}/present`} className={`${backToSlidesClass} ml-auto`}>
               Back to slides
             </Link>
           )}
@@ -473,7 +476,7 @@ export function LectureData({
                 }}
                 className={endButtonClass}
               >
-                End lecture
+                End class
               </button>
               {confirming && (
                 <div
@@ -485,21 +488,21 @@ export function LectureData({
                   className="absolute top-full right-0 z-30 mt-px flex outline-hidden w-80 max-w-[calc(100vw-32px)] origin-top-right animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-5 shadow-popover"
                 >
                   <p id="end-lecture-title" className="type-body-strong text-ink">
-                    End the lecture?
+                    End class?
                   </p>
                   <p id="end-lecture-text" className="type-small text-ink">
                     The code stops working and students land on My spots.
                   </p>
                   <div className="flex items-center gap-4">
                     <ButtonPrimary disabled={ending} onClick={() => void endLecture()} className="h-11! w-35!">
-                      End lecture
+                      End class
                     </ButtonPrimary>
                     <button
                       type="button"
                       autoFocus
                       disabled={ending}
                       onClick={() => closeConfirm(true)}
-                      className={textLinkClass}
+                      className={buttonSecondaryClass}
                     >
                       Keep going
                     </button>
@@ -510,7 +513,7 @@ export function LectureData({
           ) : (
             justEnded &&
             courseId && (
-              <Link ref={backLink} href={`/teach/c/${courseId}`} className={textLinkClass}>
+              <Link ref={backLink} href={`/teach/c/${courseId}`} className={buttonSecondaryClass}>
                 Back to the course
               </Link>
             )
