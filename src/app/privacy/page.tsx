@@ -28,7 +28,7 @@ export default function PrivacyPage() {
           <p>You never sign in or sign up. Backtrack does not ask for a name, an email or a password.</p>
           <p>
             When you join with a code, Backtrack gets a random anonymous ID for your browser. Backtrack does not tie it
-            to your name or your email, and keeps no device details with it. It lets you find your own spots again,
+            to your name or your email, and Backtrack&apos;s own tables keep no device details with it. It lets you find your own spots again,
             lets Backtrack count different students without knowing who they are, and is what the limits below count
             against.
           </p>
@@ -47,6 +47,10 @@ export default function PrivacyPage() {
               Each time you enter a wrong code: the time, with your anonymous ID. The code you typed is not kept. This
               slows down guessing. After 10 wrong codes in 10 minutes it stops answering for a while, even for a right
               code.
+            </li>
+            <li>
+              At most 20 taps in a minute and 300 in one lecture for each student. After that taps are refused. This
+              stops one browser from flooding a class.
             </li>
           </ul>
         </Section>
@@ -104,8 +108,9 @@ export default function PrivacyPage() {
 
         <Section title="How long">
           <p>
-            Backtrack never deletes anything on a timer. Lectures, their slide images and the taps on them are kept.
-            Wrong code records older than a day are cleared the next time the same anonymous ID
+            Backtrack never deletes anything on a timer. A teacher can delete an ended lecture. That removes its taps,
+            notes and joined list, and then its slide images. If an image fails to delete it can stay in storage. Wrong
+            code records older than a day are cleared the next time the same anonymous ID
             enters a wrong code, so some stay longer.
           </p>
         </Section>

@@ -56,13 +56,17 @@ describe("Privacy page", () => {
     render(<PrivacyPage />);
     expect(screen.getByText(/same ID in every lecture you join on this browser/)).toBeInTheDocument();
     expect(screen.getByText(/The code you typed is not kept/)).toBeInTheDocument();
-    expect(screen.getByText(/keeps no device details with it/)).toBeInTheDocument();
+    expect(screen.getByText(/own tables keep no device details with it/)).toBeInTheDocument();
   });
 
-  it("does not promise deletion, and says what the host logs can hold", () => {
-    const { container } = render(<PrivacyPage />);
-    expect(container.textContent).not.toMatch(/until that lecture is deleted/);
-    expect(screen.getByText(/Lectures, their slide images and the taps on them are kept/)).toBeInTheDocument();
+  it("says a teacher can delete an ended lecture, images best effort, and what the host logs can hold", () => {
+    render(<PrivacyPage />);
+    expect(screen.getByText(/A teacher can delete an ended lecture\. That removes its taps, notes and joined list, and then its slide images\. If an image fails to delete it can stay in storage\./)).toBeInTheDocument();
     expect(screen.getByText(/can include your IP address/)).toBeInTheDocument();
+  });
+
+  it("mentions the tap limit", () => {
+    render(<PrivacyPage />);
+    expect(screen.getByText(/At most 20 taps in a minute and 300 in one lecture for each student/)).toBeInTheDocument();
   });
 });
