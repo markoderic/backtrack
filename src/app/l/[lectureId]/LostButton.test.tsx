@@ -882,6 +882,17 @@ describe("LostButton", () => {
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "I'm lost" }));
     });
 
+    it("lets Tab move from the note field to Undo (focus is never pulled back while it moves)", async () => {
+      setup();
+      await settle();
+      press();
+      act(() => noteField().focus());
+      const undoButton = screen.getByRole("button", { name: "Undo" });
+      act(() => undoButton.focus());
+      await settle();
+      expect(document.activeElement).toBe(undoButton);
+    });
+
     it("leaves focus alone when it went somewhere else first", async () => {
       const { container } = render(<button type="button">Elsewhere</button>);
       setup();

@@ -107,11 +107,10 @@ export function LostButton({
   const [focusedBar, setFocusedBar] = useState<string | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
   const [fatal, setFatal] = useState<Error | null>(null);
-  // Focus in the saved line (the note field or Undo). When that control goes (Undo, the note sent,
-  // the line closing) focus would fall to the page, so it comes back to the I'm lost button.
+  // The control in the saved line that has focus (the note field or Undo). When that control goes
+  // (Undo, the note sent, the line closing) focus would fall to the page, so it comes back to I'm lost.
   const lostRef = useRef<HTMLButtonElement>(null);
-  const barRowRef = useRef<HTMLDivElement>(null);
-  const focusInBar = useRef(false);
+  const barFocus = useRef<HTMLElement | null>(null);
 
   const queueRef = useRef<TapQueue | null>(null);
   const sendRef = useRef(send);
@@ -318,10 +317,11 @@ export function LostButton({
   });
 
   useEffect(() => {
-    if (!focusInBar.current) return;
+    // Only once the control is really gone: while focus moves on (Tab), the page briefly has none.
+    const last = barFocus.current;
+    if (!last || last.isConnected) return;
+    barFocus.current = null;
     const active = document.activeElement;
-    if (active && active !== document.body && barRowRef.current?.contains(active)) return;
-    focusInBar.current = false;
     if (!active || active === document.body) lostRef.current?.focus();
   });
 
@@ -366,14 +366,13 @@ export function LostButton({
         <ImLostButton ref={lostRef} onClick={press} savedSignal={savedSignal} />
       </div>
       <div
-        ref={barRowRef}
         data-bar
         className="relative flex h-20 w-full shrink-0 items-center justify-center sm:h-10"
-        onFocus={() => {
-          focusInBar.current = true;
+        onFocus={(e) => {
+          barFocus.current = e.target;
         }}
         onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusInBar.current = false;
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) barFocus.current = null;
         }}
       >
         {/* Always there, so a screen reader says each save (a new line per tap, even on the same slide). */}
