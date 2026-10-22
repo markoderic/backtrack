@@ -1,15 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { TeacherTopBar, fieldClass, fieldNarrowClass, hitAreaBelowClass, hitAreaClass, textLinkBelowClass, textLinkClass } from "./ui";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { TeacherTopBar, fieldClass, fieldNarrowClass, hitAreaClass } from "./ui";
 
-describe("hit areas", () => {
-  it("text actions get an invisible ::after box that makes the 20 px text 44 px tall", () => {
-    // -inset-y-3: 12 px above and below. Below variant: 4 px up, 20 px down.
+describe("buttons, not links (Marko, 2:05 PM)", () => {
+  it("no teacher screen and not Home has an underlined text action left", () => {
+    // Every action is the black or the white button now; only navigation (breadcrumb, Settings) is text.
+    const root = path.resolve(import.meta.dirname);
+    const files = [
+      ...readdirSync(root, { recursive: true, encoding: "utf8" })
+        .filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"))
+        .map((f) => path.join(root, f)),
+      path.resolve(root, "../page.tsx"),
+    ];
+    expect(files.length).toBeGreaterThan(20);
+    const underlined = files.filter((f) => /\bunderline\b(?!d)/.test(readFileSync(f, "utf8").replace(/\/\/.*|\/\*[\s\S]*?\*\/|\{\/\*[\s\S]*?\*\/\}/g, "")));
+    expect(underlined).toEqual([]);
+  });
+
+  it("text links in the top bar keep an invisible 44 px hit area", () => {
     expect(hitAreaClass).toBe("relative after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']");
-    expect(hitAreaBelowClass).toContain("after:-top-1 after:-bottom-5");
-    expect(textLinkClass).toContain(hitAreaClass);
-    expect(textLinkBelowClass).toContain(hitAreaBelowClass);
-    expect(textLinkClass).not.toContain("after:-bottom-5");
   });
 });
 

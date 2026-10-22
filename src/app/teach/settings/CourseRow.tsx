@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Icon } from "@/components/Icon";
-import { fieldClass, textLinkClass } from "../ui";
+import { buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { fieldClass } from "../ui";
 import { STATUS_MS, saveButtonClass } from "./NameForm";
 
 const NAME_MAX = 120;
@@ -140,7 +141,7 @@ export function CourseRow({
     return (
       <>
         {status}
-        <div className="flex min-w-0 items-center gap-6 py-3.5">
+        <div className="flex min-w-0 items-center gap-3 py-2">
           <span className="min-w-0 flex-1 truncate type-body text-ink">{current}</span>
           {shownNote && (
             <p aria-hidden className="shrink-0 animate-fade-in type-small text-secondary">
@@ -152,7 +153,7 @@ export function CourseRow({
             type="button"
             aria-label={`Rename ${current}`}
             onClick={open}
-            className={`${textLinkClass} shrink-0`}
+            className={`${buttonSecondaryClass} shrink-0`}
           >
             Rename
           </button>
@@ -163,7 +164,7 @@ export function CourseRow({
               aria-label={`Archive ${current}`}
               disabled={archiving}
               onClick={() => void archive()}
-              className={`${textLinkClass} shrink-0`}
+              className={`${buttonSecondaryClass} shrink-0`}
             >
               Archive
             </button>
@@ -213,7 +214,7 @@ export function CourseRow({
             <button type="submit" disabled={saving || trimmed === current.trim()} className={saveButtonClass}>
               Rename
             </button>
-            <button type="button" onClick={close} className={textLinkClass}>
+            <button type="button" onClick={close} className={buttonSecondaryClass}>
               Cancel
             </button>
           </div>

@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Icon } from "@/components/Icon";
-import { labelClass, staggerClass, staggerStyle, textLinkClass } from "../ui";
+import { buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { labelClass, staggerClass, staggerStyle } from "../ui";
 import { CourseRow } from "./CourseRow";
 import { STATUS_MS } from "./NameForm";
 
@@ -139,7 +140,7 @@ function ArchivedRow({
 
   return (
     <>
-      <div className="flex min-w-0 items-center gap-6 py-3.5">
+      <div className="flex min-w-0 items-center gap-3 py-2">
         <Link
           href={`/teach/c/${course.id}`}
           className="press focus-ring min-w-0 flex-1 truncate rounded-sm type-body text-secondary hover:text-ink"
@@ -157,7 +158,7 @@ function ArchivedRow({
           aria-label={`Unarchive ${course.name}`}
           disabled={busy}
           onClick={() => void unarchive()}
-          className={`${textLinkClass} shrink-0`}
+          className={`${buttonSecondaryClass} shrink-0`}
         >
           Unarchive
         </button>

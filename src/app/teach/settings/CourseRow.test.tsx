@@ -33,7 +33,6 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: h.refresh }) })
 
 import { CourseRow } from "./CourseRow";
 import { STATUS_MS } from "./NameForm";
-import { hitAreaClass } from "../ui";
 
 const NAME = "ACC 221 Intro to Financial Accounting";
 const renameLink = () => screen.getByRole("button", { name: `Rename ${NAME}` });
@@ -58,7 +57,10 @@ describe("CourseRow", () => {
     const onArchive = vi.fn().mockResolvedValue(true);
     render(<CourseRow courseId="c1" initialName={NAME} onArchive={onArchive} note="Unarchived." />);
     const archive = screen.getByRole("button", { name: `Archive ${NAME}` });
-    expect(archive.className).toContain(hitAreaClass);
+    // A white button (44 px tall on its own), not underlined text.
+    expect(archive.className).toContain("h-11");
+    expect(archive.className).toContain("border-hairline");
+    expect(archive.className).not.toContain("underline");
     expect(screen.getByText("Unarchived.")).toHaveAttribute("aria-hidden");
     fireEvent.click(archive);
     await waitFor(() => expect(onArchive).toHaveBeenCalledTimes(1));
@@ -72,10 +74,12 @@ describe("CourseRow", () => {
     expect(screen.getByRole("button", { name: `Archive ${NAME}` })).not.toBeDisabled();
   });
 
-  it("shows the course name and a Rename text action with a 44 px hit area, and no Archive without the list", () => {
+  it("shows the course name and a white Rename button, and no Archive without the list", () => {
     render(<CourseRow courseId="c1" initialName={NAME} />);
     expect(screen.getByText(NAME)).toBeInTheDocument();
-    expect(renameLink().className).toContain(hitAreaClass);
+    expect(renameLink().className).toContain("h-11");
+    expect(renameLink().className).toContain("border-hairline");
+    expect(renameLink().className).not.toContain("underline");
     expect(screen.queryByText(/archive/i)).toBeNull();
     expect(screen.queryByText(/delete/i)).toBeNull();
   });

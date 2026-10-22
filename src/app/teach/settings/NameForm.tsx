@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
-import { fieldNarrowClass, labelClass, textLinkClass } from "../ui";
+import { buttonPrimaryInlineClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { fieldNarrowClass, labelClass } from "../ui";
 import { saveName } from "./actions";
 
 const NAME_MAX = 80;
@@ -11,14 +12,8 @@ const NAME_MAX = 80;
 /** How long "Saved." and "Renamed." stay before the line clears. */
 export const STATUS_MS = 4000;
 
-/**
- * The small ink button that saves an edit in place (as Rename on the past lecture). 40 high,
- * with an invisible ::after 2 px above and below so the target is 44 px.
- */
-export const saveButtonClass =
-  "press focus-ring relative inline-flex h-10 shrink-0 items-center rounded-md bg-ink px-4 type-small-strong text-surface " +
-  "after:absolute after:inset-x-0 after:-inset-y-0.5 after:content-[''] " +
-  "hover:bg-ink-hover disabled:cursor-default disabled:bg-strip disabled:hover:bg-strip";
+/** The black button that saves an edit in place: the primary, 48 high like the field next to it. */
+export const saveButtonClass = buttonPrimaryInlineClass;
 
 /**
  * "Your name, as students see it" (Figma 34:1264): a 480 wide field. Save and Cancel appear only
@@ -124,7 +119,7 @@ export function NameForm({ initialName }: { initialName: string }) {
                 reset();
                 field.current?.focus();
               }}
-              className={`${textLinkClass} animate-pop-in`}
+              className={`${buttonSecondaryClass} animate-pop-in`}
             >
               Cancel
             </button>

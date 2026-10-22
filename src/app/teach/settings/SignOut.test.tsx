@@ -5,17 +5,19 @@ const h = vi.hoisted(() => ({ signOut: vi.fn() }));
 vi.mock("./actions", () => ({ signOut: h.signOut }));
 
 import { SignOut } from "./SignOut";
-import { hitAreaClass } from "../ui";
 
 beforeEach(() => {
   h.signOut.mockReset();
 });
 
 describe("SignOut", () => {
-  it("shows who is signed in and a Sign out text action with a 44 px hit area", () => {
+  it("shows who is signed in and a white Sign out button", () => {
     render(<SignOut email="lcarter@miamioh.edu" />);
     expect(screen.getByText("Signed in as lcarter@miamioh.edu")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sign out" }).className).toContain(hitAreaClass);
+    const button = screen.getByRole("button", { name: "Sign out" });
+    expect(button.className).toContain("h-11");
+    expect(button.className).toContain("border-hairline");
+    expect(button.className).not.toContain("underline");
   });
 
   it("calls the sign out action when pressed", async () => {

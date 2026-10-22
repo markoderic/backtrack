@@ -2,10 +2,10 @@
 
 import { useActionState } from "react";
 import { Icon } from "@/components/Icon";
-import { textLinkClass } from "../ui";
+import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { signOut, type SignOutState } from "./actions";
 
-/** "Signed in as lcarter@miamioh.edu  Sign out" (Small secondary, then a text action, gap 16). */
+/** "Signed in as lcarter@miamioh.edu  Sign out" (Small secondary, then a white button, gap 16). */
 export function SignOut({ email }: { email: string | null }) {
   const [state, action, pending] = useActionState<SignOutState>(signOut, null);
   return (
@@ -14,7 +14,7 @@ export function SignOut({ email }: { email: string | null }) {
         <p className="min-w-0 type-small wrap-anywhere text-secondary">
           {email ? `Signed in as ${email}` : "Signed in"}
         </p>
-        <button type="submit" disabled={pending} className={textLinkClass}>
+        <button type="submit" disabled={pending} className={buttonSecondaryClass}>
           Sign out
         </button>
       </form>

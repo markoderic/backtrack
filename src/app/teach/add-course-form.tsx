@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { addCourse } from "./actions";
-import { fieldClass, labelClass, textLinkBelowClass, textLinkClass } from "./ui";
+import { buttonPrimaryInlineClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { fieldClass, labelClass } from "./ui";
 
 /** "Add a course" under the course list. Opens a field in place (pops in); open from the start with no courses. */
 export function AddCourseForm({ startOpen = false }: { startOpen?: boolean }) {
@@ -38,14 +39,14 @@ export function AddCourseForm({ startOpen = false }: { startOpen?: boolean }) {
 
   if (!open) {
     return (
-      <button ref={openButton} type="button" onClick={() => setOpen(true)} className={textLinkBelowClass}>
+      <button ref={openButton} type="button" onClick={() => setOpen(true)} className={`${buttonSecondaryClass} mt-4 w-fit`}>
         Add a course
       </button>
     );
   }
 
   return (
-    <form onSubmit={submit} className="flex w-full max-w-[720px] animate-pop-in flex-col gap-2">
+    <form onSubmit={submit} className="flex w-full max-w-[720px] animate-pop-in flex-col gap-2 pt-4">
       <label htmlFor="new-course" className={labelClass}>
         Course name
       </label>
@@ -62,19 +63,11 @@ export function AddCourseForm({ startOpen = false }: { startOpen?: boolean }) {
           }}
           className={`${fieldClass} min-w-0 flex-1 basis-72`}
         />
-        <button
-          type="submit"
-          disabled={pending || name.trim() === ""}
-          className="press focus-ring inline-flex h-12 shrink-0 items-center justify-center rounded-md bg-ink px-6 type-button text-surface hover:bg-ink-hover disabled:cursor-default disabled:bg-strip disabled:hover:bg-strip"
-        >
+        <button type="submit" disabled={pending || name.trim() === ""} className={buttonPrimaryInlineClass}>
           Add course
         </button>
         {!startOpen && (
-          <button
-            type="button"
-            onClick={close}
-            className={textLinkClass}
-          >
+          <button type="button" onClick={close} className={buttonSecondaryClass}>
             Cancel
           </button>
         )}

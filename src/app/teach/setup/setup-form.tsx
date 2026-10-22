@@ -3,8 +3,8 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { saveSetup } from "../actions";
-import { ButtonPrimary } from "@/components/ButtonPrimary";
-import { fieldClass, labelClass, textLinkBelowClass } from "../ui";
+import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { fieldClass, labelClass } from "../ui";
 
 /** The most courses setup takes at once (save_setup allows 20); more can be added in Settings. */
 const COURSES_MAX = 20;
@@ -65,7 +65,7 @@ export function SetupForm({ defaultName = "" }: { defaultName?: string }) {
           />
         ))}
         {courses.length < COURSES_MAX && (
-          <button type="button" onClick={() => setCourses([...courses, ""])} className={textLinkBelowClass}>
+          <button type="button" onClick={() => setCourses([...courses, ""])} className={`${buttonSecondaryClass} mt-2 w-fit`}>
             Add another course
           </button>
         )}

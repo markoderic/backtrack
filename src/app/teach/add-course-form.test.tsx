@@ -25,12 +25,18 @@ describe("AddCourseForm", () => {
     expect(screen.queryByLabelText("Course name")).toBeNull();
   });
 
-  it("gives Add a course and Cancel an invisible 44 px hit area", () => {
+  it("Add a course and Cancel are white buttons, Add course the black one (no underlined text actions)", () => {
     render(<AddCourseForm />);
-    // Under the course list: reaches 4 px up and 20 px down (20 px text + 24).
-    expect(screen.getByRole("button", { name: "Add a course" }).className).toMatch(/after:-top-1 .*after:-bottom-5/);
-    fireEvent.click(screen.getByRole("button", { name: "Add a course" }));
-    expect(screen.getByRole("button", { name: "Cancel" }).className).toContain("after:-inset-y-3");
+    const add = screen.getByRole("button", { name: "Add a course" });
+    expect(add.className).toContain("border-hairline");
+    expect(add.className).toContain("h-11");
+    expect(add.className).not.toContain("underline");
+    fireEvent.click(add);
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(cancel.className).toContain("border-hairline");
+    expect(cancel.className).not.toContain("underline");
+    expect(screen.getByRole("button", { name: "Add course" }).className).toContain("bg-ink");
+    expect(screen.getByRole("button", { name: "Add course" }).className).toContain("h-12");
   });
 
   it("is open from the start when the teacher has no courses", () => {

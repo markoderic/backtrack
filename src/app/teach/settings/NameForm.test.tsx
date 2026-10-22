@@ -39,9 +39,17 @@ describe("NameForm", () => {
     expect(status().className).not.toContain("empty:hidden");
   });
 
-  it("gives Save a 44 px target", () => {
-    expect(saveButtonClass).toContain("h-10");
-    expect(saveButtonClass).toContain("after:-inset-y-0.5");
+  it("makes Save the black button at the field's 48 px height", () => {
+    expect(saveButtonClass).toContain("h-12");
+    expect(saveButtonClass).toContain("bg-ink");
+  });
+
+  it("makes Cancel a white button, not underlined text", () => {
+    render(<NameForm initialName="Linda Carter" />);
+    type("Dr. Linda Carter");
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(cancel.className).toContain("border-hairline");
+    expect(cancel.className).not.toContain("underline");
   });
 
   it("saves the trimmed name through the server action, refreshes, and puts focus back on the field", async () => {

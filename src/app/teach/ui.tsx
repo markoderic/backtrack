@@ -22,29 +22,17 @@ export const fieldNarrowClass = `${fieldLook} w-120 max-w-full`;
 export const labelClass = "type-small-strong text-ink";
 
 /**
- * Invisible 44 px hit areas for 20 px text actions (as on My spots): an ::after box around the text,
- * so the look and the layout do not move. `hitAreaClass` reaches 12 px above and below;
- * `hitAreaBelowClass` is for actions right under a field or a row link, so it reaches 4 px up and
- * 20 px down instead of covering the control above.
+ * An invisible 44 px hit area for a 20 px text link (the top bar's Settings and breadcrumb): an
+ * ::after box 12 px above and below the text, so the look and the layout do not move.
  */
 export const hitAreaClass = "relative after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']";
-export const hitAreaBelowClass =
-  "relative after:absolute after:-inset-x-2 after:-top-1 after:-bottom-5 after:content-['']";
 
-const textLinkBase =
-  "press focus-ring inline-flex w-fit items-center gap-1.5 rounded-sm type-small-strong text-ink underline " +
-  "decoration-from-font underline-offset-[3px] hover:text-ink-hover disabled:cursor-default disabled:text-secondary";
-
-/** An underlined text action (Export semester CSV, Cancel, Change file ...): Small strong, ink, 44 px hit area. */
-export const textLinkClass = `${textLinkBase} ${hitAreaClass}`;
-
-/** The same, for an action directly under a field or a list (Add a course, Add another course). */
-export const textLinkBelowClass = `${textLinkBase} ${hitAreaBelowClass}`;
-
-/** A small outlined button (the live lecture row): 40 high, 1px ink, radius md, Small strong. */
-export const secondaryButtonClass =
-  "press focus-ring inline-flex h-10 shrink-0 items-center justify-center rounded-md border border-ink px-4 " +
-  "type-small-strong whitespace-nowrap text-ink hover:bg-ink/5";
+/*
+ * Actions on the teacher screens are real buttons, never underlined text (Marko, 2:05 PM): the
+ * black primary (buttonPrimaryClass, or buttonPrimaryInlineClass in a row next to a field) for the
+ * main action, and the white secondary with a hairline border (buttonSecondaryClass) for the rest.
+ * Only navigation (the breadcrumb, Settings in the top bar) stays a text link.
+ */
 
 /**
  * A whole list row that is one link (a course, a past lecture). A 1000 px row scaled to .97

@@ -2,12 +2,12 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { topThree } from "@/lib/stats";
-import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { ButtonPrimaryLink, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { LiveLectureRow } from "../../LiveLectureRow";
 import { RefreshOnReturn } from "../../RefreshOnReturn";
 import { readTeacherName } from "../../teacher";
-import { TeacherPage, splitCourseName, textLinkClass } from "../../ui";
+import { TeacherPage, splitCourseName } from "../../ui";
 import { LECTURE_DELETED } from "../../delete-lecture-copy";
 import { PastLectures, type PastLecture } from "./PastLectures";
 
@@ -186,7 +186,7 @@ export async function CourseBody({
           {course.archived ? (
             <p data-testid="course-archived" className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-2">
               <span className="type-small text-secondary">Archived</span>
-              <Link href="/teach/settings" className={textLinkClass}>
+              <Link href="/teach/settings" className={buttonSecondaryClass}>
                 Unarchive in Settings
               </Link>
             </p>
@@ -223,7 +223,7 @@ export async function CourseBody({
               <h2 className="type-title text-ink">Past lectures</h2>
               <div className="flex-1" />
               {/* A plain link, not next/link: it downloads a file and must not be prefetched as a page. */}
-              <a href={`/teach/c/${course.id}/export`} download className={textLinkClass}>
+              <a href={`/teach/c/${course.id}/export`} download className={buttonSecondaryClass}>
                 <Icon name="download" size={18} />
                 Export semester CSV
               </a>
