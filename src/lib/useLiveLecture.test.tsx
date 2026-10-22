@@ -35,6 +35,11 @@ import { useLiveLecture } from "./useLiveLecture";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const row = (current_slide: number, status = "live") => ({ data: { current_slide, status }, error: null });
+/** A row as the database has it after 0015, with its slide_version. */
+const vrow = (current_slide: number, slide_version: number, status = "live") => ({
+  data: { current_slide, status, slide_version },
+  error: null,
+});
 
 beforeEach(() => {
   channel.filter = null;
@@ -56,7 +61,7 @@ describe("useLiveLecture", () => {
     expect(result.current.state).toBeNull();
     await waitFor(() => expect(result.current.state).toMatchObject({ live: 3, viewing: 3, following: true, conn: "live" }));
     expect(from).toHaveBeenCalledWith("lectures");
-    expect(select).toHaveBeenCalledWith("current_slide, status");
+    expect(select).toHaveBeenCalledWith("current_slide, status, slide_version");
     expect(eq).toHaveBeenCalledWith("id", LECTURE);
   });
 
@@ -323,7 +328,7 @@ describe("useLiveLecture", () => {
       single.mockResolvedValue(row(5));
       await wait(20000);
       expect(single.mock.calls.length).toBe(reads + 1);
-      expect(select).toHaveBeenLastCalledWith("current_slide, status");
+      expect(select).toHaveBeenLastCalledWith("current_slide, status, slide_version");
       expect(result.current.state).toMatchObject({ live: 5, viewing: 5, ended: false });
       await wait(20000);
       expect(single.mock.calls.length).toBe(reads + 2);
@@ -492,6 +497,78 @@ describe("useLiveLecture", () => {
       await act(async () => newer(row(6)));
       await act(async () => older(row(4)));
       expect(result.current.state).toMatchObject({ live: 6, viewing: 6 });
+    });
+
+    describe("with slide_version (0015)", () => {
+      it("a read that saw a newer state than a Realtime event shows the newer slide, and the late event changes nothing", async () => {
+        const { result } = await started();
+        let finish: (v: unknown) => void = () => {};
+        single.mockReturnValueOnce(new Promise((r) => (finish = r)));
+        await act(async () => window.dispatchEvent(new Event("focus")));
+        act(() => channel.update?.({ new: { current_slide: 5, status: "live", slide_version: 5 } }));
+        // The read's snapshot already has the teacher's next move (version 6, slide 6).
+        await act(async () => finish(vrow(6, 6)));
+        expect(result.current.state).toMatchObject({ live: 6, viewing: 6 });
+        act(() => channel.update?.({ new: { current_slide: 6, status: "live", slide_version: 6 } }));
+        expect(result.current.state).toMatchObject({ live: 6, viewing: 6 });
+      });
+
+      it("an event that arrives after a newer read never moves the student back", async () => {
+        const { result } = await started();
+        single.mockResolvedValue(vrow(6, 6));
+        await act(async () => window.dispatchEvent(new Event("focus")));
+        expect(result.current.state).toMatchObject({ live: 6, viewing: 6 });
+        // Realtime was slower than the read: the event for slide 5 comes in last.
+        act(() => channel.update?.({ new: { current_slide: 5, status: "live", slide_version: 5 } }));
+        expect(result.current.state).toMatchObject({ live: 6, viewing: 6, following: true });
+      });
+
+      it("a read older than a Realtime event keeps the event's slide", async () => {
+        const { result } = await started();
+        let finish: (v: unknown) => void = () => {};
+        single.mockReturnValueOnce(new Promise((r) => (finish = r)));
+        await act(async () => window.dispatchEvent(new Event("focus")));
+        act(() => channel.update?.({ new: { current_slide: 5, status: "live", slide_version: 5 } }));
+        await act(async () => finish(vrow(4, 4)));
+        expect(result.current.state).toMatchObject({ live: 5, viewing: 5 });
+      });
+
+      it("still follows the teacher going back, because that is a newer version", async () => {
+        const { result } = await started();
+        act(() => channel.update?.({ new: { current_slide: 6, status: "live", slide_version: 7 } }));
+        act(() => channel.update?.({ new: { current_slide: 4, status: "live", slide_version: 8 } }));
+        expect(result.current.state).toMatchObject({ live: 4, viewing: 4 });
+        single.mockResolvedValue(vrow(4, 8));
+        await wait(20000);
+        expect(result.current.state).toMatchObject({ live: 4, viewing: 4 });
+      });
+
+      it("an ended event wins whatever its version", async () => {
+        const { result } = await started();
+        single.mockResolvedValue(vrow(6, 9));
+        await act(async () => window.dispatchEvent(new Event("focus")));
+        act(() => channel.update?.({ new: { current_slide: 6, status: "ended", slide_version: 3 } }));
+        expect(result.current.state?.ended).toBe(true);
+      });
+    });
+
+    it("reads without slide_version when the database doesn't have the column yet", async () => {
+      single
+        .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column lectures.slide_version does not exist" } })
+        .mockResolvedValue(row(4));
+      const { result } = renderHook(() => useLiveLecture(LECTURE));
+      await wait(0);
+      await wait(0);
+      expect(select.mock.calls.map((c) => (c as unknown[])[0])).toEqual([
+        "current_slide, status, slide_version",
+        "current_slide, status",
+      ]);
+      expect(result.current.state).toMatchObject({ live: 4, viewing: 4, conn: "live" });
+      // Later reads keep asking without it.
+      single.mockResolvedValue(row(5));
+      await wait(20000);
+      expect(select).toHaveBeenLastCalledWith("current_slide, status");
+      expect(result.current.state).toMatchObject({ live: 5 });
     });
 
     it("adds no second channel", async () => {

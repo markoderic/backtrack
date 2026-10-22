@@ -11,6 +11,23 @@ const RETRY_MAX_MS = 10000;
 export const CHECK_MS = 20000;
 /** A visible, focus, online or recheck() waits for a read started less than this long ago. */
 const READ_FRESH_MS = 5000;
+/** What a read asks for. slide_version (migration 0015) says which of two states is newer. */
+const COLS = "current_slide, status, slide_version";
+/** The same without slide_version, for a database that doesn't have the column yet. */
+const COLS_BEFORE_0015 = "current_slide, status";
+
+type LectureRow = { current_slide: number; status: string; slide_version?: number | string | null };
+
+/** The row's slide_version, or null when it has none (0015 not applied). */
+function versionOf(row: LectureRow): number | null {
+  const v = typeof row.slide_version === "string" ? Number(row.slide_version) : row.slide_version;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** PostgREST's answer when a selected column doesn't exist. */
+function isMissingVersionColumn(error: { code?: string; message?: string }): boolean {
+  return error.code === "42703" || /slide_version/.test(error.message ?? "");
+}
 
 /**
  * Follows a lecture's live slide for a student. `state` is null until the
@@ -21,6 +38,13 @@ const READ_FRESH_MS = 5000;
  * the live slide only if the channel itself had dropped (or it was the first
  * read); after a failed background read with the channel up, a student who
  * went back stays where they are.
+ *
+ * Reads and Realtime events can arrive in either order, and the teacher can go
+ * back, so the slide number alone can't say which is newer: every lecture row
+ * update counts up slide_version, and the page only shows a state newer than
+ * the one it shows, so a late read or a late event never moves a student back.
+ * (Without the column it falls back to: a read that a Realtime event overtook
+ * keeps that event's slide.)
  *
  * The channel is the fast way to hear of a new slide or the end, not the only
  * one: while the lecture is live the same small read runs again 20 seconds
@@ -63,6 +87,10 @@ export function useLiveLecture(
     // The channel reported an error and has not said SUBSCRIBED since. A read then
     // updates the slide but does not say live again; only the channel does.
     let channelDown = false;
+    // The newest slide_version shown and its slide. -1 until a read or event with one.
+    let shownVersion = -1;
+    let shownSlide = 0;
+    let cols = COLS;
 
     const end = () => {
       ended = true;
@@ -80,15 +108,23 @@ export function useLiveLecture(
       readStarted = Date.now();
       // Should this read never come back, the 20 second check still goes out.
       timer = setTimeout(check, CHECK_MS);
-      let data: { current_slide: number; status: string };
+      let data: LectureRow;
       try {
         const { data: row, error: readError } = await supabase
           .from("lectures")
-          .select("current_slide, status")
+          .select(cols)
           .eq("id", lectureId)
           .single();
+        if (readError && cols === COLS && isMissingVersionColumn(readError)) {
+          // The database doesn't have slide_version yet (0015 not applied): read without it.
+          if (cancelled || mine !== latest) return;
+          cols = COLS_BEFORE_0015;
+          reading = false;
+          void load();
+          return;
+        }
         if (readError || !row) throw new Error(readError?.message ?? "Lecture not found.");
-        data = row;
+        data = row as unknown as LectureRow;
       } catch {
         // Ended meanwhile (Realtime said so): nothing to retry.
         if (cancelled || ended || mine !== latest) return;
@@ -107,7 +143,19 @@ export function useLiveLecture(
       clearTimeout(timer);
       timer = undefined;
       failures = 0;
-      const n = events !== eventsAtStart ? eventSlide : data.current_slide;
+      const version = versionOf(data);
+      let n: number;
+      if (version === null) {
+        // No version to compare: a Realtime event during the read is newer than the read.
+        n = events !== eventsAtStart ? eventSlide : data.current_slide;
+      } else if (version >= shownVersion) {
+        shownVersion = version;
+        shownSlide = data.current_slide;
+        n = data.current_slide;
+      } else {
+        // Older than what the page already shows (an event overtook this read).
+        n = shownSlide;
+      }
       if (data.status === "ended") {
         end();
       } else if (!readyRef.current || (droppedRef.current && !channelDown)) {
@@ -152,8 +200,15 @@ export function useLiveLecture(
           { event: "UPDATE", schema: "public", table: "lectures", filter: `id=eq.${lectureId}` },
           (payload) => {
             if (cancelled || ended) return;
-            const row = payload.new as { current_slide: number; status: string };
+            const row = payload.new as LectureRow;
             if (row.status === "ended") return end();
+            const version = versionOf(row);
+            if (version !== null) {
+              // Late: a read already showed this state or a newer one.
+              if (version <= shownVersion) return;
+              shownVersion = version;
+              shownSlide = row.current_slide;
+            }
             events++;
             eventSlide = row.current_slide;
             dispatch({ type: "liveChanged", n: row.current_slide });
