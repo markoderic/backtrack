@@ -14,9 +14,19 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 import JoinPage from "./page";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
-const input = () => screen.getByLabelText("Enter the code on the screen") as HTMLInputElement;
+const box = (n: number) => screen.getByLabelText(`Digit ${n} of 6`) as HTMLInputElement;
+const values = () => [1, 2, 3, 4, 5, 6].map((n) => box(n).value);
 const joinButton = () => screen.getByRole("button", { name: /^Join/ });
-const type = (value: string) => fireEvent.change(input(), { target: { value } });
+/** Types into whichever box has the focus, as the keyboard would (one input event per character). */
+const type = (chars: string) => {
+  for (const ch of chars) fireEvent.change(document.activeElement!, { target: { value: ch } });
+};
+const key = (k: string) => fireEvent.keyDown(document.activeElement!, { key: k });
+const paste = (el: HTMLElement, text: string) => fireEvent.paste(el, { clipboardData: { getData: () => text } });
+const typeCode = (code: string) => {
+  box(1).focus();
+  type(code);
+};
 
 beforeEach(() => {
   [getSession, signInAnonymously, rpc, push].forEach((m) => m.mockReset());
@@ -26,59 +36,188 @@ beforeEach(() => {
 });
 
 describe("Join page", () => {
-  it("is a numeric box for 6 digits", () => {
+  it("is six numeric boxes in one group with one visible label", () => {
     render(<JoinPage />);
-    expect(input()).toHaveAttribute("inputmode", "numeric");
-    // 6 digits plus the space shown after the third one.
-    expect(input()).toHaveAttribute("maxlength", "7");
-    expect(input()).toHaveAttribute("placeholder", "6 digits");
+    const group = screen.getByRole("group", { name: "Enter the code on the screen" });
+    expect(screen.getByRole("heading", { name: "Enter the code on the screen" })).toBeInTheDocument();
+    const inputs = group.querySelectorAll("input");
+    expect(inputs).toHaveLength(6);
+    inputs.forEach((el, i) => {
+      expect(el).toHaveAccessibleName(`Digit ${i + 1} of 6`);
+      expect(el).toHaveAttribute("inputmode", "numeric");
+      expect(el).toHaveAttribute("maxlength", "1");
+      expect(el).toHaveAttribute("autocomplete", i === 0 ? "one-time-code" : "off");
+    });
   });
 
-  it("shows a space after 3 digits, for reading only", async () => {
+  it("puts the cursor in the first box", () => {
     render(<JoinPage />);
-    type("482");
-    expect(input().value).toBe("482");
-    type("4829");
-    expect(input().value).toBe("482 9");
-    type("482 913");
-    expect(input().value).toBe("482 913");
+    expect(box(1)).toHaveFocus();
+  });
+
+  it("fills the box and moves to the next one for each digit typed", () => {
+    render(<JoinPage />);
+    type("4");
+    expect(values()).toEqual(["4", "", "", "", "", ""]);
+    expect(box(2)).toHaveFocus();
+    type("8291");
+    expect(values()).toEqual(["4", "8", "2", "9", "1", ""]);
+    expect(box(6)).toHaveFocus();
+    type("3");
+    expect(values()).toEqual(["4", "8", "2", "9", "1", "3"]);
+    expect(box(6)).toHaveFocus();
+  });
+
+  it("takes digits only", () => {
+    render(<JoinPage />);
+    type("a");
+    type("-");
+    type(" ");
+    expect(values()).toEqual(["", "", "", "", "", ""]);
+    expect(box(1)).toHaveFocus();
+  });
+
+  it("replaces the digit when a digit is typed on a filled box", () => {
+    render(<JoinPage />);
+    typeCode("482913");
+    box(3).focus();
+    key("7");
+    expect(values()).toEqual(["4", "8", "7", "9", "1", "3"]);
+    expect(box(4)).toHaveFocus();
+  });
+
+  it("selects a box's digit when it is clicked, so typing replaces it", () => {
+    render(<JoinPage />);
+    typeCode("482913");
+    fireEvent.click(box(2));
+    expect(box(2).selectionStart).toBe(0);
+    expect(box(2).selectionEnd).toBe(1);
+  });
+
+  it("Backspace on a filled box clears it and stays there", () => {
+    render(<JoinPage />);
+    typeCode("482");
+    box(3).focus();
+    key("Backspace");
+    expect(values()).toEqual(["4", "8", "", "", "", ""]);
+    expect(box(3)).toHaveFocus();
+  });
+
+  it("Backspace on an empty box moves to the one before and clears it", () => {
+    render(<JoinPage />);
+    typeCode("482");
+    expect(box(4)).toHaveFocus();
+    key("Backspace");
+    expect(values()).toEqual(["4", "8", "", "", "", ""]);
+    expect(box(3)).toHaveFocus();
+    key("Backspace");
+    key("Backspace");
+    key("Backspace");
+    expect(values()).toEqual(["", "", "", "", "", ""]);
+    expect(box(1)).toHaveFocus();
+  });
+
+  it("moves between boxes with the arrow keys", () => {
+    render(<JoinPage />);
+    typeCode("48");
+    key("ArrowLeft");
+    expect(box(2)).toHaveFocus();
+    key("ArrowLeft");
+    key("ArrowLeft");
+    expect(box(1)).toHaveFocus();
+    key("ArrowRight");
+    key("ArrowRight");
+    expect(box(3)).toHaveFocus();
+    box(6).focus();
+    key("ArrowRight");
+    expect(box(6)).toHaveFocus();
+  });
+
+  it("fills all six boxes from a pasted code, wherever it is pasted", () => {
+    render(<JoinPage />);
+    paste(box(4), "482 913");
+    expect(values()).toEqual(["4", "8", "2", "9", "1", "3"]);
+    expect(box(6)).toHaveFocus();
+    paste(box(2), "915-264");
+    expect(values()).toEqual(["9", "1", "5", "2", "6", "4"]);
+    expect(joinButton()).toBeEnabled();
+  });
+
+  it("fills from the focused box when a shorter code is pasted", () => {
+    render(<JoinPage />);
+    typeCode("48");
+    paste(box(3), "29");
+    expect(values()).toEqual(["4", "8", "2", "9", "", ""]);
+    expect(box(5)).toHaveFocus();
+    paste(box(5), "1 3 7");
+    expect(values()).toEqual(["4", "8", "2", "9", "1", "3"]);
+    paste(box(1), "abc");
+    expect(values()).toEqual(["4", "8", "2", "9", "1", "3"]);
+  });
+
+  it("spreads a code autofilled into the first box over all six (one-time-code)", () => {
+    render(<JoinPage />);
+    fireEvent.change(box(1), { target: { value: "482913" } });
+    expect(values()).toEqual(["4", "8", "2", "9", "1", "3"]);
+    expect(joinButton()).toBeEnabled();
+  });
+
+  it("keeps Join disabled until all six boxes have a digit", () => {
+    render(<JoinPage />);
+    expect(joinButton()).toBeDisabled();
+    typeCode("48291");
+    expect(joinButton()).toBeDisabled();
+    type("6");
+    expect(joinButton()).toBeEnabled();
+    box(3).focus();
+    key("Backspace");
+    expect(joinButton()).toBeDisabled();
+  });
+
+  it("sends the 6 digit code", async () => {
+    render(<JoinPage />);
+    typeCode("482913");
     fireEvent.click(joinButton());
     await waitFor(() => expect(rpc).toHaveBeenCalledWith("join_lecture", { p_code: "482913" }));
   });
 
-  it("lets no letters or symbols be typed", () => {
+  it("joins with Enter once all six digits are in, and not before", async () => {
     render(<JoinPage />);
-    type("12ab-3 4");
-    expect(input().value).toBe("123 4");
-    type("abc");
-    expect(input().value).toBe("");
+    typeCode("48291");
+    key("Enter");
+    expect(getSession).not.toHaveBeenCalled();
+    type("3");
+    key("Enter");
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("join_lecture", { p_code: "482913" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith(`/l/${LECTURE}`));
   });
 
-  it("cuts a pasted code to 6 digits", () => {
-    render(<JoinPage />);
-    type("482 916 77");
-    expect(input().value).toBe("482 916");
-  });
-
-  it("keeps Join disabled under 6 digits", () => {
-    render(<JoinPage />);
-    expect(joinButton()).toBeDisabled();
-    type("48291");
-    expect(joinButton()).toBeDisabled();
-    type("482916");
-    expect(joinButton()).toBeEnabled();
-    type("48291a");
-    expect(joinButton()).toBeDisabled();
-  });
-
-  it("has no explanation line under the input", () => {
+  it("has no explanation line under the boxes", () => {
     const { container } = render(<JoinPage />);
     expect(container.querySelectorAll("p")).toHaveLength(0);
   });
 
+  it("draws each digit in a layer that pops in, and only the box that changed pops again", () => {
+    const { container } = render(<JoinPage />);
+    typeCode("48");
+    const layers = () => container.querySelectorAll("[data-digit]");
+    expect(Array.from(layers(), (s) => s.textContent)).toEqual(["4", "8"]);
+    layers().forEach((s) => {
+      expect(s).toHaveAttribute("aria-hidden", "true");
+      expect(s.className).toContain("motion-safe:animate-pop-in");
+    });
+    const [first, second] = Array.from(layers());
+    box(2).focus();
+    key("5");
+    const [firstAfter, secondAfter] = Array.from(layers());
+    expect(firstAfter).toBe(first);
+    expect(secondAfter).not.toBe(second);
+    expect(secondAfter).toHaveTextContent("5");
+  });
+
   it("signs in anonymously when there is no session, joins, then goes to the lecture", async () => {
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     await waitFor(() => expect(push).toHaveBeenCalledWith(`/l/${LECTURE}`));
     expect(signInAnonymously).toHaveBeenCalledTimes(1);
@@ -89,7 +228,7 @@ describe("Join page", () => {
   it("does not sign in again when there is already a session", async () => {
     getSession.mockResolvedValue({ data: { session: { access_token: "t" } }, error: null });
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect(signInAnonymously).not.toHaveBeenCalled();
@@ -99,145 +238,77 @@ describe("Join page", () => {
     let finish!: (v: unknown) => void;
     rpc.mockImplementation(() => new Promise((r) => (finish = r)));
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     expect(await screen.findByRole("button", { name: "Joining…" })).toBeDisabled();
-    fireEvent.submit(input().closest("form")!);
+    expect(box(1)).toBeDisabled();
+    fireEvent.submit(box(1).closest("form")!);
     await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
     finish({ data: LECTURE, error: null });
     await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
   });
 
-  it("explains a code that is not live and lets the student try again", async () => {
-    rpc.mockResolvedValue({ data: null, error: { message: "not_found" } });
-    render(<JoinPage />);
-    type("999999");
-    fireEvent.click(joinButton());
-    expect(await screen.findByRole("alert")).toHaveTextContent("No live lecture has that code.");
-    expect(push).not.toHaveBeenCalled();
-    expect(joinButton()).toBeEnabled();
-    expect(input().value).toBe("999 999");
-  });
-
-  it("shows the message with an alert icon and puts the cursor back in the field", async () => {
+  it("says the code isn't active, keeps the digits and puts the cursor in the first box", async () => {
     rpc.mockResolvedValue({ data: null, error: null });
     render(<JoinPage />);
-    type("999999");
+    typeCode("999999");
     fireEvent.click(joinButton());
     const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("That code isn't active.");
     expect(alert.querySelector('[data-icon="alert"]')).not.toBeNull();
-    await waitFor(() => expect(input()).toHaveFocus());
+    expect(push).not.toHaveBeenCalled();
+    expect(values()).toEqual(["9", "9", "9", "9", "9", "9"]);
+    await waitFor(() => expect(box(1)).toHaveFocus());
+    expect(joinButton()).toBeEnabled();
   });
 
-  it("shakes the field on each wrong code, but not for other errors", async () => {
-    rpc.mockResolvedValue({ data: null, error: null });
-    const { container } = render(<JoinPage />);
-    const field = () => container.querySelector("[data-shake]");
-    type("999999");
+  it("uses the same message when an older database raises not_found", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "not_found" } });
+    render(<JoinPage />);
+    typeCode("999999");
+    fireEvent.click(joinButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("That code isn't active.");
+    expect(push).not.toHaveBeenCalled();
+    expect(joinButton()).toBeEnabled();
+  });
+
+  it("lets one digit be fixed after a wrong code and joins with the fixed code", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    render(<JoinPage />);
+    typeCode("482931");
     fireEvent.click(joinButton());
     await screen.findByRole("alert");
-    expect(field()).toHaveAttribute("data-shake", "animate-shake");
+    await waitFor(() => expect(box(1)).toHaveFocus());
+    box(5).focus();
+    key("1");
+    key("3");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(joinButton());
+    await waitFor(() => expect(rpc).toHaveBeenLastCalledWith("join_lecture", { p_code: "482913" }));
+  });
+
+  it("shakes the boxes on each wrong code, but not for other errors", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    const { container } = render(<JoinPage />);
+    const group = () => container.querySelector("[data-shake]");
+    typeCode("999999");
+    fireEvent.click(joinButton());
+    await screen.findByRole("alert");
+    expect(group()).toHaveAttribute("data-shake", "animate-shake");
+    expect(group()).toHaveAttribute("role", "group");
     await waitFor(() => expect(joinButton()).toBeEnabled());
     fireEvent.click(joinButton());
-    await waitFor(() => expect(field()).toHaveAttribute("data-shake", "animate-shake-again"));
+    await waitFor(() => expect(group()).toHaveAttribute("data-shake", "animate-shake-again"));
     rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
     fireEvent.click(joinButton());
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not join. Try again."));
-    expect(field()).toBeNull();
-  });
-
-  /** Puts a value in the field as the browser would after an edit, with the caret at `caret`, and fires input. */
-  function edit(value: string, caret: number, inputType = "insertText") {
-    const el = input();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
-    el.setSelectionRange(caret, caret);
-    fireEvent.input(el, { inputType });
-  }
-
-  it("keeps the code and the caret right when a digit in the middle is fixed", async () => {
-    render(<JoinPage />);
-    input().focus();
-    type("482913");
-    // Caret after the first digit, Backspace: the browser leaves "82 913" with the caret at 0.
-    edit("82 913", 0, "deleteContentBackward");
-    expect(input().value).toBe("829 13");
-    expect(input().selectionStart).toBe(0);
-    // Type 7 there: "7829 13", caret 1.
-    edit("7829 13", 1);
-    expect(input().value).toBe("782 913");
-    expect(input().selectionStart).toBe(1);
-    // Fix the 5th digit: caret after "782 9", Backspace, then 4.
-    edit("782 13", 4, "deleteContentBackward");
-    expect(input().value).toBe("782 13");
-    expect(input().selectionStart).toBe(4);
-    edit("782 413", 5);
-    expect(input().value).toBe("782 413");
-    expect(input().selectionStart).toBe(5);
-    fireEvent.click(joinButton());
-    await waitFor(() => expect(rpc).toHaveBeenCalledWith("join_lecture", { p_code: "782413" }));
-  });
-
-  it("Backspace right after the reading space deletes the 3rd digit, Delete right before it the 4th", () => {
-    render(<JoinPage />);
-    input().focus();
-    type("482913");
-    // Caret after the space; Backspace removes only the space in the browser.
-    edit("482913", 3, "deleteContentBackward");
-    expect(input().value).toBe("489 13");
-    expect(input().selectionStart).toBe(2);
-    type("482913");
-    // Caret before the space; Delete removes only the space.
-    edit("482913", 3, "deleteContentForward");
-    expect(input().value).toBe("482 13");
-    expect(input().selectionStart).toBe(3);
-  });
-
-  it("keeps all 6 digits when the same code is pasted or autofilled over a full field", () => {
-    render(<JoinPage />);
-    input().focus();
-    type("482913");
-    // Select all, paste "482913" (no space): the browser leaves "482913" with the caret at 6.
-    edit("482913", 6, "insertFromPaste");
-    expect(input().value).toBe("482 913");
-    expect(input().selectionStart).toBe(7);
-    edit("482913", 6, "insertReplacementText");
-    expect(input().value).toBe("482 913");
-    // Cutting only the space changes nothing.
-    edit("482913", 3, "deleteByCut");
-    expect(input().value).toBe("482 913");
-  });
-
-  it("takes a pasted code into an empty field", () => {
-    render(<JoinPage />);
-    input().focus();
-    edit("482913", 6, "insertFromPaste");
-    expect(input().value).toBe("482 913");
-    expect(input().selectionStart).toBe(7);
-    expect(joinButton()).toBeEnabled();
-  });
-
-  it("draws each typed digit in its own span so it can pop in", () => {
-    const { container } = render(<JoinPage />);
-    type("4829");
-    const display = container.querySelector("[data-code-display]")!;
-    expect(display).toHaveAttribute("aria-hidden", "true");
-    expect(Array.from(display.querySelectorAll("span"), (s) => s.textContent)).toEqual(["4", "8", "2", " ", "9"]);
-  });
-
-  it("explains a code that is not live when the database returns null with no error", async () => {
-    rpc.mockResolvedValue({ data: null, error: null });
-    render(<JoinPage />);
-    type("999999");
-    fireEvent.click(joinButton());
-    expect(await screen.findByRole("alert")).toHaveTextContent("No live lecture has that code.");
-    expect(push).not.toHaveBeenCalled();
-    expect(joinButton()).toBeEnabled();
+    expect(group()).toBeNull();
   });
 
   it("tells the student to wait when there have been too many tries", async () => {
     rpc.mockResolvedValue({ data: null, error: { message: "too_many_attempts" } });
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     expect(await screen.findByRole("alert")).toHaveTextContent("Too many tries. Wait a few minutes and try again.");
     expect(push).not.toHaveBeenCalled();
@@ -247,17 +318,18 @@ describe("Join page", () => {
   it("clears the message when the code is edited", async () => {
     rpc.mockResolvedValue({ data: null, error: { message: "not_found" } });
     render(<JoinPage />);
-    type("999999");
+    typeCode("999999");
     fireEvent.click(joinButton());
     await screen.findByRole("alert");
-    type("99999");
+    box(6).focus();
+    key("Backspace");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows a try again line when sign in fails", async () => {
     signInAnonymously.mockResolvedValue({ data: { session: null }, error: { message: "rate limit" } });
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not join. Try again.");
     expect(rpc).not.toHaveBeenCalled();
@@ -267,7 +339,7 @@ describe("Join page", () => {
   it("shows a try again line when joining fails for any other reason", async () => {
     rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not join. Try again.");
     expect(push).not.toHaveBeenCalled();
@@ -276,7 +348,7 @@ describe("Join page", () => {
   it("shows a try again line when the session cannot be read", async () => {
     getSession.mockRejectedValue(new Error("storage"));
     render(<JoinPage />);
-    type("482916");
+    typeCode("482916");
     fireEvent.click(joinButton());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not join. Try again.");
   });

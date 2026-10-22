@@ -2,7 +2,10 @@ import Link from "next/link";
 import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 import { LogoLockup } from "@/components/Logo";
 
-/** Home (Figma 31:74): the logo and two choices, Join a class (the one primary button) and I'm a teacher. */
+/**
+ * Home (Figma 31:74): the logo and two choices, Join a class (the one primary button) and I'm a teacher.
+ * Both press in (scale .97), ease their hover color and fade their focus ring in (press utility).
+ */
 export default function Home() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-bg px-4">
@@ -12,7 +15,8 @@ export default function Home() {
         </h1>
         <nav className="flex w-full flex-col items-center gap-5">
           <ButtonPrimaryLink href="/join">Join a class</ButtonPrimaryLink>
-          <Link href="/teach" className="focus-ring rounded-xs type-body text-ink underline">
+          {/* inline-block so the press scale applies (an inline link cannot be scaled). */}
+          <Link href="/teach" className="press focus-ring inline-block rounded-xs type-body text-ink underline hover:text-secondary">
             I&apos;m a teacher
           </Link>
         </nav>
