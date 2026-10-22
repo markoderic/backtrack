@@ -217,9 +217,10 @@ export default function JoinPage() {
                     "absolute inset-0 h-full w-full rounded-md border border-hairline bg-surface p-0 text-center type-number-m " +
                     // The digit is drawn by the layer below so it can pop in; the input keeps the caret.
                     "text-transparent caret-ink outline-hidden selection:bg-transparent disabled:opacity-100 " +
-                    // Hover and focus borders ease in (focus is the ink border from the field's focus state).
-                    "transition-[border-color] duration-(--dur-fast) ease-out hover:border-strip " +
-                    "focus:border-[1.5px] focus:border-ink disabled:border-hairline"
+                    // Hover and focus borders ease in (focus is the field's 1.5 px ink border, drawn as 1 px plus a
+                    // 0.5 px inset shadow like the teacher fields, since a browser at 1x rounds a 1.5 px border down to 1).
+                    "transition-[border-color,box-shadow] duration-(--dur-fast) ease-out hover:border-strip " +
+                    "focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)] disabled:border-hairline"
                   }
                 />
                 {d && (
