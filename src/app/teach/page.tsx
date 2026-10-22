@@ -20,11 +20,12 @@ async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: str
       .maybeSingle();
     if (teacher && !teacher.display_name) redirect("/teach/setup");
     if (teacher) {
-      const { data: courses } = await supabase
+      const { data: courses, error: coursesError } = await supabase
         .from("courses")
         .select("id, name")
         .eq("archived", false)
         .order("created_at");
+      if (coursesError) throw new Error(coursesError.message);
       return (
         <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-6 p-4">
           <h1 className="text-4xl font-semibold">Backtrack</h1>
