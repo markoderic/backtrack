@@ -1,0 +1,73 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const maybeSingle = vi.fn();
+const lectureCount = vi.fn();
+const getUser = vi.fn();
+vi.mock("@/lib/supabase/server", () => ({
+  createServerSupabase: async () => ({
+    auth: { getUser },
+    from: (table: string) => ({
+      select: () => ({
+        eq: () => (table === "lectures" ? lectureCount() : { maybeSingle }),
+      }),
+    }),
+  }),
+}));
+vi.mock("next/navigation", () => ({
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT:${to}`);
+  },
+}));
+vi.mock("./start-form", () => ({ StartForm: () => null }));
+
+import { StartBody } from "./start-body";
+
+const params = Promise.resolve({ courseId: "c1" });
+
+beforeEach(() => {
+  maybeSingle.mockReset();
+  lectureCount.mockReset();
+  getUser.mockReset();
+  getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+  lectureCount.mockResolvedValue({ count: 3, error: null });
+});
+
+describe("StartBody", () => {
+  it("sends a signed out visitor to /teach", async () => {
+    getUser.mockResolvedValue({ data: { user: null } });
+    await expect(StartBody({ params })).rejects.toThrow("REDIRECT:/teach");
+  });
+
+  it("is a 404 when the course is not the teacher's", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await expect(StartBody({ params })).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("is a 404 for a malformed uuid in the url", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } });
+    await expect(StartBody({ params })).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("throws on any other course query error", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: { code: "42P01", message: "courses broke" } });
+    await expect(StartBody({ params })).rejects.toThrow("courses broke");
+  });
+
+  it("throws when counting lectures fails", async () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
+    lectureCount.mockResolvedValue({ count: null, error: { message: "count broke" } });
+    await expect(StartBody({ params })).rejects.toThrow("count broke");
+  });
+
+  it("passes the number of lectures already in the course to the form", async () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
+    const element = await StartBody({ params });
+    const form = (element.props.children as { props: { courseId: string; existingCount: number } }[]).find(
+      (c) => c && c.props && "existingCount" in c.props,
+    );
+    expect(form?.props).toEqual({ courseId: "c1", existingCount: 3 });
+  });
+});

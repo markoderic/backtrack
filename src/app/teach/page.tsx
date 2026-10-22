@@ -26,10 +26,24 @@ async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: str
         .eq("archived", false)
         .order("created_at");
       if (coursesError) throw new Error(coursesError.message);
+      const { data: live, error: liveError } = await supabase
+        .from("lectures")
+        .select("id, name")
+        .eq("status", "live")
+        .order("started_at", { ascending: false });
+      if (liveError) throw new Error(liveError.message);
       return (
         <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-6 p-4">
           <h1 className="text-4xl font-semibold">Backtrack</h1>
           <p>{teacher.display_name}</p>
+          {(live ?? []).map((lecture) => (
+            <p key={lecture.id} className="flex flex-wrap items-center gap-3">
+              <Link href={`/teach/l/${lecture.id}/present`} className="border border-current px-4 py-2">
+                Live now: Resume
+              </Link>
+              <span>{lecture.name}</span>
+            </p>
+          ))}
           <h2 className="text-2xl font-semibold">Courses</h2>
           <ul className="flex flex-col gap-2">
             {(courses ?? []).map((course) => (
