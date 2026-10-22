@@ -19,9 +19,9 @@ describe("PastLectures", () => {
     render(<PastLectures lectures={lectures} />);
     expect(screen.getAllByRole("link")).toHaveLength(5);
     const more = screen.getByRole("button", { name: "3 more" });
-    // A 44 px hit area that reaches down only (20 px text + 24 px), so it never covers the last row above.
-    expect(more.className).toContain("after:top-0 after:-bottom-6");
-    expect(more.className).not.toContain("after:-top-");
+    // A white button, not quiet text.
+    expect(more.className).toContain("border-hairline");
+    expect(more.className).toContain("h-11");
     more.focus();
     fireEvent.click(more);
     expect(screen.getAllByRole("link")).toHaveLength(8);
@@ -29,13 +29,21 @@ describe("PastLectures", () => {
     await waitFor(() => expect(screen.getByRole("link", { name: /Week 3/ })).toHaveFocus());
   });
 
-  it("gives each shown row a quiet Delete for that lecture, outside the row link", () => {
+  it("gives every shown row an always-visible ⋯ menu for that lecture, outside the row link", () => {
     render(<PastLectures lectures={lectures} />);
-    const del = screen.getByRole("button", { name: "Delete Week 8" });
-    expect(del.closest("a")).toBeNull();
-    expect(del.closest("li")?.querySelector("a")).toHaveAttribute("href", "/teach/l/l8");
-    expect(screen.getAllByRole("button", { name: /^Delete / })).toHaveLength(5);
-    fireEvent.click(del);
+    const more = screen.getByRole("button", { name: "More for Week 8" });
+    expect(more.closest("a")).toBeNull();
+    expect(more.closest("li")?.querySelector("a")).toHaveAttribute("href", "/teach/l/l8");
+    expect(screen.getAllByRole("button", { name: /^More for / })).toHaveLength(5);
+    // Never hidden until hover (Marko: the Delete that spawned on hover).
+    expect(more.className).not.toMatch(/opacity-0/);
+    expect(more.className).toContain("size-11");
+    fireEvent.click(more);
+    const menu = screen.getByRole("menu");
+    expect(menu).toHaveTextContent("Download CSV");
+    expect(menu).toHaveTextContent("Delete");
+    expect(menu).not.toHaveTextContent("Resume");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Week 8");
   });
 });

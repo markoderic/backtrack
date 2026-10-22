@@ -207,7 +207,6 @@ export async function CourseBody({
             {live.map((lecture) => (
               <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
             ))}
-            <p className="pt-2 type-caption text-secondary">End the class first to delete it.</p>
           </div>
         )}
 

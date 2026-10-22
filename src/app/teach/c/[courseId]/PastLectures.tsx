@@ -4,11 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatLectureDate } from "@/lib/lectureDate";
 import { Icon } from "@/components/Icon";
-import { DeleteLecture } from "../../DeleteLecture";
+import { buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { LectureMenu } from "../../LectureMenu";
 import { rowLinkClass, staggerClass, staggerStyle } from "../../ui";
-
-/** The 44 px hit area of "N more": it starts at the text's top edge and reaches down, so it never covers the last row's padding above it. */
-const MORE_HIT_AREA = "relative after:absolute after:-inset-x-2 after:top-0 after:-bottom-6 after:content-['']";
 
 export type PastLecture = {
   id: string;
@@ -55,8 +53,8 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
         <span className={`h-6 items-center ${COL.lost}`}>Lost taps</span>
         <span className={`h-6 items-center ${COL.most}`}>Most lost slide</span>
         <span className="size-4.5 shrink-0" />
-        {/* Room for the quiet Delete at the end of each row, so the headings line up. */}
-        <span className="w-14 shrink-0" />
+        {/* Room for the ⋯ menu button (44) and the 8 px gap before it, so the headings line up. */}
+        <span className="w-13 shrink-0" />
       </div>
       <ul ref={list} className="flex flex-col">
         {shown.map((l, i) => (
@@ -99,7 +97,7 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
                 className="transition-[translate] duration-(--dur-fast) ease-out motion-safe:group-hover:translate-x-0.5"
               />
             </Link>
-            <DeleteLecture lectureId={l.id} lectureName={l.name} variant="row" />
+            <LectureMenu lectureId={l.id} lectureName={l.name} live={false} />
           </li>
         ))}
       </ul>
@@ -110,7 +108,7 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
             moveFocus.current = true;
             setAll(true);
           }}
-          className={`press focus-ring w-fit rounded-sm type-small text-secondary hover:text-ink ${MORE_HIT_AREA}`}
+          className={`${buttonSecondaryClass} mt-4 w-fit`}
         >
           {more} more
         </button>

@@ -110,7 +110,7 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
               <Icon name="download" size={18} />
               Export this lecture
             </a>
-            <DeleteLecture lectureId={lecture.id} lectureName={lecture.name} variant="page" />
+            <DeleteLecture lectureId={lecture.id} lectureName={lecture.name} />
           </div>
         </div>
       </LectureData>

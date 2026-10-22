@@ -1,41 +1,32 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { deleteLecture } from "./lecture-actions";
 import { DELETE_FAILED_ERROR } from "./delete-lecture-copy";
 
-/**
- * The quiet trigger at the end of a past lecture row: it shows on hover or keyboard focus, and
- * always on touch screens (no hover there). It keeps its place while hidden, so rows never move.
- */
-const rowTriggerClass =
-  "press focus-ring relative w-14 shrink-0 rounded-sm text-center type-small text-secondary underline decoration-from-font underline-offset-[3px] " +
-  "transition-[opacity,color] duration-(--dur-fast) ease-out hover:text-ink " +
-  "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 " +
-  "after:absolute after:-inset-x-1 after:-inset-y-3 after:content-['']";
-
-type Props = {
+type DialogProps = {
   lectureId: string;
   lectureName: string;
-  /** "row": the quiet "Delete" at the end of a course page row. "page": a text action on the past lecture page. */
-  variant: "row" | "page";
+  open: boolean;
+  onClose: () => void;
+  /** Where the keyboard goes back to when the confirm closes (the button that opened it). */
+  returnFocusTo: RefObject<HTMLElement | null>;
 };
 
 /**
- * Delete lecture: a trigger and its confirm. The confirm is one plain dialog (nothing to type):
- * "Delete lecture" deletes for good, "Keep it" or Esc closes it. It is rendered into
- * document.body above everything (fixed, z-50), so no stacking context on the page can sit on top
- * of its buttons (the f27789f trap). The delete itself is the deleteLecture server action, which
- * goes back to the course page with "Lecture deleted." when it worked.
+ * The Delete lecture confirm: one plain dialog (nothing to type). "Delete lecture" deletes for
+ * good, "Keep it", Esc or a press on the dimmed page closes it. It is rendered into document.body
+ * above everything (fixed, z-50), so no stacking context on the page can sit on top of its buttons
+ * (the f27789f trap). The delete itself is the deleteLecture server action, which goes back to the
+ * course page with "Lecture deleted." when it worked. Opened by the page's Delete lecture button
+ * and by Delete in a lecture row's ⋯ menu.
  */
-export function DeleteLecture({ lectureId, lectureName, variant }: Props) {
-  const [open, setOpen] = useState(false);
+export function DeleteLectureDialog({ lectureId, lectureName, open, onClose, returnFocusTo }: DialogProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const returnFocus = useRef(false);
   const ids = useId();
@@ -46,15 +37,15 @@ export function DeleteLecture({ lectureId, lectureName, variant }: Props) {
   useEffect(() => {
     if (!open && returnFocus.current) {
       returnFocus.current = false;
-      trigger.current?.focus();
+      returnFocusTo.current?.focus();
     }
-  }, [open]);
+  }, [open, returnFocusTo]);
 
   function close() {
     if (pending) return;
     returnFocus.current = true;
-    setOpen(false);
     setError(null);
+    onClose();
   }
 
   async function confirm() {
@@ -96,69 +87,68 @@ export function DeleteLecture({ lectureId, lectureName, variant }: Props) {
     }
   }
 
+  if (!open || typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      data-testid="delete-lecture-backdrop"
+      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-ink/30 p-4"
+      onMouseDown={(e) => {
+        // A press on the dimmed page (not inside the confirm) closes it, like Keep it.
+        if (e.target === e.currentTarget) close();
+      }}
+    >
+      <div
+        ref={dialog}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={textId}
+        onKeyDown={onKeyDown}
+        className="flex w-100 max-w-full animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-6 shadow-popover"
+      >
+        <h2 id={titleId} className="type-title text-ink">
+          Delete this lecture?
+        </h2>
+        <div id={textId} className="flex flex-col gap-1">
+          <p className="type-lecture break-words text-ink">{lectureName}</p>
+          <p className="type-small text-secondary">This deletes the lecture and its data for good.</p>
+        </div>
+        {error && (
+          <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
+            <Icon name="alert" size={18} />
+            {error}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-4 pt-2">
+          <ButtonPrimary disabled={pending} onClick={() => void confirm()} className="h-11! w-auto!">
+            {pending ? "Deleting…" : "Delete lecture"}
+          </ButtonPrimary>
+          <button type="button" autoFocus disabled={pending} onClick={close} className={buttonSecondaryClass}>
+            Keep it
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Delete lecture on the past lecture page: a white button and its confirm. */
+export function DeleteLecture({ lectureId, lectureName }: { lectureId: string; lectureName: string }) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>
-      {variant === "row" ? (
-        <button
-          ref={trigger}
-          type="button"
-          aria-haspopup="dialog"
-          aria-label={`Delete ${lectureName}`}
-          onClick={() => setOpen(true)}
-          className={rowTriggerClass}
-        >
-          Delete
-        </button>
-      ) : (
-        <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className={buttonSecondaryClass}>
-          Delete lecture
-        </button>
-      )}
-      {open &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            data-testid="delete-lecture-backdrop"
-            className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-ink/30 p-4"
-            onMouseDown={(e) => {
-              // A press on the dimmed page (not inside the confirm) closes it, like Keep it.
-              if (e.target === e.currentTarget) close();
-            }}
-          >
-            <div
-              ref={dialog}
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby={titleId}
-              aria-describedby={textId}
-              onKeyDown={onKeyDown}
-              className="flex w-100 max-w-full animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-6 shadow-popover"
-            >
-              <h2 id={titleId} className="type-title text-ink">
-                Delete this lecture?
-              </h2>
-              <div id={textId} className="flex flex-col gap-1">
-                <p className="type-lecture break-words text-ink">{lectureName}</p>
-                <p className="type-small text-secondary">This deletes the lecture and its data for good.</p>
-              </div>
-              {error && (
-                <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
-                  <Icon name="alert" size={18} />
-                  {error}
-                </p>
-              )}
-              <div className="flex flex-wrap items-center gap-4 pt-2">
-                <ButtonPrimary disabled={pending} onClick={() => void confirm()} className="h-11! w-auto!">
-                  {pending ? "Deleting…" : "Delete lecture"}
-                </ButtonPrimary>
-                <button type="button" autoFocus disabled={pending} onClick={close} className={buttonSecondaryClass}>
-                  Keep it
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
+      <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className={buttonSecondaryClass}>
+        Delete lecture
+      </button>
+      <DeleteLectureDialog
+        lectureId={lectureId}
+        lectureName={lectureName}
+        open={open}
+        onClose={() => setOpen(false)}
+        returnFocusTo={trigger}
+      />
     </>
   );
 }

@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { Activity } from "react";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+vi.mock("./lecture-actions", () => ({ deleteLecture: vi.fn() }));
 
 import { LiveLectureRow } from "./LiveLectureRow";
 import { RefreshOnReturn } from "./RefreshOnReturn";
@@ -25,6 +26,13 @@ describe("LiveLectureRow", () => {
       expect(link.className).not.toContain("underline");
     }
     expect(screen.queryByRole("link", { name: "End lecture" })).toBeNull();
+  });
+
+  it("has the same ⋯ menu as the past rows, with Delete off until the class ends", () => {
+    render(<LiveLectureRow id="l2" name="Week 9: Inventory" />);
+    fireEvent.click(screen.getByRole("button", { name: "More for Week 9: Inventory" }));
+    expect(screen.getByRole("menuitem", { name: "Resume" })).toHaveAttribute("href", "/teach/l/l2/present");
+    expect(screen.getByRole("menuitem", { name: /^Delete/ })).toHaveAttribute("aria-disabled", "true");
   });
 });
 

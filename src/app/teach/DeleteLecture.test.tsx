@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 const openPage = () => {
-  render(<DeleteLecture lectureId={ID} lectureName={NAME} variant="page" />);
+  render(<DeleteLecture lectureId={ID} lectureName={NAME} />);
   fireEvent.click(screen.getByRole("button", { name: "Delete lecture" }));
   return screen.getByRole("alertdialog");
 };
@@ -34,7 +34,7 @@ describe("DeleteLecture", () => {
   });
 
   it("lives in document.body, outside the page's stacking contexts", () => {
-    const { container } = render(<DeleteLecture lectureId={ID} lectureName={NAME} variant="page" />);
+    const { container } = render(<DeleteLecture lectureId={ID} lectureName={NAME} />);
     fireEvent.click(screen.getByRole("button", { name: "Delete lecture" }));
     const backdrop = screen.getByTestId("delete-lecture-backdrop");
     expect(container.contains(backdrop)).toBe(false);
@@ -114,18 +114,5 @@ describe("DeleteLecture", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete lecture" }));
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Delete lecture" })).toBeEnabled());
     expect(within(dialog).queryByRole("alert")).toBeNull();
-  });
-
-  it("the row trigger is a quiet Delete named for its lecture", () => {
-    render(<DeleteLecture lectureId={ID} lectureName={NAME} variant="row" />);
-    const trigger = screen.getByRole("button", { name: `Delete ${NAME}` });
-    expect(trigger).toHaveTextContent("Delete");
-    expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
-    // Hidden until hover or keyboard focus, always there on touch screens.
-    expect(trigger.className).toMatch(/opacity-0/);
-    expect(trigger.className).toMatch(/focus-visible:opacity-100/);
-    expect(trigger.className).toMatch(/\[@media\(hover:none\)\]:opacity-100/);
-    fireEvent.click(trigger);
-    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Delete this lecture?");
   });
 });

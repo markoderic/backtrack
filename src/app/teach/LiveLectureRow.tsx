@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { LectureMenu } from "./LectureMenu";
 
 /**
  * A class that is running now: its name, and where the teacher can go from here. Resume is the
- * main way back to the projector (black); Data and End class are white secondary buttons.
+ * main way back to the projector (black); Data and End class are white secondary buttons; the ⋯
+ * menu is the same as on every past lecture row (Delete is off until the class ends).
  */
 export function LiveLectureRow({ id, name }: { id: string; name: string }) {
   return (
@@ -25,6 +27,7 @@ export function LiveLectureRow({ id, name }: { id: string; name: string }) {
         <Link href={`/teach/l/${id}/live?end=1`} className={buttonSecondaryClass}>
           End class
         </Link>
+        <LectureMenu lectureId={id} lectureName={name} live />
       </div>
     </div>
   );

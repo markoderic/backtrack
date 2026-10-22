@@ -347,11 +347,12 @@ describe("CourseBody, Delete lecture", () => {
     expect(html).not.toContain("Lecture deleted.");
   });
 
-  it("offers Delete on past lecture rows only, and says a live one is deleted after it ends", async () => {
+  it("gives the past rows and the live row each a ⋯ menu (Delete in it waits for the end of a live class)", async () => {
     twoLectures();
     const html = renderToStaticMarkup(await CourseBody({ params }));
-    expect(html).toContain('aria-label="Delete System check, Oct 22"');
-    expect(html).not.toContain('aria-label="Delete Live one"');
-    expect(html).toContain("End the class first to delete it.");
+    expect(html).toContain('aria-label="More for System check, Oct 22"');
+    expect(html).toContain('aria-label="More for Live one"');
+    // No hover-only Delete on the rows any more.
+    expect(html).not.toContain('aria-label="Delete System check, Oct 22"');
   });
 });
