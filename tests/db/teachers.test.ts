@@ -126,17 +126,26 @@ describe("teachers RLS", () => {
     expect(untouched.rows[0].display_name).toBeNull();
   });
 
-  it("keeps display_name when the callback upserts an existing row", async () => {
+  it("keeps the whole row when the callback inserts for a returning teacher (on conflict do nothing)", async () => {
     await db.query("insert into public.teachers (id, email, display_name) values ($1, 'dericm@miamioh.edu', 'Marko')", [MARKO]);
     await as(db, { sub: MARKO, email: "dericm@miamioh.edu", app_metadata: google }, () =>
-      db.query(
-        `insert into public.teachers (id, email) values ($1, 'dericm@miamioh.edu')
-         on conflict (id) do update set email = excluded.email`,
-        [MARKO],
-      ),
+      db.query(`insert into public.teachers (id, email) values ($1, 'changed@miamioh.edu') on conflict (id) do nothing`, [MARKO]),
     );
-    const r = await db.query<{ display_name: string }>("select display_name from public.teachers");
-    expect(r.rows[0].display_name).toBe("Marko");
+    const r = await db.query<{ display_name: string; email: string }>("select display_name, email from public.teachers");
+    expect(r.rows[0]).toEqual({ display_name: "Marko", email: "dericm@miamioh.edu" });
+  });
+
+  it("no longer lets the callback rewrite the email of an existing row (0014: name only)", async () => {
+    await db.query("insert into public.teachers (id, email, display_name) values ($1, 'dericm@miamioh.edu', 'Marko')", [MARKO]);
+    await expect(
+      as(db, { sub: MARKO, email: "dericm@miamioh.edu", app_metadata: google }, () =>
+        db.query(
+          `insert into public.teachers (id, email) values ($1, 'dericm@miamioh.edu')
+           on conflict (id) do update set email = excluded.email`,
+          [MARKO],
+        ),
+      ),
+    ).rejects.toThrow(/permission denied/i);
   });
 });
 

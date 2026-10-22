@@ -65,14 +65,17 @@ alter default privileges in schema public grant all on functions to anon, authen
 /**
  * A fresh in-memory Postgres with Supabase stubs and every migration applied.
  * Migrations ending in .remote.sql (Realtime publication, storage bucket insert)
- * only work on hosted Supabase and are skipped.
+ * only work on hosted Supabase and are skipped. `order` can rearrange the file names
+ * (sorted by name) to check that two migrations give the same result in either order.
  */
-export async function newDb(): Promise<PGlite> {
+export async function newDb(order: (files: string[]) => string[] = (f) => f): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(SUPABASE_STUBS);
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql") && !f.endsWith(".remote.sql"))
-    .sort();
+  const files = order(
+    readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith(".sql") && !f.endsWith(".remote.sql"))
+      .sort(),
+  );
   for (const file of files) {
     await db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
   }

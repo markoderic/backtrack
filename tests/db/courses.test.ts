@@ -98,7 +98,7 @@ describe("courses RLS", () => {
     await insertCourse(MARKO, "IMS 452");
     await expect(
       as(db, marko, () => db.query("update public.courses set teacher_id = $1", [OTHER])),
-    ).rejects.toThrow(/row-level security/i);
+    ).rejects.toThrow(/permission denied/i); // 0014: only name and archived can be updated
   });
 
   it("lets a teacher delete only their own courses", async () => {

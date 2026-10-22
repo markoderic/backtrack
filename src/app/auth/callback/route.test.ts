@@ -10,7 +10,9 @@ const supabase = {
   from: vi.fn(),
 };
 const upsert = vi.fn();
-const single = vi.fn();
+const maybeSingle = vi.fn();
+const eq = vi.fn(() => ({ maybeSingle }));
+const select = vi.fn(() => ({ eq }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => supabase,
@@ -27,7 +29,7 @@ type TestUser = {
 
 function signedInAs(user: TestUser, displayName: string | null = null) {
   supabase.auth.getUser.mockResolvedValue({ data: { user }, error: null });
-  single.mockResolvedValue({ data: { display_name: displayName }, error: null });
+  maybeSingle.mockResolvedValue({ data: { display_name: displayName }, error: null });
 }
 
 function call(url = "https://backtrack.test/auth/callback?code=abc") {
@@ -38,8 +40,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   supabase.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
   supabase.auth.signOut.mockResolvedValue({ error: null });
-  upsert.mockReturnValue({ select: () => ({ single }) });
-  supabase.from.mockReturnValue({ upsert });
+  upsert.mockResolvedValue({ data: null, error: null });
+  supabase.from.mockReturnValue({ upsert, select });
 });
 
 describe("GET /auth/callback", () => {
@@ -80,7 +82,13 @@ describe("GET /auth/callback", () => {
     expect(res.headers.get("location")).toBe("https://backtrack.test/teach/setup");
     expect(supabase.auth.signOut).not.toHaveBeenCalled();
     expect(supabase.from).toHaveBeenCalledWith("teachers");
-    expect(upsert).toHaveBeenCalledWith({ id: "u1", email: "dericm@miamioh.edu" }, { onConflict: "id" });
+    // Insert once, never rewrite a returning teacher's row (0014: only the name can change).
+    expect(upsert).toHaveBeenCalledWith(
+      { id: "u1", email: "dericm@miamioh.edu" },
+      { onConflict: "id", ignoreDuplicates: true },
+    );
+    expect(select).toHaveBeenCalledWith("display_name");
+    expect(eq).toHaveBeenCalledWith("id", "u1");
   });
 
   it("accepts a matching hd claim and sends a teacher with a name to /teach", async () => {
@@ -98,12 +106,22 @@ describe("GET /auth/callback", () => {
     expect(supabase.auth.signOut).not.toHaveBeenCalled();
   });
 
-  it("signs out and goes to /teach?error=signin when the teachers upsert fails", async () => {
+  it("signs out and goes to /teach?error=signin when the teachers insert fails", async () => {
     signedInAs({ id: "u1", email: "dericm@miamioh.edu" });
-    single.mockResolvedValue({ data: null, error: { message: "new row violates row-level security policy" } });
+    upsert.mockResolvedValue({ data: null, error: { message: "new row violates row-level security policy" } });
     const res = await call();
     expect(res.headers.get("location")).toBe("https://backtrack.test/teach?error=signin");
     expect(supabase.auth.signOut).toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("signs out when the row can not be read back, or is not there", async () => {
+    signedInAs({ id: "u1", email: "dericm@miamioh.edu" });
+    maybeSingle.mockResolvedValue({ data: null, error: { message: "boom" } });
+    expect((await call()).headers.get("location")).toBe("https://backtrack.test/teach?error=signin");
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    expect((await call()).headers.get("location")).toBe("https://backtrack.test/teach?error=signin");
+    expect(supabase.auth.signOut).toHaveBeenCalledTimes(2);
   });
 
   it("goes back to /teach without a code, and does not sign anyone in", async () => {

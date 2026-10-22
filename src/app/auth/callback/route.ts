@@ -47,16 +47,18 @@ export async function GET(request: NextRequest) {
     return go("/teach/not-miami");
   }
 
-  // Insert the row on first sign in. display_name is left out so a returning
-  // teacher keeps theirs.
-  const { data: teacher, error: upsertError } = await supabase
+  // Add the row on first sign in; a returning teacher's row is left exactly as it is
+  // (insert ... on conflict do nothing). Nothing here updates the row: a teacher may
+  // only change their own name (0014), and the email is set once, from Google.
+  const { error: insertError } = await supabase
     .from("teachers")
-    .upsert({ id: user.id, email: user.email }, { onConflict: "id" })
-    .select("display_name")
-    .single();
+    .upsert({ id: user.id, email: user.email }, { onConflict: "id", ignoreDuplicates: true });
+  const { data: teacher, error: readError } = insertError
+    ? { data: null, error: insertError }
+    : await supabase.from("teachers").select("display_name").eq("id", user.id).maybeSingle();
 
   // No teachers row means nothing later can work, so do not leave them signed in.
-  if (upsertError || !teacher) {
+  if (readError || !teacher) {
     await supabase.auth.signOut();
     return go("/teach?error=signin");
   }

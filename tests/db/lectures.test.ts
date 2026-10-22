@@ -174,9 +174,7 @@ describe("start_lecture", () => {
     const second = await start(marko, { count: 1 });
     expect(second.code).not.toBe(first.code);
 
-    await as(db, marko, () =>
-      db.query("update public.lectures set status = 'ended', ended_at = now() where id = $1", [first.lecture_id]),
-    );
+    await as(db, marko, () => db.query("select public.end_lecture($1)", [first.lecture_id]));
 
     await db.query("select setseed(0.31)");
     const third = await start(marko, { count: 1 });
@@ -266,12 +264,12 @@ describe("lectures and slides RLS", () => {
           [newId(), MARKO_COURSE],
         ),
       ),
-    ).rejects.toThrow(/row-level security/i);
+    ).rejects.toThrow(/permission denied/i); // 0014 (row level security refused it before)
 
     const { lecture_id } = await start(marko, { count: 1 });
     await expect(
       as(db, marko, () => db.query("insert into public.slides (lecture_id, number, image_path) values ($1, 2, 'x')", [lecture_id])),
-    ).rejects.toThrow(/row-level security/i);
+    ).rejects.toThrow(/permission denied/i);
   });
 
   it("lets the owner update their lecture but not another teacher's", async () => {
@@ -286,20 +284,27 @@ describe("lectures and slides RLS", () => {
     const { lecture_id } = await start(marko, { count: 1 });
     await expect(
       as(db, marko, () => db.query("update public.lectures set course_id = $1 where id = $2", [OTHER_COURSE, lecture_id])),
-    ).rejects.toThrow(/row-level security/i);
+    ).rejects.toThrow(/permission denied/i); // 0014: only name and current_slide can be updated
   });
 
-  it("lets the owner update their slides but not another teacher", async () => {
+  it("does not let anyone update slides directly, the owner included (0014)", async () => {
     const { lecture_id } = await start(marko, { count: 1 });
-    await as(db, marko, () => db.query("update public.slides set first_line = 'Mine' where lecture_id = $1", [lecture_id]));
-    await as(db, other, () => db.query("update public.slides set first_line = 'Theirs' where lecture_id = $1", [lecture_id]));
+    await expect(
+      as(db, marko, () => db.query("update public.slides set first_line = 'Mine' where lecture_id = $1", [lecture_id])),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      as(db, other, () => db.query("update public.slides set first_line = 'Theirs' where lecture_id = $1", [lecture_id])),
+    ).rejects.toThrow(/permission denied/i);
     const row = await db.query<{ first_line: string }>("select first_line from public.slides where lecture_id = $1", [lecture_id]);
-    expect(row.rows[0].first_line).toBe("Mine");
+    expect(row.rows[0].first_line).toBe("Welcome");
   });
 
   it("does not let a teacher delete a lecture directly", async () => {
     const { lecture_id } = await start(marko, { count: 1 });
-    await as(db, marko, () => db.query("delete from public.lectures where id = $1", [lecture_id]));
+    // 0014 takes the delete privilege away (delete_lecture is the way); RLS refused it before.
+    await expect(as(db, marko, () => db.query("delete from public.lectures where id = $1", [lecture_id]))).rejects.toThrow(
+      /permission denied/i,
+    );
     expect((await db.query("select 1 from public.lectures")).rows).toHaveLength(1);
   });
 

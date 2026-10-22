@@ -87,9 +87,7 @@ describe("join_lecture", () => {
   });
 
   it("returns the same null for the code of an ended lecture", async () => {
-    await as(db, marko, () =>
-      db.query("update public.lectures set status = 'ended', ended_at = now() where id = $1", [LECTURE_A]),
-    );
+    await as(db, marko, () => db.query("select public.end_lecture($1)", [LECTURE_A]));
     expect(await join(s1, CODE_A)).toBeNull();
     expect(await participantCount()).toBe(0);
   });
@@ -274,9 +272,7 @@ describe("what a student can read", () => {
 
   it("a participant still sees the lecture and slides after it ends", async () => {
     await join(s1, CODE_A);
-    await as(db, marko, () =>
-      db.query("update public.lectures set status = 'ended', ended_at = now() where id = $1", [LECTURE_A]),
-    );
+    await as(db, marko, () => db.query("select public.end_lecture($1)", [LECTURE_A]));
     const seen = await rows<{ status: string }>(s1, "select status from public.lectures");
     expect(seen).toEqual([{ status: "ended" }]);
     expect(await rows(s1, "select number from public.slides")).toHaveLength(3);
@@ -288,10 +284,10 @@ describe("what a student can read", () => {
       (await db.query("update public.lectures set current_slide = 3 where id = $1", [LECTURE_A])).affectedRows,
     );
     expect(changed).toBe(0);
-    const slideChanged = await as(db, s1, async () =>
-      (await db.query("update public.slides set first_line = 'x' where lecture_id = $1", [LECTURE_A])).affectedRows,
-    );
-    expect(slideChanged).toBe(0);
+    // 0014: nobody updates slides directly any more.
+    await expect(
+      as(db, s1, () => db.query("update public.slides set first_line = 'x' where lecture_id = $1", [LECTURE_A])),
+    ).rejects.toThrow(/permission denied/i);
     const current = await db.query<{ current_slide: number }>("select current_slide from public.lectures where id = $1", [LECTURE_A]);
     expect(current.rows[0].current_slide).toBe(2);
   });
@@ -336,12 +332,11 @@ describe("participants table", () => {
         ),
       ).rejects.toThrow();
     }
-    const updated = await as(db, s1, async () =>
-      (await db.query("update public.participants set joined_at = now() - interval '1 day'")).affectedRows,
-    );
-    expect(updated).toBe(0);
-    const deleted = await as(db, s1, async () => (await db.query("delete from public.participants")).affectedRows);
-    expect(deleted).toBe(0);
+    // 0014 takes these privileges away (row level security already matched no rows).
+    await expect(
+      as(db, s1, () => db.query("update public.participants set joined_at = now() - interval '1 day'")),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(as(db, s1, () => db.query("delete from public.participants"))).rejects.toThrow(/permission denied/i);
     expect(await participantCount()).toBe(1);
   });
 
@@ -377,9 +372,7 @@ describe("lecture_header", () => {
 
   it("still works once the lecture has ended", async () => {
     await join(s1, CODE_A);
-    await as(db, marko, () =>
-      db.query("update public.lectures set status = 'ended', ended_at = now() where id = $1", [LECTURE_A]),
-    );
+    await as(db, marko, () => db.query("select public.end_lecture($1)", [LECTURE_A]));
     expect(await header(s1, LECTURE_A)).toHaveLength(1);
   });
 
@@ -412,9 +405,7 @@ describe("slides storage for students", () => {
 
   it("a joined student keeps the images after the lecture ends", async () => {
     await join(s1, CODE_A);
-    await as(db, marko, () =>
-      db.query("update public.lectures set status = 'ended', ended_at = now() where id = $1", [LECTURE_A]),
-    );
+    await as(db, marko, () => db.query("select public.end_lecture($1)", [LECTURE_A]));
     expect(await names(s1)).toEqual([`${LECTURE_A}/1.webp`]);
   });
 
