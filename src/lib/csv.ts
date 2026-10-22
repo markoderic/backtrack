@@ -4,8 +4,13 @@ export const CSV_HEADER = ["Date", "Lecture", "Slide", "First line of slide", "L
 const BOM = "﻿";
 
 // RFC 4180: a field with a comma, quote or line break is wrapped in quotes and its quotes are doubled.
+// A text cell that starts with = + - @ (or a tab or carriage return) is read as a formula by
+// Excel, Numbers and Sheets, so it gets a leading apostrophe. Numbers are written as they are.
+const FORMULA_START = /^[=+\-@\t\r]/;
+
 function field(value: string | number): string {
-  const text = String(value);
+  const raw = String(value);
+  const text = typeof value === "string" && FORMULA_START.test(raw) ? `'${raw}` : raw;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

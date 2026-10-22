@@ -42,6 +42,51 @@ describe("toCsv", () => {
   });
 });
 
+describe("toCsv formula safety", () => {
+  const cell = (v: string | number) => toCsv(["A"], [[v]]).slice(BOM.length + "A\r\n".length);
+
+  it("puts an apostrophe in front of a text cell that starts with = + - or @", () => {
+    expect(cell("=SUM(A1)")).toBe("'=SUM(A1)\r\n");
+    expect(cell("- Revenue")).toBe("'- Revenue\r\n");
+    expect(cell("@x")).toBe("'@x\r\n");
+    expect(cell("+1")).toBe("'+1\r\n");
+  });
+
+  it("does the same for a leading tab or carriage return", () => {
+    expect(cell("\tcmd")).toBe("'\tcmd\r\n");
+    expect(cell("\rcmd")).toBe(`"'\rcmd"\r\n`);
+  });
+
+  it("leaves a normal string alone, also when the trigger is not the first character", () => {
+    expect(cell("Revenue")).toBe("Revenue\r\n");
+    expect(cell("a=b")).toBe("a=b\r\n");
+    expect(cell(" =x")).toBe(" =x\r\n");
+    expect(cell("Why this matters: x - y")).toBe("Why this matters: x - y\r\n");
+  });
+
+  it("leaves numbers alone, negative ones too", () => {
+    expect(cell(0)).toBe("0\r\n");
+    expect(cell(12)).toBe("12\r\n");
+    expect(cell(-3)).toBe("-3\r\n");
+  });
+
+  it("still quotes by RFC 4180 after the prefix", () => {
+    expect(cell("=a,b")).toBe(`"'=a,b"\r\n`);
+    expect(cell('=a"b')).toBe(`"'=a""b"\r\n`);
+    expect(cell("-line\nbreak")).toBe(`"'-line\nbreak"\r\n`);
+  });
+
+  it("protects a header cell too, and the BOM stays first", () => {
+    const out = toCsv(["=H", "B"], [["@x", 1]]);
+    expect(out).toBe(`${BOM}'=H,B\r\n'@x,1\r\n`);
+    expect(out.startsWith(BOM)).toBe(true);
+  });
+
+  it("does not prefix an empty cell", () => {
+    expect(cell("")).toBe("\r\n");
+  });
+});
+
 describe("CSV_HEADER", () => {
   it("is the header the spec asks for", () => {
     expect(CSV_HEADER.join(",")).toBe("Date,Lecture,Slide,First line of slide,Lost taps,Different students");
