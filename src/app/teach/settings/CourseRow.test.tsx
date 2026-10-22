@@ -115,6 +115,8 @@ describe("CourseRow", () => {
     type("ACC 999");
     fireEvent.click(save());
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed to ACC 999."));
+    // The effect that starts the clear timer can run after the text shows; let it run first.
+    await act(async () => {});
     act(() => {
       vi.advanceTimersByTime(STATUS_MS);
     });

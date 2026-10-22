@@ -65,6 +65,8 @@ describe("NameForm", () => {
     type("Linda C.");
     fireEvent.click(save());
     await waitFor(() => expect(status()).toHaveTextContent("Saved."));
+    // The effect that starts the clear timer can run after the text shows; let it run first.
+    await act(async () => {});
     act(() => {
       vi.advanceTimersByTime(STATUS_MS);
     });
