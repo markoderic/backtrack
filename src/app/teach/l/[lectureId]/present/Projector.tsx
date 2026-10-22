@@ -7,10 +7,11 @@ import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { useJoinedCount } from "@/lib/useJoinedCount";
 import { useLiveLecture } from "@/lib/useLiveLecture";
+import { useShownAgain } from "@/lib/useShownAgain";
 import { LogoMark } from "@/components/Logo";
 import { Icon } from "@/components/Icon";
-import { ButtonPrimary, ButtonPrimaryLink } from "@/components/ButtonPrimary";
-import { textLinkClass } from "../../../ui";
+import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { ClassEnded } from "./ClassEnded";
 
 type Props = {
   lectureId: string;
@@ -25,6 +26,9 @@ type Props = {
 
 /** How long the join card takes to fade out on the first arrow (--dur-slow, plus room). */
 const JOIN_FADE_MS = 400;
+
+/** How long "Continued on slide N" stays in the bar. */
+export const CONTINUED_MS = 4000;
 
 /**
  * A slide change that has not come back in this long is given up: the request is aborted,
@@ -48,12 +52,15 @@ function within<T>(request: PromiseLike<T>, ms: number, controller: AbortControl
   ]).finally(() => clearTimeout(timer));
 }
 
-/** sessionStorage key: the join card of this lecture was put away in this tab. */
+/**
+ * localStorage key: this lecture's projector was opened in this browser. Only the very first
+ * open shows the join card; Data and back, a reload, Resume (in any tab) go to the slide.
+ */
 export const joinCardKey = (lectureId: string) => `backtrack:joincard:${lectureId}`;
 
 function joinCardSeen(lectureId: string): boolean {
   try {
-    return window.sessionStorage.getItem(joinCardKey(lectureId)) !== null;
+    return window.localStorage.getItem(joinCardKey(lectureId)) !== null;
   } catch {
     return false;
   }
@@ -61,13 +68,13 @@ function joinCardSeen(lectureId: string): boolean {
 
 function markJoinCardSeen(lectureId: string): void {
   try {
-    window.sessionStorage.setItem(joinCardKey(lectureId), "1");
+    window.localStorage.setItem(joinCardKey(lectureId), "1");
   } catch {
     // Storage is blocked: the card just shows again on the next open at slide 1.
   }
 }
 
-// The key is only read, never watched: it changes only from this page's own key press.
+// The key is only read, never watched: it changes only from this page's own first open.
 const noSubscribe = () => () => {};
 
 /**
@@ -87,9 +94,10 @@ function Code({ code }: { code: string }) {
 }
 
 /*
- * The join card (Figma 34:821) is drawn for a 1920 x 1080 projector. Every size is
- * min(design px, the same size on a 1440 wide screen), so it is exact on a projector and
- * shrinks with a narrower window instead of running off the side.
+ * The join card (Figma 34:821) is drawn for a 1920 x 1080 projector: the logo up top, then one
+ * centered block, "Go to <address>" over the code, and how many joined under it. Every size is
+ * min(design px, the same size on a 1440 wide screen, a share of the height), so it is exact on
+ * a projector and shrinks with a smaller window instead of running off the side.
  */
 function JoinCard({
   code,
@@ -105,7 +113,7 @@ function JoinCard({
   /** The copy that fades out after the first arrow. Hidden from screen readers and takes no clicks. */
   ghost?: boolean;
   onFaded?: () => void;
-  /** A click anywhere on the card starts, like the first arrow (the card, not the controls above it). */
+  /** A click anywhere on the card starts, like the first arrow (the card, not the bar under it). */
   onStart?: () => void;
 }) {
   return (
@@ -115,56 +123,50 @@ function JoinCard({
             "aria-hidden": true,
             onAnimationEnd: onFaded,
             className:
-              "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-[min(72px,5vw)] bg-bg px-4 " +
+              "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center bg-bg px-4 " +
               "[animation:fade-in_var(--dur-slow)_var(--ease-in-out)_reverse_both]",
           }
         : {
             "data-testid": "join-card",
             onClick: onStart,
-            className:
-              "absolute inset-0 z-10 flex cursor-pointer flex-col items-center justify-center gap-[min(72px,5vw)] bg-bg px-4",
+            className: "absolute inset-0 z-10 flex cursor-pointer flex-col items-center justify-center bg-bg px-4",
           })}
     >
-      <span className="flex items-center gap-[min(16.8px,1.167vw)]">
-        <LogoMark size={73} className="size-[min(72.8px,5.056vw)]!" />
-        <span className="font-sans text-[min(72.8px,5.056vw)] leading-none font-semibold tracking-[-0.05em] whitespace-nowrap text-ink">
+      {/* The logo sits higher than the block: the gap under it is the biggest one on the card. */}
+      <span className="mb-[min(136px,9.444vw,12vh)] flex items-center gap-[min(16.8px,1.167vw)]">
+        <LogoMark size={73} className="size-[min(72.8px,5.056vw,6.5vh)]!" />
+        <span className="font-sans text-[min(72.8px,5.056vw,6.5vh)] leading-none font-semibold tracking-[-0.05em] whitespace-nowrap text-ink">
           backtrack
         </span>
       </span>
-      <div className="flex items-end gap-[min(120px,8.333vw)] whitespace-nowrap">
-        <div className="flex flex-col gap-[min(8px,0.556vw)]">
-          <p className="font-sans text-[min(32px,2.222vw)] leading-[1.25] font-normal text-secondary">Go to</p>
-          <p className="font-sans text-[min(64px,4.444vw)] leading-[1.125] font-medium tracking-[-0.02em] text-ink">
-            {siteAddress}
-          </p>
-        </div>
-        <div className="flex flex-col">
-          <p className="font-sans text-[min(32px,2.222vw)] leading-[1.25] font-normal text-secondary">Enter</p>
-          <p className="font-sans text-[min(160px,11.111vw)] leading-none font-light tracking-[-0.03em] text-ink">
-            <Code code={code} />
-          </p>
-        </div>
+      <div data-testid="join-block" className="flex flex-col items-center gap-[min(16px,1.111vw,1.5vh)] text-center whitespace-nowrap">
+        <p className="font-sans text-[min(64px,4.444vw,6vh)] leading-[1.125] font-medium tracking-[-0.02em] text-ink">
+          <span className="font-normal text-secondary">Go to </span>
+          {siteAddress}
+        </p>
+        <p className="font-sans text-[min(160px,11.111vw,15vh)] leading-none font-light tracking-[-0.03em] text-ink">
+          <Code code={code} />
+        </p>
+        {/* Always takes its line, so the card does not jump when the first count arrives. */}
+        <p className="mt-[min(24px,1.667vw,2vh)] min-h-[1.25em] font-sans text-[min(32px,2.222vw,3vh)] leading-[1.25] font-normal text-secondary">
+          {joined !== null && `${joined} joined`}
+        </p>
       </div>
-      {/* Always takes its line, so the card does not jump when the first count arrives. */}
-      <p className="min-h-[1.25em] font-sans text-[min(32px,2.222vw)] leading-[1.25] font-normal text-secondary">
-        {joined !== null && `${joined} joined`}
-      </p>
-      <p className="absolute right-16 bottom-12 type-small text-secondary">Press → or click to start</p>
     </div>
   );
 }
 
-/** Data, End class, Fullscreen and Show code: quiet text actions for the teacher, not for the room. */
+/** Data, Show code, Fullscreen and End class: quiet small text actions for the teacher, not for the room. */
 const controlClass =
-  "press focus-ring rounded-sm type-small-strong whitespace-nowrap text-secondary hover:text-ink";
+  "press focus-ring inline-flex h-8 items-center rounded-sm px-2 type-small-strong whitespace-nowrap text-secondary hover:bg-ink/5 hover:text-ink";
 
 export function Projector({ lectureId, code, siteAddress, initialSlide, slideCount, courseId }: Props) {
   const [current, setCurrent] = useState(initialSlide);
-  // The join card shows by itself only on the first open of the lecture: still on slide 1 and
-  // not put away before in this tab. Coming back from the data view, Resume or a reload goes
-  // straight to the slide. The server has no sessionStorage, so it draws the card and the
-  // first client render corrects it. Show code brings it back at any time; the first arrow or
-  // a click puts it away again.
+  // The join card shows by itself only on the very first open of the lecture in this browser,
+  // on slide 1. Data and back, a reload or Resume go straight to the slide (with "Continued on
+  // slide N" when it is past the first). The server has no storage, so it draws the card on
+  // slide 1 and the first client render corrects it; the choice is then pinned in state on
+  // mount, since the first open writes the stored flag right away.
   const seen = useSyncExternalStore(
     noSubscribe,
     () => joinCardSeen(lectureId),
@@ -174,6 +176,8 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const joinCardShowing = cardChoice ?? (initialSlide === 1 && !seen);
   // The join card fading out after the first arrow, drawn over the slide and then removed.
   const [joinCardFading, setJoinCardFading] = useState(false);
+  // "Continued on slide N" after reopening past the first slide, for a few seconds.
+  const [continued, setContinued] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { urlFor, loaded } = useSlideImages(lectureId, current);
   // The image that failed to load on this visit to its slide (deleted object, expired url, a
@@ -182,19 +186,31 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const [broken, setBroken] = useState<{ slide: number; url: string } | null>(null);
   const joined = useJoinedCount(lectureId);
   // Hears an End from anywhere else (the dashboard, a phone): Realtime, plus a read every 20 s.
-  const ended = useLiveLecture(lectureId, initialSlide).state?.ended ?? false;
+  // It also counts the students who have the lecture open right now (Realtime Presence).
+  const live = useLiveLecture(lectureId, initialSlide, { presence: "count" });
+  const ended = live.state?.ended ?? false;
+  const here = live.here ?? null;
   const [endedHere, setEndedHere] = useState(false);
   const isEnded = ended || endedHere;
   // End class asks first, right here on the projector (no trip to the data view).
   const [confirming, setConfirming] = useState(false);
   const [ending, setEnding] = useState(false);
+  // Show code: the address and the code, big, in a dialog over the slide.
+  const [codeOpen, setCodeOpen] = useState(false);
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const showCodeButton = useRef<HTMLButtonElement>(null);
+  const closeCodeButton = useRef<HTMLButtonElement>(null);
   const confirmingRef = useRef(false);
+  const codeOpenRef = useRef(false);
   const endingRef = useRef(false);
   useEffect(() => {
     confirmingRef.current = confirming;
   }, [confirming]);
+  useEffect(() => {
+    codeOpenRef.current = codeOpen;
+  }, [codeOpen]);
 
   // The key handler reads these instead of state, so a fast key press never sees a stale value.
   const currentRef = useRef(initialSlide);
@@ -211,6 +227,42 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   useEffect(() => {
     if (isEnded) endedRef.current = true;
   }, [isEnded]);
+
+  // The first open: the join card only if this lecture's projector was never opened in this
+  // browser and it is on slide 1. Pinned in state, since the stored flag is written right away.
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (openedRef.current) return;
+    openedRef.current = true;
+    const first = initialSlide === 1 && !joinCardSeen(lectureId);
+    markJoinCardSeen(lectureId);
+    joinCardRef.current = first;
+    /* eslint-disable react-hooks/set-state-in-effect -- the choice is pinned once, on the first open */
+    setCardChoice(first);
+    if (!first && initialSlide > 1) setContinued(initialSlide);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [initialSlide, lectureId]);
+
+  // Next keeps this page alive while the teacher is on Data (or after browser Back) and shows
+  // it again with its state: straight to the slide it was on, never back to the join card,
+  // with no dialog left open.
+  useShownAgain(() => {
+    joinCardRef.current = false;
+    confirmingRef.current = false;
+    codeOpenRef.current = false;
+    setCardChoice(false);
+    setJoinCardFading(false);
+    setConfirming(false);
+    setCodeOpen(false);
+    if (currentRef.current > 1) setContinued(currentRef.current);
+  });
+
+  // "Continued on slide N" goes away by itself, and as soon as the slide moves.
+  useEffect(() => {
+    if (continued === null) return;
+    const timer = setTimeout(() => setContinued(null), CONTINUED_MS);
+    return () => clearTimeout(timer);
+  }, [continued]);
 
   const go = useCallback(async () => {
     if (updating.current) return;
@@ -243,6 +295,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
           setBroken(null);
           setCurrent(target);
           setError(null);
+          setContinued(null);
           continue;
         }
         // No row moved: the lecture ended somewhere else, or it is not on the slide this screen
@@ -290,12 +343,6 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     setJoinCardFading(true);
   }, [lectureId]);
 
-  function showCard() {
-    joinCardRef.current = true;
-    setJoinCardFading(false);
-    setCardChoice(true);
-  }
-
   // Esc closes the confirm (closing a dialog, not a shortcut), and Keep going does the same;
   // both hand focus back to End class. A press outside closes it and leaves focus alone.
   const closeConfirm = useCallback((refocus: boolean) => {
@@ -304,12 +351,26 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     if (refocus) endButton.current?.focus();
   }, []);
 
+  // Close (or Esc, a press outside, a slide key) puts the code dialog away. Focus goes back to
+  // Show code, except after a slide key: that one is for the slides, like the first arrow.
+  const closeCode = useCallback((refocus: boolean) => {
+    codeOpenRef.current = false;
+    setCodeOpen(false);
+    if (refocus) showCodeButton.current?.focus();
+  }, []);
+
   // The only keys: a clicker's (arrows, Page Up and Down, Space) move the slide. No shortcuts.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const action = slideKeyAction(e);
       if (!action) return;
       if (endedRef.current) return;
+      if (codeOpenRef.current) {
+        // The code dialog is up: the first slide key only puts it away, like the join card.
+        e.preventDefault();
+        closeCode(false);
+        return;
+      }
       if (confirmingRef.current) {
         // Ending: the keys wait for it.
         if (endingRef.current) return;
@@ -322,10 +383,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
       }
       e.preventDefault();
       // The key moves the slide and never also presses the projector's own control that has
-      // focus (End class after Keep going, Fullscreen, Data): some browsers press a focused
-      // button on Space's keyup, which would open the confirm in front of the room.
+      // focus (End class after Keep going, Fullscreen, Show code, Data): some browsers press a
+      // focused button on Space's keyup, which would open the confirm in front of the room.
       const active = document.activeElement;
-      if (active instanceof HTMLElement && endArea.current?.contains(active)) active.blur();
+      if (active instanceof HTMLElement && bar.current?.contains(active)) active.blur();
       if (joinCardRef.current) {
         putCardAway();
         return;
@@ -337,7 +398,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [go, putCardAway, slideCount, closeConfirm]);
+  }, [go, putCardAway, slideCount, closeConfirm, closeCode]);
 
   useEffect(() => {
     if (!confirming || ending) return;
@@ -365,6 +426,32 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     };
   }, [confirming, ending, closeConfirm]);
 
+  // The code dialog is modal: Esc closes it, Tab stays on its Close button, and leaving
+  // fullscreen (the browser's Esc) closes it too. A press outside it is handled on the backdrop.
+  useEffect(() => {
+    if (!codeOpen) return;
+    closeCodeButton.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        closeCodeButton.current?.focus();
+        return;
+      }
+      if (e.key !== "Escape" || e.repeat) return;
+      e.preventDefault();
+      closeCode(true);
+    }
+    function onFullscreenChange() {
+      if (!document.fullscreenElement) closeCode(true);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, [codeOpen, closeCode]);
+
   async function endClass() {
     endingRef.current = true;
     setEnding(true);
@@ -375,7 +462,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
       setEndedHere(true);
     } catch {
       closeConfirm(true);
-      setError("Could not end the lecture.");
+      setError("Could not end the class.");
     } finally {
       endingRef.current = false;
       setEnding(false);
@@ -406,171 +493,216 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   // failed to load: say so instead of an empty screen. The keys keep working.
   const missing = url ? broken?.slide === current && broken.url === url : loaded;
 
-  if (isEnded) {
-    return (
-      <main className="fixed inset-0 flex animate-page-in flex-col items-center justify-center gap-6 bg-bg p-4 text-center">
-        <p role="status" className="type-title text-ink">
-          This lecture has ended.
-        </p>
-        {courseId && <ButtonPrimaryLink href={`/teach/c/${courseId}`}>Back to the course</ButtonPrimaryLink>}
-      </main>
-    );
-  }
+  if (isEnded) return <ClassEnded courseId={courseId} fixed />;
+
+  // Students on the lecture page right now, never more than have joined (one student with
+  // two tabs open counts once there).
+  const hereCount = here !== null && joined !== null ? Math.min(here, joined) : null;
+  const count =
+    joined === null ? null : hereCount === null ? `${joined} joined` : `${hereCount} here · ${joined} joined`;
+
 
   /*
-   * One quiet row of controls, always shown (no fade), under the corner card. End class opens
-   * its confirm right under the row. The row has no animation of its own, and the corner box
-   * it sits in is z-20 over the slide and the join card (z-10), so the confirm is never under
-   * anything: no animated ancestor traps it (see f27789f).
+   * The bar: one slim quiet strip under the slide, never over it. Left, the address and code
+   * small and who is here; middle, messages; right, the teacher's controls. End class opens its
+   * confirm just above the bar. The bar has no animation of its own and is z-20 over the slide
+   * area and the join card (z-10), so the confirm is never under anything: no animated ancestor
+   * traps it (see f27789f).
    */
-  const controls = (
-    <div
-      ref={endArea}
-      className="relative"
-      // A non-modal popover, as in the data view: Tab out of it closes it, a press inside never
-      // moves focus (so it never blurs shut), and switching windows leaves it open.
-      onMouseDown={(e) => {
-        if (confirming) e.preventDefault();
-      }}
-      onBlur={(e) => {
-        if (!confirming || ending || !document.hasFocus()) return;
-        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-        closeConfirm(false);
-      }}
-    >
-      <div
-        data-testid="projector-controls"
-        className="flex items-center gap-4 rounded-md border border-hairline bg-surface px-4 py-2 shadow-popover"
-      >
-        <Link href={`/teach/l/${lectureId}/live`} className={controlClass}>
-          Data
-        </Link>
-        <button
-          ref={endButton}
-          type="button"
-          aria-expanded={confirming}
-          aria-controls={confirming ? "end-class-confirm" : undefined}
-          onClick={() => {
-            if (confirming) closeConfirm(false);
-            else {
-              setError(null);
-              setConfirming(true);
-            }
-          }}
-          className={controlClass}
-        >
-          End class
-        </button>
-        <button type="button" onClick={toggleFullscreen} className={controlClass}>
-          Fullscreen
-        </button>
-        {!joinCardShowing && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.currentTarget.blur(); // Space must move on from the card, not press this again.
-              showCard();
-            }}
-            className={controlClass}
-          >
-            Show code
-          </button>
+  return (
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-bg text-ink">
+      <div data-testid="projector-stage" className="relative min-h-0 flex-1">
+        {/* The slide fills the space above the bar at its own ratio, letterboxed. It swaps instantly. */}
+        {url && !missing && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt={`Slide ${current}`}
+            onError={() => setBroken({ slide: current, url })}
+            className="absolute inset-0 h-full w-full object-contain"
+          />
+        )}
+        {missing && (
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <p role="status" className="type-title text-secondary">
+              Slide {current} didn&apos;t load.
+            </p>
+          </div>
+        )}
+
+        {joinCardShowing && <JoinCard code={code} siteAddress={siteAddress} joined={joined} onStart={putCardAway} />}
+        {joinCardFading && (
+          <JoinCard code={code} siteAddress={siteAddress} joined={joined} ghost onFaded={() => setJoinCardFading(false)} />
         )}
       </div>
-      {confirming && (
-        <div
-          id="end-class-confirm"
-          role="dialog"
-          aria-labelledby="end-class-title"
-          aria-describedby="end-class-text"
-          tabIndex={-1}
-          className="absolute top-full right-0 z-30 mt-2 flex w-80 max-w-[calc(100vw-32px)] origin-top-right animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-5 shadow-popover outline-hidden"
-        >
-          <p id="end-class-title" className="type-body-strong text-ink">
-            End the lecture?
+
+      <div
+        ref={bar}
+        data-testid="projector-bar"
+        className="relative z-20 flex h-11 shrink-0 items-center gap-6 border-t border-hairline bg-bg pr-3 pl-6 type-small whitespace-nowrap text-secondary"
+      >
+        {joinCardShowing ? (
+          <p className="shrink-0">Press → or click to start</p>
+        ) : (
+          <p data-testid="projector-code" className="flex shrink-0 items-center gap-3">
+            <span>{siteAddress}</span>
+            <span className="type-small-strong text-ink">
+              <Code code={code} />
+            </span>
           </p>
-          <p id="end-class-text" className="type-small text-ink">
-            The code stops working and students land on My spots.
+        )}
+        {!joinCardShowing && count && (
+          <p data-testid="projector-count" className="shrink-0">
+            {count}
           </p>
-          <div className="flex items-center gap-4">
-            <ButtonPrimary
-              // The one place Space keeps its button meaning while the confirm is open (see the keys).
-              data-confirm-end=""
-              disabled={ending}
-              onClick={() => void endClass()}
-              className="h-11! w-35!"
+        )}
+        {/* The middle: a failure first, else "Continued on slide N" (a live region that is always there). */}
+        <div className="flex min-w-0 flex-1 justify-center">
+          {error && (
+            <p role="alert" className="flex min-w-0 animate-fade-in items-center gap-2 text-ink">
+              <Icon name="alert" size={16} />
+              <span className="truncate">{error}</span>
+            </p>
+          )}
+          <p role="status" className={error ? "sr-only" : "min-w-0"}>
+            {!error && continued !== null && (
+              <span
+                data-testid="continued"
+                className="block animate-fade-in truncate rounded-sm border border-hairline bg-surface px-3 py-1 text-ink"
+              >
+                Continued on slide {continued}
+              </span>
+            )}
+          </p>
+        </div>
+        <div data-testid="projector-controls" className="flex shrink-0 items-center gap-1">
+          <Link href={`/teach/l/${lectureId}/live`} className={controlClass}>
+            Data
+          </Link>
+          {!joinCardShowing && (
+            <button
+              ref={showCodeButton}
+              type="button"
+              aria-haspopup="dialog"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                setError(null);
+                setCodeOpen(true);
+              }}
+              className={controlClass}
+            >
+              Show code
+            </button>
+          )}
+          <button type="button" onClick={toggleFullscreen} className={controlClass}>
+            Fullscreen
+          </button>
+          <div
+            ref={endArea}
+            className="relative"
+            // A non-modal popover, as in the data view: Tab out of it closes it, a press inside never
+            // moves focus (so it never blurs shut), and switching windows leaves it open.
+            onMouseDown={(e) => {
+              if (confirming) e.preventDefault();
+            }}
+            onBlur={(e) => {
+              if (!confirming || ending || !document.hasFocus()) return;
+              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+              closeConfirm(false);
+            }}
+          >
+            <button
+              ref={endButton}
+              type="button"
+              aria-expanded={confirming}
+              aria-controls={confirming ? "end-class-confirm" : undefined}
+              onClick={() => {
+                if (confirming) closeConfirm(false);
+                else {
+                  setError(null);
+                  setConfirming(true);
+                }
+              }}
+              className={controlClass}
             >
               End class
-            </ButtonPrimary>
-            <button
-              type="button"
-              autoFocus
-              disabled={ending}
-              onClick={() => closeConfirm(true)}
-              className={textLinkClass}
+            </button>
+            {confirming && (
+              <div
+                id="end-class-confirm"
+                role="dialog"
+                aria-labelledby="end-class-title"
+                aria-describedby="end-class-text"
+                tabIndex={-1}
+                className="absolute right-0 bottom-full z-30 mb-2 flex w-80 max-w-[calc(100vw-32px)] origin-bottom-right animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-5 whitespace-normal shadow-popover outline-hidden"
+              >
+                <p id="end-class-title" className="type-body-strong text-ink">
+                  End class?
+                </p>
+                <p id="end-class-text" className="type-small text-ink">
+                  The code stops working and students land on My spots.
+                </p>
+                <div className="flex items-center gap-3">
+                  <ButtonPrimary
+                    // The one place Space keeps its button meaning while the confirm is open (see the keys).
+                    data-confirm-end=""
+                    disabled={ending}
+                    onClick={() => void endClass()}
+                    className="h-11! w-35!"
+                  >
+                    End class
+                  </ButtonPrimary>
+                  <button
+                    type="button"
+                    autoFocus
+                    disabled={ending}
+                    onClick={() => closeConfirm(true)}
+                    className={buttonSecondaryClass}
+                  >
+                    Keep going
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {codeOpen && (
+        // The backdrop: a press on it (outside the dialog) closes the dialog.
+        <div
+          data-testid="show-code-backdrop"
+          className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-ink/40 p-4"
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) closeCode(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="show-code-title"
+            className="flex max-w-full animate-pop-in flex-col items-center gap-[min(16px,1.111vw,1.5vh)] rounded-md bg-surface px-[min(96px,6.667vw)] pt-[min(72px,5vw,6.5vh)] pb-[min(48px,3.333vw,4.5vh)] text-center whitespace-nowrap shadow-popover"
+          >
+            <p
+              id="show-code-title"
+              className="font-sans text-[min(64px,4.444vw,6vh)] leading-[1.125] font-medium tracking-[-0.02em] text-ink"
             >
-              Keep going
+              <span className="font-normal text-secondary">Go to </span>
+              {siteAddress}
+            </p>
+            <p className="font-sans text-[min(160px,11.111vw,15vh)] leading-none font-light tracking-[-0.03em] text-ink">
+              <Code code={code} />
+            </p>
+            <button
+              ref={closeCodeButton}
+              type="button"
+              onClick={() => closeCode(true)}
+              className={`${buttonSecondaryClass} mt-[min(32px,2.222vw,3vh)] px-6`}
+            >
+              Close
             </button>
           </div>
         </div>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="fixed inset-0 overflow-hidden bg-bg text-ink">
-      {/* The slide fills the screen at its own ratio and is never scaled past it. It swaps instantly. */}
-      {url && !missing && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt={`Slide ${current}`}
-          onError={() => setBroken({ slide: current, url })}
-          className="h-full w-full object-contain"
-        />
-      )}
-      {missing && (
-        <div className="absolute inset-0 flex items-center justify-center p-4">
-          <p role="status" className="type-title text-secondary">
-            Slide {current} didn&apos;t load.
-          </p>
-        </div>
-      )}
-
-      {joinCardShowing && <JoinCard code={code} siteAddress={siteAddress} joined={joined} onStart={putCardAway} />}
-      {joinCardFading && (
-        <JoinCard code={code} siteAddress={siteAddress} joined={joined} ghost onFaded={() => setJoinCardFading(false)} />
-      )}
-
-      {/*
-       * Top right, 32 from the corner (Figma 34:851). On the slide: the corner card with
-       * address, code and joined, as in the design. Under it (alone there on the join card)
-       * the teacher's controls, always shown.
-       */}
-      <div className="absolute top-8 right-8 z-20 flex max-w-[calc(100%-64px)] flex-col items-end gap-2">
-        {!joinCardShowing && (
-          <div
-            data-testid="corner-card"
-            className="flex animate-fade-in items-center gap-6 rounded-md border border-hairline bg-surface px-6 py-4 whitespace-nowrap shadow-popover"
-          >
-            <p className="type-body-strong text-ink">{siteAddress}</p>
-            <p className="type-title text-ink">
-              <Code code={code} />
-            </p>
-            {joined !== null && <p className="type-body text-secondary">{joined} joined</p>}
-          </div>
-        )}
-        {controls}
-      </div>
-
-      {error && (
-        <p
-          role="alert"
-          className="absolute bottom-8 left-1/2 z-20 flex -translate-x-1/2 animate-pop-in items-center gap-2 rounded-md border border-hairline bg-surface px-4 py-2.5 type-small whitespace-nowrap text-ink shadow-popover"
-        >
-          <Icon name="alert" size={18} />
-          {error}
-        </p>
       )}
     </div>
   );

@@ -100,11 +100,14 @@ describe("PresentBody", () => {
     });
   });
 
-  it("shows that an ended lecture has ended, with a link back to the course", async () => {
+  it("shows that an ended class has ended, big for the room, with a quiet white button back to the course", async () => {
     maybeSingle.mockResolvedValue({ data: { ...lecture, status: "ended", code: null }, error: null });
     render(await PresentBody({ params }));
     expect(screen.queryByTestId("projector")).not.toBeInTheDocument();
-    expect(screen.getByText("This lecture has ended.")).toBeInTheDocument();
-    expect(screen.getByRole("link")).toHaveAttribute("href", "/teach/c/c1");
+    expect(screen.getByText("This class has ended.")).toHaveClass("type-projector-l");
+    const back = screen.getByRole("link", { name: "Back to the course" });
+    expect(back).toHaveAttribute("href", "/teach/c/c1");
+    expect(back.className).toContain("bg-surface");
+    expect(back.className).not.toContain("bg-ink");
   });
 });

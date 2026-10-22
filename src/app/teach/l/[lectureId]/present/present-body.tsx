@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { siteAddress } from "@/lib/siteAddress";
-import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 import { Projector } from "./Projector";
+import { ClassEnded } from "./ClassEnded";
 
 export async function PresentBody({ params }: { params: Promise<{ lectureId: string }> }) {
   const { lectureId } = await params;
@@ -25,14 +25,7 @@ export async function PresentBody({ params }: { params: Promise<{ lectureId: str
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!lecture) notFound();
 
-  if (lecture.status === "ended") {
-    return (
-      <main className="flex min-h-screen w-full animate-page-in flex-col items-center justify-center gap-6 bg-bg p-4 text-center">
-        <p className="type-title text-ink">This lecture has ended.</p>
-        <ButtonPrimaryLink href={`/teach/c/${lecture.course_id}`}>Back to the course</ButtonPrimaryLink>
-      </main>
-    );
-  }
+  if (lecture.status === "ended") return <ClassEnded courseId={lecture.course_id} />;
 
   return (
     <Projector

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Activity, StrictMode } from "react";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 // The slide write: update(...).eq(...).select(...).abortSignal(...).maybeSingle() -> single().
@@ -24,9 +25,14 @@ const rpc = vi.fn<(fn: string, args: unknown) => Promise<{ data: null; error: { 
 vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ from, rpc }) }));
 
 let liveEnded = false;
-const useLiveLecture = vi.fn((...args: [string, number?]) => ({ state: { ended: liveEnded }, args }));
+let here: number | null = null;
+const useLiveLecture = vi.fn((...args: [string, number?, { presence?: string }?]) => ({
+  state: { ended: liveEnded },
+  here,
+  args,
+}));
 vi.mock("@/lib/useLiveLecture", () => ({
-  useLiveLecture: (id: string, initial?: number) => useLiveLecture(id, initial),
+  useLiveLecture: (id: string, initial?: number, options?: { presence?: string }) => useLiveLecture(id, initial, options),
 }));
 
 const push = vi.fn();
@@ -43,7 +49,7 @@ let joined: number | null = 0;
 const useJoinedCount = vi.fn<(id: string) => number | null>(() => joined);
 vi.mock("@/lib/useJoinedCount", () => ({ useJoinedCount: (id: string) => useJoinedCount(id) }));
 
-import { Projector, joinCardKey } from "./Projector";
+import { Projector, joinCardKey, CONTINUED_MS } from "./Projector";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 
@@ -72,8 +78,9 @@ beforeEach(() => {
   read.mockImplementation(async () => ({ data: null, error: null }));
   rpc.mockImplementation(async () => ({ data: null, error: null }));
   joined = 0;
+  here = null;
   liveEnded = false;
-  window.sessionStorage.clear();
+  window.localStorage.clear();
   single.mockImplementation(async () => ({ data: { current_slide: 0 }, error: null }));
 });
 
@@ -83,43 +90,59 @@ describe("Projector", () => {
     const card = screen.getByTestId("join-card");
     expect(card).toHaveTextContent("backtrack-ebon-sigma.vercel.app");
     expect(card).toHaveTextContent("482916");
-    expect(screen.queryByTestId("corner-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("projector-code")).not.toBeInTheDocument();
     expect(screen.getByText("backtrack-ebon-sigma.vercel.app")).toBeInTheDocument();
     expect(screen.getByText("482916")).toBeInTheDocument();
   });
 
-  it("shows how many students have joined on the join card and in the corner card", () => {
+  it("shows how many students have joined on the join card and in the bar", () => {
     joined = 12;
     show();
     expect(useJoinedCount).toHaveBeenCalledWith(LECTURE);
     expect(screen.getByTestId("join-card")).toHaveTextContent("12 joined");
     press("ArrowRight");
-    expect(screen.getByTestId("corner-card")).toHaveTextContent("482916");
-    expect(screen.getByTestId("corner-card")).toHaveTextContent("12 joined");
+    expect(screen.getByTestId("projector-code")).toHaveTextContent("482916");
+    expect(screen.getByTestId("projector-count")).toHaveTextContent("12 joined");
   });
 
   it("shows no count until the first count has arrived", () => {
     joined = null;
     show();
     press("ArrowRight");
-    expect(screen.getByTestId("corner-card")).not.toHaveTextContent(/joined/);
+    expect(screen.queryByTestId("projector-count")).toBeNull();
+    expect(screen.getByTestId("projector-bar")).not.toHaveTextContent(/joined/);
   });
 
-  it("shows the lecture's current slide full viewport and letterboxed, not stretched", () => {
+  it("shows the lecture's current slide letterboxed in the space above the bar, not stretched", () => {
     show({ initialSlide: 4 });
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("src", "https://signed/4.webp");
     expect(img.className).toContain("object-contain");
     expect(useSlideImages).toHaveBeenLastCalledWith(LECTURE, 4);
+    // The slide lives in the stage; the bar is its own strip under it, never on top of it.
+    const stage = screen.getByTestId("projector-stage");
+    const bar = screen.getByTestId("projector-bar");
+    expect(stage).toContainElement(img);
+    expect(stage).not.toContainElement(bar);
+    expect(stage.className).toContain("flex-1");
+    expect(bar.className).toContain("shrink-0");
+    expect(stage.nextElementSibling).toBe(bar);
   });
 
-  it("the join card says where to go, the code and how to start", () => {
+  it("the join card says where to go and the code as one centered block, and the bar says how to start", () => {
+    joined = 7;
     show();
     const card = screen.getByTestId("join-card");
-    expect(card).toHaveTextContent("Go to");
-    expect(card).toHaveTextContent("Enter");
-    expect(card).toHaveTextContent("Press → or click to start");
     expect(card).toHaveTextContent("backtrack");
+    const block = within(card).getByTestId("join-block");
+    expect(block).toHaveTextContent("Go to backtrack-ebon-sigma.vercel.app");
+    expect(block).toHaveTextContent("482916");
+    // The joined count stays, under the code.
+    expect(block).toHaveTextContent(/482916.*7 joined/);
+    expect(block.className).toContain("items-center");
+    expect(block.className).toContain("text-center");
+    expect(card).not.toHaveTextContent("Press → or click to start");
+    expect(screen.getByTestId("projector-bar")).toHaveTextContent("Press → or click to start");
   });
 
   it("the join card fades out over the slide after the first arrow: a copy hidden from screen readers, then gone", async () => {
@@ -133,7 +156,7 @@ describe("Projector", () => {
       expect(ghost).toHaveTextContent("482916");
       await act(async () => vi.advanceTimersByTimeAsync(400));
       expect(container.querySelector('[aria-hidden="true"].pointer-events-none')).toBeNull();
-      expect(screen.getByTestId("corner-card")).toBeInTheDocument();
+      expect(screen.getByTestId("projector-code")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -147,12 +170,13 @@ describe("Projector", () => {
     expect(shownSlide()).toBe("https://signed/1.webp");
   });
 
-  it("keeps the address and code in a small corner card once the join card is gone", () => {
+  it("keeps the address and code small in the bar once the join card is gone", () => {
     show();
     press("ArrowRight");
-    const corner = screen.getByTestId("corner-card");
-    expect(corner).toHaveTextContent("backtrack-ebon-sigma.vercel.app");
-    expect(corner).toHaveTextContent("482916");
+    const code = screen.getByTestId("projector-code");
+    expect(code).toHaveTextContent("backtrack-ebon-sigma.vercel.app");
+    expect(code).toHaveTextContent("482916");
+    expect(code.className).not.toMatch(/type-title|type-number|text-\[min/);
   });
 
   it("ignores ArrowRight with Cmd held: no update and the join card stays", () => {
@@ -435,16 +459,16 @@ describe("Projector join card only on the first open", () => {
   it("does not show on a projector opened mid lecture (Resume, or back from the data view), and the first arrow advances", async () => {
     show({ initialSlide: 4 });
     expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
-    expect(screen.getByTestId("corner-card")).toHaveTextContent("482916");
+    expect(screen.getByTestId("projector-code")).toHaveTextContent("482916");
     press("ArrowRight");
     expect(update).toHaveBeenCalledWith({ current_slide: 5 });
     await waitFor(() => expect(shownSlide()).toBe("https://signed/5.webp"));
   });
 
-  it("does not show again on slide 1 once it was put away in this tab (Data and back, or a reload)", async () => {
+  it("does not show again on slide 1 once it was put away (Data and back, or a reload)", async () => {
     const first = show();
     press("ArrowRight"); // puts the card away
-    expect(window.sessionStorage.getItem(joinCardKey(LECTURE))).toBe("1");
+    expect(window.localStorage.getItem(joinCardKey(LECTURE))).toBe("1");
     first.unmount();
     // The projector page mounts fresh after Back to slides from the data view.
     show();
@@ -454,15 +478,26 @@ describe("Projector join card only on the first open", () => {
     await waitFor(() => expect(shownSlide()).toBe("https://signed/2.webp"));
   });
 
-  it("still shows on slide 1 when it was never put away (Data before starting comes back to it)", () => {
+  it("shows only on the very first open: a reload or Resume on slide 1 goes to the slide, even if the card was never put away", () => {
     const first = show();
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+    expect(window.localStorage.getItem(joinCardKey(LECTURE))).toBe("1");
     first.unmount();
     show();
-    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute("src", "https://signed/1.webp");
+    // Still on the first slide: nothing to continue from.
+    expect(screen.queryByTestId("continued")).toBeNull();
+  });
+
+  it("is remembered for the browser, not just the tab (Resume from a new tab)", () => {
+    window.localStorage.setItem(joinCardKey(LECTURE), "1");
+    show();
+    expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
   });
 
   it("is per lecture", () => {
-    window.sessionStorage.setItem(joinCardKey("22222222-2222-2222-2222-222222222222"), "1");
+    window.localStorage.setItem(joinCardKey("22222222-2222-2222-2222-222222222222"), "1");
     show();
     expect(screen.getByTestId("join-card")).toBeInTheDocument();
   });
@@ -487,16 +522,20 @@ describe("Projector join card only on the first open", () => {
 });
 
 describe("Projector after the lecture ended somewhere else", () => {
-  it("follows the lecture's status with the shared live hook", () => {
+  it("follows the lecture's status with the shared live hook, counting (not joining) who is here", () => {
     show({ initialSlide: 3 });
-    expect(useLiveLecture).toHaveBeenCalledWith(LECTURE, 3);
+    expect(useLiveLecture).toHaveBeenCalledWith(LECTURE, 3, { presence: "count" });
   });
 
   it("shows the ended state when the hook hears the end, and keys do nothing", () => {
     liveEnded = true;
     show({ initialSlide: 3 });
-    expect(screen.getByText("This lecture has ended.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to the course" })).toHaveAttribute("href", "/teach/c/c1");
+    expect(screen.getByText("This class has ended.")).toHaveClass("type-projector-l");
+    const back = screen.getByRole("link", { name: "Back to the course" });
+    expect(back).toHaveAttribute("href", "/teach/c/c1");
+    // A quiet white button: the line is for the room, the button for the teacher.
+    expect(back.className).toContain("bg-surface");
+    expect(back.className).not.toContain("bg-ink");
     expect(screen.queryByText("482916")).not.toBeInTheDocument();
     press("ArrowRight");
     expect(update).not.toHaveBeenCalled();
@@ -508,7 +547,7 @@ describe("Projector after the lecture ended somewhere else", () => {
     single.mockResolvedValue({ data: null, error: null });
     show({ initialSlide: 3 });
     press("ArrowRight");
-    expect(await screen.findByText("This lecture has ended.")).toBeInTheDocument();
+    expect(await screen.findByText("This class has ended.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     press("ArrowRight");
     expect(update).toHaveBeenCalledTimes(1);
@@ -518,17 +557,17 @@ describe("Projector after the lecture ended somewhere else", () => {
 describe("Projector controls row", () => {
   const row = () => screen.getByTestId("projector-controls");
 
-  it("keeps the corner card to the address, code and joined, with the controls in their own row", () => {
+  it("puts the address, code and count in the bar, with the controls in their own group", () => {
     joined = 38;
     show();
     press("ArrowRight");
-    const corner = screen.getByTestId("corner-card");
-    expect(corner).toHaveTextContent("backtrack-ebon-sigma.vercel.app");
-    expect(corner).toHaveTextContent("482916");
-    expect(corner).toHaveTextContent("38 joined");
-    expect(within(corner).queryByRole("link", { name: "Data" })).toBeNull();
-    expect(within(corner).queryByRole("button", { name: "End class" })).toBeNull();
-    expect(within(corner).queryByRole("button", { name: "Fullscreen" })).toBeNull();
+    const code = screen.getByTestId("projector-code");
+    expect(code).toHaveTextContent("backtrack-ebon-sigma.vercel.app");
+    expect(code).toHaveTextContent("482916");
+    expect(screen.getByTestId("projector-count")).toHaveTextContent("38 joined");
+    expect(within(code).queryByRole("link", { name: "Data" })).toBeNull();
+    expect(within(code).queryByRole("button", { name: "End class" })).toBeNull();
+    expect(screen.getByTestId("projector-bar")).toContainElement(row());
     expect(within(row()).getByRole("link", { name: "Data" })).toHaveAttribute("href", `/teach/l/${LECTURE}/live`);
     expect(within(row()).getByRole("button", { name: "End class" })).toBeInTheDocument();
     expect(within(row()).getByRole("button", { name: "Fullscreen" })).toBeInTheDocument();
@@ -562,36 +601,14 @@ describe("Projector controls row", () => {
   });
 });
 
-describe("Projector join card comes back with Show code", () => {
-  it("Show code brings the big card back; the first arrow puts it away again without moving the slide", async () => {
-    show({ initialSlide: 4 });
-    expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show code" }));
-    expect(screen.getByTestId("join-card")).toHaveTextContent("482916");
-    expect(screen.queryByTestId("corner-card")).not.toBeInTheDocument();
-    press("ArrowRight");
-    expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
-    expect(update).not.toHaveBeenCalled();
-    press("ArrowRight");
-    expect(update).toHaveBeenCalledWith({ current_slide: 5 });
-    await waitFor(() => expect(shownSlide()).toBe("https://signed/5.webp"));
-  });
-
-  it("works in a tab where the card was already put away", () => {
-    window.sessionStorage.setItem(joinCardKey(LECTURE), "1");
-    show();
-    expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show code" }));
-    expect(screen.getByTestId("join-card")).toBeInTheDocument();
-  });
-
+describe("Projector join card click", () => {
   it("a click on the join card starts too, without moving the slide", () => {
     show();
     fireEvent.click(screen.getByTestId("join-card"));
     expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
-    expect(window.sessionStorage.getItem(joinCardKey(LECTURE))).toBe("1");
-    expect(screen.getByTestId("corner-card")).toBeInTheDocument();
+    expect(window.localStorage.getItem(joinCardKey(LECTURE))).toBe("1");
+    expect(screen.getByTestId("projector-code")).toBeInTheDocument();
   });
 
   it("a click on the controls over the card does not put it away", () => {
@@ -602,8 +619,12 @@ describe("Projector join card comes back with Show code", () => {
 });
 
 describe("Projector End class", () => {
-  const endClass = () => within(screen.getByTestId("projector-controls")).getByRole("button", { name: "End class" });
-  const dialog = () => screen.queryByRole("dialog", { name: "End the lecture?" });
+  // The bar's End class (the one that opens the confirm), not the confirm's own.
+  const endClass = () =>
+    within(screen.getByTestId("projector-controls"))
+      .getAllByRole("button", { name: "End class" })
+      .find((b) => b.hasAttribute("aria-expanded"))!;
+  const dialog = () => screen.queryByRole("dialog", { name: "End class?" });
   const open = () => {
     show({ initialSlide: 3 });
     fireEvent.click(endClass());
@@ -615,6 +636,11 @@ describe("Projector End class", () => {
     expect(dialog()).toHaveTextContent("The code stops working and students land on My spots.");
     expect(endClass()).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Keep going" })).toHaveFocus();
+    // Same words as the button: End class, not End lecture. Keep going is a white button.
+    expect(within(dialog()!).getByRole("button", { name: "End class" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep going" }).className).toContain("bg-surface");
+    expect(screen.getByRole("button", { name: "Keep going" }).className).not.toContain("underline");
+    expect(screen.queryByText(/lecture/i)).toBeNull();
     expect(push).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
   });
@@ -722,7 +748,7 @@ describe("Projector End class", () => {
   it("End class in it ends the lecture and shows the ended state with the way back to the course", async () => {
     open();
     fireEvent.click(within(dialog()!).getByRole("button", { name: "End class" }));
-    expect(await screen.findByText("This lecture has ended.")).toBeInTheDocument();
+    expect(await screen.findByText("This class has ended.")).toBeInTheDocument();
     expect(rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
     expect(screen.getByRole("link", { name: "Back to the course" })).toHaveAttribute("href", "/teach/c/c1");
     expect(screen.queryByText("482916")).not.toBeInTheDocument();
@@ -735,13 +761,13 @@ describe("Projector End class", () => {
     rpc.mockResolvedValueOnce({ data: null, error: { message: "nope" } });
     open();
     fireEvent.click(within(dialog()!).getByRole("button", { name: "End class" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not end the lecture.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not end the class.");
     expect(dialog()).not.toBeInTheDocument();
     expect(endClass()).toHaveFocus();
     expect(shownSlide()).toBe("https://signed/3.webp");
   });
 
-  it("sits in the z-20 corner box with no animated ancestor, so nothing covers it (see f27789f)", () => {
+  it("sits in the z-20 bar with no animated ancestor, so nothing covers it (see f27789f)", () => {
     open();
     const box = dialog()!;
     expect(box.className).toContain("z-30");
@@ -845,7 +871,7 @@ describe("Projector slide that has no image", () => {
     single.mockImplementation(async () => ({ data: { current_slide: 0 }, error: null }));
     show({ initialSlide: 4 });
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Slide 4 didn't load.");
+    expect(screen.getByText("Slide 4 didn't load.")).toHaveAttribute("role", "status");
     press("ArrowRight");
     await waitFor(() => expect(shownSlide()).toBe("https://signed/5.webp"));
     expect(screen.queryByText(/didn't load/)).not.toBeInTheDocument();
@@ -861,7 +887,7 @@ describe("Projector slide that has no image", () => {
   it("tries the image again when the teacher comes back to the slide (a one-off failure heals)", async () => {
     show({ initialSlide: 4 });
     fireEvent.error(screen.getByRole("img"));
-    expect(screen.getByRole("status")).toHaveTextContent("Slide 4 didn't load.");
+    expect(screen.getByText("Slide 4 didn't load.")).toHaveAttribute("role", "status");
     press("ArrowLeft");
     await waitFor(() => expect(shownSlide()).toBe("https://signed/3.webp"));
     press("ArrowRight");
@@ -874,8 +900,226 @@ describe("Projector slide that has no image", () => {
     show({ initialSlide: 4 });
     fireEvent.error(screen.getByRole("img"));
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Slide 4 didn't load.");
+    expect(screen.getByText("Slide 4 didn't load.")).toHaveAttribute("role", "status");
     press("ArrowLeft");
     await waitFor(() => expect(shownSlide()).toBe("https://signed/3.webp"));
+  });
+});
+
+describe("Projector bar: who is here", () => {
+  const count = () => screen.getByTestId("projector-count");
+
+  it("shows N here · M joined, so the teacher sees who left early", () => {
+    joined = 38;
+    here = 31;
+    show({ initialSlide: 2 });
+    expect(count()).toHaveTextContent("31 here · 38 joined");
+  });
+
+  it("shows only joined until the here count is known (or while it is unknown)", () => {
+    joined = 38;
+    here = null;
+    show({ initialSlide: 2 });
+    expect(count()).toHaveTextContent("38 joined");
+    expect(count()).not.toHaveTextContent("here");
+  });
+
+  it("never says more are here than joined (one student with two tabs)", () => {
+    joined = 3;
+    here = 5;
+    show({ initialSlide: 2 });
+    expect(count()).toHaveTextContent("3 here · 3 joined");
+  });
+
+  it("leaves the count to the big join card while it is up", () => {
+    joined = 12;
+    here = 9;
+    show();
+    expect(screen.queryByTestId("projector-count")).toBeNull();
+    expect(screen.getByTestId("join-card")).toHaveTextContent("12 joined");
+  });
+
+  it("is small quiet text, not the old corner card", () => {
+    joined = 4;
+    show({ initialSlide: 2 });
+    const bar = screen.getByTestId("projector-bar");
+    expect(bar.className).toContain("type-small");
+    expect(bar.className).toContain("text-secondary");
+    expect(screen.queryByTestId("corner-card")).toBeNull();
+  });
+});
+
+describe("Projector Show code", () => {
+  const codeDialog = () => screen.queryByRole("dialog", { name: /Go to/ });
+  const showCode = () => screen.getByRole("button", { name: "Show code" });
+  const openCode = () => {
+    show({ initialSlide: 4 });
+    fireEvent.click(showCode());
+  };
+
+  it("opens a dialog over the slide with the address and the code, big, and a Close button; the join card stays away", () => {
+    openCode();
+    const d = codeDialog()!;
+    expect(d).toHaveAttribute("aria-modal", "true");
+    expect(d).toHaveTextContent("Go to backtrack-ebon-sigma.vercel.app");
+    expect(d).toHaveTextContent("482916");
+    expect(within(d).getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(screen.queryByTestId("join-card")).toBeNull();
+    // The slide stays where it was, under the dialog.
+    expect(shownSlide()).toBe("https://signed/4.webp");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("Close closes it and hands focus back to Show code", () => {
+    openCode();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(codeDialog()).toBeNull();
+    expect(showCode()).toHaveFocus();
+  });
+
+  it("Esc closes it", () => {
+    openCode();
+    press("Escape");
+    expect(codeDialog()).toBeNull();
+    expect(showCode()).toHaveFocus();
+  });
+
+  it("a press outside it closes it; a press inside does not", () => {
+    openCode();
+    fireEvent.pointerDown(codeDialog()!);
+    expect(codeDialog()).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByTestId("show-code-backdrop"));
+    expect(codeDialog()).toBeNull();
+  });
+
+  it("a slide key puts it away without moving the slide; the next one moves", async () => {
+    openCode();
+    press("ArrowRight");
+    expect(codeDialog()).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+    press("ArrowRight");
+    expect(update).toHaveBeenCalledWith({ current_slide: 5 });
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/5.webp"));
+  });
+
+  it("Tab stays on its Close button", () => {
+    openCode();
+    const close = screen.getByRole("button", { name: "Close" });
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(close).toHaveFocus();
+  });
+
+  it("closes when the page leaves fullscreen, since the browser took the Esc", () => {
+    openCode();
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => null });
+    act(() => {
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    expect(codeDialog()).toBeNull();
+  });
+});
+
+describe("Projector reopened mid class", () => {
+  it("says Continued on slide N for a few seconds when it opens past the first slide", async () => {
+    vi.useFakeTimers();
+    try {
+      show({ initialSlide: 6 });
+      expect(screen.queryByTestId("join-card")).toBeNull();
+      expect(screen.getByTestId("continued")).toHaveTextContent("Continued on slide 6");
+      expect(screen.getByTestId("continued").closest('[role="status"]')).not.toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(CONTINUED_MS));
+      expect(screen.queryByTestId("continued")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the toast as soon as the slide moves", async () => {
+    single.mockResolvedValue({ data: { current_slide: 7 }, error: null });
+    show({ initialSlide: 6 });
+    press("ArrowRight");
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/7.webp"));
+    expect(screen.queryByTestId("continued")).toBeNull();
+  });
+
+  it("keeps the join card on the first open under a development double run (Strict Mode)", async () => {
+    render(
+      <StrictMode>
+        <Projector lectureId={LECTURE} code="482916" siteAddress="backtrack.courses" initialSlide={1} slideCount={10} />
+      </StrictMode>,
+    );
+    await act(async () => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+  });
+
+  it("says nothing on the first open of a new lecture", () => {
+    show();
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("continued")).toBeNull();
+  });
+
+  // Next keeps a visited page alive but hidden (React Activity) and shows it again on Back or
+  // Back to slides, with its old state. It must come back on the slide, never on the join card.
+  it("comes back from a hidden page (Data and Back) on the slide it was on, not on the join card", async () => {
+    vi.useFakeTimers();
+    try {
+      const props = { lectureId: LECTURE, code: "482916", siteAddress: "backtrack.courses", slideCount: 10, courseId: "c1" };
+      const view = render(
+        <Activity mode="visible">
+          <Projector {...props} initialSlide={1} />
+        </Activity>,
+      );
+      expect(screen.getByTestId("join-card")).toBeInTheDocument();
+      // The teacher goes to Data with the join card still up.
+      view.rerender(
+        <Activity mode="hidden">
+          <Projector {...props} initialSlide={1} />
+        </Activity>,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+      view.rerender(
+        <Activity mode="visible">
+          <Projector {...props} initialSlide={1} />
+        </Activity>,
+      );
+      expect(screen.queryByTestId("join-card")).toBeNull();
+      expect(screen.getByRole("img")).toHaveAttribute("src", "https://signed/1.webp");
+      // Slide keys work again (the page's listeners came back with it).
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(update).toHaveBeenCalledWith({ current_slide: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("comes back from a hidden page past slide 1 with Continued on slide N, and its dialogs closed", async () => {
+    vi.useFakeTimers();
+    try {
+      const props = { lectureId: LECTURE, code: "482916", siteAddress: "backtrack.courses", slideCount: 10, courseId: "c1" };
+      const view = render(
+        <Activity mode="visible">
+          <Projector {...props} initialSlide={5} />
+        </Activity>,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(CONTINUED_MS));
+      expect(screen.queryByTestId("continued")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Show code" }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      view.rerender(
+        <Activity mode="hidden">
+          <Projector {...props} initialSlide={5} />
+        </Activity>,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+      view.rerender(
+        <Activity mode="visible">
+          <Projector {...props} initialSlide={5} />
+        </Activity>,
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByTestId("continued")).toHaveTextContent("Continued on slide 5");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
