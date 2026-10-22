@@ -80,3 +80,36 @@ export function highlightsBySlide(taps: TapRow[]): Map<number, Rect[]> {
   }
   return out;
 }
+
+/**
+ * The slides whose bar is red: every slide whose people count is one of the three highest
+ * different counts above zero. Ties are all red, so with counts 5, 2, 2, 2, 1, 0 every slide
+ * with 5, 2 or 1 is red and the 0 is not (Marko: "why is 2 highlighted in red when there is a
+ * bunch of 2 lost"). A slide nobody is lost on is never red.
+ */
+export function redSlides(rows: SlideStat[]): Set<number> {
+  const top = [...new Set(rows.map((r) => r.students).filter((n) => n > 0))].sort((a, b) => b - a).slice(0, 3);
+  return new Set(rows.filter((r) => top.includes(r.students)).map((r) => r.slide_number));
+}
+
+/**
+ * How many different students marked the spot (a valid highlight box) on each slide, from
+ * counted rows only. A slide nobody marked has no entry.
+ */
+export function marksBySlide(taps: TapRow[]): Map<number, number> {
+  const people = new Map<number, Set<string>>();
+  for (const t of taps) {
+    if (!counts(t) || !isRect({ x: t.hl_x, y: t.hl_y, w: t.hl_w, h: t.hl_h })) continue;
+    const set = people.get(t.slide_number) ?? new Set<string>();
+    set.add(t.anon_id);
+    people.set(t.slide_number, set);
+  }
+  return new Map(Array.from(people, ([n, set]) => [n, set.size]));
+}
+
+/** How many different students made at least one counted lost tap on slides 1 to slideCount. */
+export function studentsWhoTapped(taps: TapRow[], slideCount: number): number {
+  const people = new Set<string>();
+  for (const t of taps) if (counts(t) && t.slide_number >= 1 && t.slide_number <= slideCount) people.add(t.anon_id);
+  return people.size;
+}

@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { topThree, slideStats, notesBySlide, highlightsBySlide, type TapRow } from "./stats";
+import {
+  topThree,
+  slideStats,
+  notesBySlide,
+  highlightsBySlide,
+  redSlides,
+  marksBySlide,
+  studentsWhoTapped,
+  type TapRow,
+} from "./stats";
 
 const stat = (students: number[]) => students.map((s, i) => ({ slide_number: i + 1, taps: s, students: s }));
 
@@ -140,5 +149,85 @@ describe("highlightsBySlide", () => {
       tap({ id: "e", hl_x: 0.9, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 }),
     ];
     expect(highlightsBySlide(rows).size).toBe(0);
+  });
+});
+
+describe("redSlides", () => {
+  it("is every slide whose count is one of the three highest different counts, ties all red", () => {
+    // Counts 5, 2, 2, 2, 1, 0: the top three different counts are 5, 2 and 1.
+    expect([...redSlides(stat([5, 2, 2, 2, 1, 0]))].sort()).toEqual([1, 2, 3, 4, 5]);
+    // 4 different counts: the lowest one (1) is gray.
+    expect([...redSlides(stat([1, 4, 2, 3, 1]))].sort()).toEqual([2, 3, 4]);
+  });
+
+  it("never makes a slide nobody is lost on red", () => {
+    expect([...redSlides(stat([0, 0, 2, 0]))]).toEqual([3]);
+    expect(redSlides(stat([0, 0, 0])).size).toBe(0);
+    expect(redSlides([]).size).toBe(0);
+  });
+
+  it("counts people, not taps", () => {
+    const rows = [
+      { slide_number: 1, taps: 9, students: 1 },
+      { slide_number: 2, taps: 2, students: 2 },
+      { slide_number: 3, taps: 3, students: 3 },
+      { slide_number: 4, taps: 4, students: 4 },
+    ];
+    expect([...redSlides(rows)].sort()).toEqual([2, 3, 4]);
+  });
+});
+
+describe("marksBySlide", () => {
+  const tap = (o: Partial<TapRow>): TapRow => ({
+    id: Math.random().toString(36),
+    anon_id: "s1",
+    kind: "lost",
+    slide_number: 1,
+    note: null,
+    undone: false,
+    tapped_at: "2026-10-26T10:00:00Z",
+    hl_x: 0.1,
+    hl_y: 0.1,
+    hl_w: 0.2,
+    hl_h: 0.2,
+    ...o,
+  });
+
+  it("counts different students with a valid box on each slide, from counted rows only", () => {
+    const m = marksBySlide([
+      tap({ anon_id: "a" }),
+      tap({ anon_id: "a" }),
+      tap({ anon_id: "b" }),
+      tap({ anon_id: "c", slide_number: 2 }),
+      tap({ anon_id: "d", slide_number: 2, undone: true }),
+      tap({ anon_id: "e", slide_number: 2, kind: "save" }),
+      tap({ anon_id: "f", slide_number: 3, hl_x: null, hl_y: null, hl_w: null, hl_h: null }),
+      tap({ anon_id: "g", slide_number: 3, hl_w: 2 }),
+    ]);
+    expect(m.get(1)).toBe(2);
+    expect(m.get(2)).toBe(1);
+    expect(m.has(3)).toBe(false);
+  });
+});
+
+describe("studentsWhoTapped", () => {
+  it("counts different students with a counted lost tap on a slide of the lecture", () => {
+    const t = (anon_id: string, o: Partial<TapRow> = {}): TapRow => ({
+      id: Math.random().toString(36),
+      anon_id,
+      kind: "lost",
+      slide_number: 1,
+      note: null,
+      undone: false,
+      tapped_at: "2026-10-26T10:00:00Z",
+      ...o,
+    });
+    expect(
+      studentsWhoTapped(
+        [t("a"), t("a", { slide_number: 2 }), t("b"), t("c", { undone: true }), t("d", { kind: "save" }), t("e", { slide_number: 9 })],
+        5,
+      ),
+    ).toBe(2);
+    expect(studentsWhoTapped([], 5)).toBe(0);
   });
 });
