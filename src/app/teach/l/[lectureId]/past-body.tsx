@@ -97,13 +97,13 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
         courseId={lecture.course_id}
         teacherId={user.id}
       >
-        {/* The heading of the past lecture (Figma 34:1117): name to rename, when it ran, export, delete. */}
+        {/* The heading of the past lecture (Figma 34:1117): the name (type to rename), when it ran, export, delete. */}
         <div className="flex animate-page-in flex-wrap items-center gap-x-8 gap-y-3">
-          <div className="flex min-w-0 flex-col gap-1.5">
+          {/* The name is a field that looks like the heading: click into it and type. */}
+          <div className="flex min-w-0 flex-1 basis-80 flex-col gap-1">
             <RenameForm lectureId={lecture.id} initialName={lecture.name} />
             <p className="type-small text-secondary">{when}</p>
           </div>
-          <div className="min-w-0 flex-1" />
           {/* A plain link, not next/link: it downloads a file and must not be prefetched as a page. */}
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
             <a href={`/teach/l/${lecture.id}/export`} download className={buttonSecondaryClass}>

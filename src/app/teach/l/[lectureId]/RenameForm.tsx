@@ -4,63 +4,59 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Icon } from "@/components/Icon";
-import { rowPressClass, textLinkClass } from "../../ui";
 
 const NAME_MAX = 120;
 
-// Renames a lecture. Runs as the signed in teacher, so row level security
-// (lectures_update_own) decides whether the update is allowed.
-// The past lecture heading (Figma 34:1117): the name with a pencil; a click turns it into a field.
-// Enter (or Rename) saves, Esc (or Cancel) leaves it as it was.
+/** How long "Renamed." stays before the line clears. */
+const STATUS_MS = 4000;
+
+/**
+ * The past lecture's name, always editable in place (Marko, 2:05 PM: "I just want to be able to
+ * type"): a text field that looks like the heading (Lecture L) until it is pointed at or clicked,
+ * then shows its field border. Enter or leaving the field saves, Esc puts the saved name back.
+ * "Renamed." shows quietly for a few seconds. The update runs as the signed in teacher, so row
+ * level security (lectures_update_own, and the 0014 column grant on name) decides if it is allowed.
+ * The field sits inside the h1, so the heading is read as the lecture's name.
+ */
 export function RenameForm({ lectureId, initialName }: { lectureId: string; initialName: string }) {
   const router = useRouter();
   const [current, setCurrent] = useState(initialName);
-  const [editing, setEditing] = useState(false);
   const [name, setName] = useState(initialName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const nameButton = useRef<HTMLButtonElement>(null);
-  const returnFocus = useRef(false);
+  const busy = useRef(false);
+  const field = useRef<HTMLInputElement>(null);
 
-  // A refresh after a rename brings the new name in from the server.
+  // A refresh brings the name in from the server; it replaces the field only when nothing is typed there.
   const [seenInitial, setSeenInitial] = useState(initialName);
   if (initialName !== seenInitial) {
     setSeenInitial(initialName);
-    if (!editing) setCurrent(initialName);
+    setCurrent(initialName);
+    if (name === current) setName(initialName);
   }
 
-  // Back on the name after closing the field, so the keyboard does not lose its place.
+  // "Renamed." clears after a few seconds.
   useEffect(() => {
-    if (!editing && returnFocus.current) {
-      returnFocus.current = false;
-      nameButton.current?.focus();
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(false), STATUS_MS);
+    return () => clearTimeout(t);
+  }, [saved]);
+
+  async function commit() {
+    if (busy.current) return;
+    const trimmed = name.trim();
+    if (trimmed === current) {
+      // Nothing new (maybe only spaces around it): show the saved name again.
+      if (name !== current) setName(current);
+      setError(null);
+      return;
     }
-  }, [editing]);
-
-  const trimmed = name.trim();
-
-  function open() {
-    setName(current);
-    setError(null);
-    setSaved(false);
-    setEditing(true);
-  }
-
-  function close() {
-    returnFocus.current = true;
-    setEditing(false);
-    setError(null);
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (saving) return;
-    setSaved(false);
     if (trimmed.length < 1 || trimmed.length > NAME_MAX) {
       setError("The name must be 1 to 120 characters.");
       return;
     }
+    busy.current = true;
     setError(null);
     setSaving(true);
     try {
@@ -74,85 +70,71 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
       setCurrent(trimmed);
       setName(trimmed);
       setSaved(true);
-      returnFocus.current = true;
-      setEditing(false);
       router.refresh();
     } catch {
       setError("Could not rename the lecture.");
     } finally {
+      busy.current = false;
       setSaving(false);
     }
   }
 
-  if (!editing) {
-    return (
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <h1 className="min-w-0">
-          <button
-            ref={nameButton}
-            type="button"
-            onClick={open}
-            className={`group flex min-w-0 items-center gap-2.5 rounded-sm text-left ${rowPressClass}`}
-          >
-            <span className="min-w-0 type-lecture-l break-words text-ink">{current}</span>{" "}
-            <Icon
-              name="edit"
-              size={18}
-              className="text-secondary transition-colors duration-(--dur-fast) ease-out group-hover:text-ink"
-            />
-            {/* Read as "<name> Rename". */}
-            <span className="sr-only"> Rename</span>
-          </button>
-        </h1>
-        {saved && (
-          <p role="status" className="animate-fade-in type-small text-secondary">
-            Renamed.
-          </p>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <form onSubmit={(e) => void submit(e)} className="flex w-full max-w-[640px] animate-pop-in flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+    <form
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        void commit();
+      }}
+      className="flex w-full max-w-[640px] min-w-0 flex-col gap-1"
+    >
+      <div className="flex min-w-0 items-center gap-3">
         <label htmlFor="rename-lecture" className="sr-only">
           Lecture name
         </label>
-        <input
-          id="rename-lecture"
-          value={name}
-          maxLength={NAME_MAX}
-          autoFocus
-          onChange={(e) => {
-            setName(e.target.value);
-            setError(null);
-            setSaved(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              close();
+        <h1 className="min-w-0 flex-1">
+          <input
+            ref={field}
+            id="rename-lecture"
+            value={name}
+            maxLength={NAME_MAX}
+            spellCheck={false}
+            autoComplete="off"
+            enterKeyHint="done"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? "rename-lecture-error" : undefined}
+            aria-busy={saving || undefined}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError(null);
+              setSaved(false);
+            }}
+            onBlur={() => void commit()}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setName(current);
+                setError(null);
+              }
+            }}
+            className={
+              // The heading's look and place: the 1 px border and the 8 px padding sit outside the
+              // text (negative margin), so the name lines up with the line under it.
+              "-mx-2 h-11 w-[calc(100%+16px)] min-w-0 truncate rounded-md border border-transparent bg-transparent px-2 type-lecture-l text-ink outline-hidden " +
+              "transition-[border-color,background-color,box-shadow] duration-(--dur-fast) ease-out " +
+              "hover:border-hairline focus:border-ink focus:bg-surface focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)] " +
+              "aria-invalid:border-ink"
             }
-          }}
-          className={
-            "h-12 min-w-0 flex-1 basis-64 rounded-md border border-hairline bg-surface px-4 type-lecture-l text-ink outline-hidden " +
-            "transition-[border-color,box-shadow] duration-(--dur-fast) ease-out focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)]"
-          }
-        />
-        <button
-          type="submit"
-          disabled={saving || trimmed === current.trim()}
-          className="press focus-ring inline-flex h-10 shrink-0 items-center rounded-md bg-ink px-4 type-small-strong text-surface hover:bg-ink-hover disabled:cursor-default disabled:bg-strip disabled:hover:bg-strip"
-        >
-          Rename
-        </button>
-        <button type="button" onClick={close} className={textLinkClass}>
-          Cancel
-        </button>
+          />
+        </h1>
+        {/* Always in the page, so screen readers announce the text when it appears. */}
+        {/* pl-2: the field's border reaches 8 px past its text, so this keeps clear of it. */}
+        <p role="status" className="shrink-0 pl-2 type-small text-secondary empty:sr-only">
+          {saved ? "Renamed." : ""}
+        </p>
       </div>
       {error && (
-        <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
+        <p id="rename-lecture-error" role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
           <Icon name="alert" size={18} />
           {error}
         </p>
