@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
 
-type Query = { table: string; opts?: unknown; range: [number, number] | null; eqs: [string, unknown][] };
+type Query = { table: string; cols?: string; opts?: unknown; range: [number, number] | null; eqs: [string, unknown][] };
 
 const h = vi.hoisted(() => ({
   handlers: {} as Record<string, (payload: unknown) => void>,
@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   rpc: vi.fn(),
   push: vi.fn(),
   removeChannel: vi.fn(),
+  slideUrls: vi.fn(),
 }));
 
 const channel = {
@@ -30,7 +31,8 @@ const channel = {
 function from(table: string) {
   const q: Query = { table, range: null, eqs: [] };
   const b = {
-    select(_cols: string, opts?: unknown) {
+    select(cols: string, opts?: unknown) {
+      q.cols = cols;
       q.opts = opts;
       return b;
     },
@@ -65,6 +67,9 @@ vi.mock("@/lib/supabase/browser", () => ({
   }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push }) }));
+vi.mock("@/lib/useSlideUrls", () => ({
+  useSlideUrls: (lectureId: string, wanted: number[]) => h.slideUrls(lectureId, wanted),
+}));
 
 import { LectureData } from "./LectureData";
 
@@ -114,6 +119,7 @@ beforeEach(() => {
   h.participantsQuery.mockReset().mockResolvedValue({ count: 7, error: null });
   h.lectureQuery.mockReset().mockResolvedValue({ data: { current_slide: 3, status: "live" }, error: null });
   h.rpc.mockReset().mockResolvedValue({ data: null, error: null });
+  h.slideUrls.mockReset().mockReturnValue({});
 });
 
 describe("LectureData live", () => {
@@ -625,5 +631,119 @@ describe("LectureData past", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("LectureData highlights", () => {
+  const HL = (x: number, y = 0.2) => ({ hl_x: x, hl_y: y, hl_w: 0.3, hl_h: 0.4 });
+  const boxesOn = (n: number) => Array.from(slideRow(n).querySelectorAll<HTMLElement>("[data-highlight-box]"));
+  const withBoxes = () =>
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 2, ...HL(0.1) }),
+        row("b", { slide_number: 2, anon_id: "s2", ...HL(0.2) }),
+        row("c", { slide_number: 4, anon_id: "s3" }),
+        row("d", { slide_number: 5, ...HL(0.5) }),
+      ],
+      error: null,
+    });
+
+  it("reads the four hl_ columns with the taps", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect((h.tapsQuery.mock.calls[0][0] as Query).cols).toMatch(/hl_x, hl_y, hl_w, hl_h/);
+  });
+
+  it("draws every highlight of a slide as a translucent box over a small copy of the slide", async () => {
+    withBoxes();
+    h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp", 5: "https://signed/5.webp" });
+    renderLive();
+    await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
+    const copy = within(slideRow(2)).getByRole("img");
+    expect(copy).toHaveAttribute("src", "https://signed/2.webp");
+    expect(copy.parentElement?.contains(boxesOn(2)[0])).toBe(true);
+    expect(boxesOn(2)[0].style.left).toBe("10%");
+    expect(boxesOn(2)[1].style.left).toBe("20%");
+    expect(boxesOn(2)[0].className).toMatch(/\/\d+/);
+    expect(boxesOn(5)).toHaveLength(1);
+    expect(within(slideRow(5)).getByRole("img")).toHaveAttribute("src", "https://signed/5.webp");
+  });
+
+  it("shows nothing extra on a slide with taps but no highlight, and asks for images of highlighted slides only", async () => {
+    withBoxes();
+    renderLive();
+    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
+    expect(within(slideRow(4)).queryByRole("img")).not.toBeInTheDocument();
+    expect(boxesOn(4)).toHaveLength(0);
+    expect(boxesOn(1)).toHaveLength(0);
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 5]);
+  });
+
+  it("asks for no images at all when nobody highlighted, so a seeded lecture with missing images is never asked", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, []);
+    expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("draws the boxes on a blank slide until the image arrives", async () => {
+    withBoxes();
+    renderLive();
+    await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
+    expect(within(slideRow(2)).queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("adds a box from a Realtime insert and asks for that slide's image", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    insert(row("n", { slide_number: 3, anon_id: "s9", ...HL(0.4) }));
+    await waitFor(() => expect(boxesOn(3)).toHaveLength(1));
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [3]);
+  });
+
+  it("moves a box when the student changes their highlight (a Realtime update)", async () => {
+    withBoxes();
+    renderLive();
+    await waitFor(() => expect(boxesOn(5)).toHaveLength(1));
+    expect(boxesOn(5)[0].style.left).toBe("50%");
+    update(row("d", { slide_number: 5, ...HL(0.6, 0.1) }));
+    await waitFor(() => expect(boxesOn(5)[0].style.left).toBe("60%"));
+    expect(boxesOn(5)[0].style.top).toBe("10%");
+    expect(boxesOn(5)).toHaveLength(1);
+  });
+
+  it("takes a box away when its tap is undone", async () => {
+    withBoxes();
+    renderLive();
+    await waitFor(() => expect(boxesOn(5)).toHaveLength(1));
+    update(row("d", { slide_number: 5, undone: true, ...HL(0.5) }));
+    await waitFor(() => expect(boxesOn(5)).toHaveLength(0));
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2]);
+  });
+
+  it("never draws a save", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    insert(row("s", { kind: "save", slide_number: 3, ...HL(0.4) }));
+    await act(async () => {});
+    expect(boxesOn(3)).toHaveLength(0);
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, []);
+  });
+
+  it("shows the highlights of a lecture that has ended", async () => {
+    withBoxes();
+    renderLive({ mode: "past" });
+    await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 5]);
+  });
+
+  it("ignores a box that is not a valid rectangle", async () => {
+    h.tapsQuery.mockResolvedValue({
+      data: [row("a", { slide_number: 2, hl_x: 0.9, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 }), row("b", { slide_number: 2, hl_x: 0.1, hl_y: null, hl_w: null, hl_h: null })],
+      error: null,
+    });
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("1 person, 2 taps"));
+    expect(boxesOn(2)).toHaveLength(0);
   });
 });

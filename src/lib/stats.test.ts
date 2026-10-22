@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { topThree, slideStats, notesBySlide, type TapRow } from "./stats";
+import { topThree, slideStats, notesBySlide, highlightsBySlide, type TapRow } from "./stats";
 
 const stat = (students: number[]) => students.map((s, i) => ({ slide_number: i + 1, taps: s, students: s }));
 
@@ -107,5 +107,35 @@ describe("notesBySlide", () => {
       tap({ id: "d", note: "save note", kind: "save" }),
     ];
     expect(notesBySlide(rows).size).toBe(0);
+  });
+});
+
+describe("highlightsBySlide", () => {
+  const box = (x: number) => ({ hl_x: x, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 });
+
+  it("lists the boxes of live lost rows per slide, in tap order", () => {
+    const rows = [
+      tap({ id: "b", slide_number: 2, tapped_at: "2026-10-26T10:02:00Z", ...box(0.5) }),
+      tap({ id: "a", slide_number: 2, tapped_at: "2026-10-26T10:01:00Z", ...box(0.1) }),
+      tap({ id: "c", slide_number: 4, ...box(0.3) }),
+    ];
+    const out = highlightsBySlide(rows);
+    expect(out.get(2)).toEqual([
+      { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+      { x: 0.5, y: 0.2, w: 0.3, h: 0.4 },
+    ]);
+    expect(out.get(4)).toEqual([{ x: 0.3, y: 0.2, w: 0.3, h: 0.4 }]);
+    expect(out.get(1)).toBeUndefined();
+  });
+
+  it("skips undone rows, saves, rows with no box and half boxes", () => {
+    const rows = [
+      tap({ id: "a", undone: true, ...box(0.1) }),
+      tap({ id: "b", kind: "save", ...box(0.1) }),
+      tap({ id: "c" }),
+      tap({ id: "d", hl_x: 0.1, hl_y: null, hl_w: null, hl_h: null }),
+      tap({ id: "e", hl_x: 0.9, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 }),
+    ];
+    expect(highlightsBySlide(rows).size).toBe(0);
   });
 });

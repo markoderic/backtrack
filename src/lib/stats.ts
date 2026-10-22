@@ -1,3 +1,5 @@
+import { isRect, type Rect } from "./rect";
+
 export type SlideStat = { slide_number: number; taps: number; students: number };
 
 /** The columns of a lost_taps row the data view reads. */
@@ -9,6 +11,11 @@ export type TapRow = {
   note: string | null;
   undone: boolean;
   tapped_at: string;
+  /** The highlight, as fractions of the slide: all four numbers or none. */
+  hl_x?: number | null;
+  hl_y?: number | null;
+  hl_w?: number | null;
+  hl_h?: number | null;
 };
 
 /** Slide numbers of the three slides the most students are lost on. Ties on
@@ -51,6 +58,22 @@ export function notesBySlide(taps: TapRow[]): Map<number, string[]> {
   for (const t of sorted) {
     const list = out.get(t.slide_number) ?? [];
     list.push(t.note!.trim());
+    out.set(t.slide_number, list);
+  }
+  return out;
+}
+
+/** The highlight boxes on each slide, oldest first, from counted rows only. No names. */
+export function highlightsBySlide(taps: TapRow[]): Map<number, Rect[]> {
+  const out = new Map<number, Rect[]>();
+  const sorted = taps
+    .filter(counts)
+    .sort((a, b) => a.tapped_at.localeCompare(b.tapped_at) || a.id.localeCompare(b.id));
+  for (const t of sorted) {
+    const rect = { x: t.hl_x, y: t.hl_y, w: t.hl_w, h: t.hl_h };
+    if (!isRect(rect)) continue;
+    const list = out.get(t.slide_number) ?? [];
+    list.push(rect);
     out.set(t.slide_number, list);
   }
   return out;

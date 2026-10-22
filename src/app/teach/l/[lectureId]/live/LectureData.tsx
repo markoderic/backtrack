@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
-import { notesBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
+import { HighlightBoxes } from "@/components/HighlightBoxes";
+import { highlightsBySlide, notesBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
+import { useSlideUrls } from "@/lib/useSlideUrls";
 import { formatLectureDate } from "@/lib/lectureDate";
 
 const RETRY_FIRST_MS = 1000;
@@ -35,7 +37,7 @@ async function readTaps(supabase: Supabase, lectureId: string): Promise<TapRow[]
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("lost_taps")
-      .select("id, anon_id, kind, slide_number, note, undone, tapped_at")
+      .select("id, anon_id, kind, slide_number, note, undone, tapped_at, hl_x, hl_y, hl_w, hl_h")
       .eq("lecture_id", lectureId)
       .eq("kind", "lost")
       .order("id")
@@ -251,6 +253,13 @@ export function LectureData({
   const top = useMemo(() => new Set(topThree(stats)), [stats]);
   const notes = useMemo(() => notesBySlide(rows), [rows]);
   const most = Math.max(0, ...stats.map((s) => s.students));
+  // Only slides someone highlighted get an image, so a lecture with no highlights loads none.
+  const boxes = useMemo(() => highlightsBySlide(rows), [rows]);
+  const highlighted = useMemo(
+    () => Array.from(boxes.keys()).filter((n) => n >= 1 && n <= slides.length).sort((a, b) => a - b),
+    [boxes, slides.length],
+  );
+  const slideUrls = useSlideUrls(lectureId, highlighted);
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
@@ -294,6 +303,7 @@ export function LectureData({
           {slides.map((slide) => {
             const stat = stats[slide.number - 1];
             const list = notes.get(slide.number);
+            const rects = boxes.get(slide.number);
             return (
               <li key={slide.number} data-testid={`slide-${slide.number}`} className="flex flex-col gap-1">
                 <div className="flex flex-wrap items-baseline gap-x-3">
@@ -314,6 +324,17 @@ export function LectureData({
                     {plural(stat.students, "person", "people")}, {plural(stat.taps, "tap", "taps")}
                   </span>
                 </div>
+                {rects && (
+                  <div data-testid={`highlights-${slide.number}`} className="relative w-64 max-w-full">
+                    {slideUrls[slide.number] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={slideUrls[slide.number]} alt={`Slide ${slide.number}`} className="block h-auto w-full" />
+                    ) : (
+                      <div className="aspect-video w-full bg-neutral-200" />
+                    )}
+                    <HighlightBoxes rects={rects} />
+                  </div>
+                )}
                 {list && (
                   <ul className="list-disc pl-6">
                     {list.map((note, i) => (
