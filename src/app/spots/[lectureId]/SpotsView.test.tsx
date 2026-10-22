@@ -32,6 +32,11 @@ channel.on.mockImplementation((_type: string, _filter: unknown, cb: Handler) => 
 channel.subscribe.mockImplementation(() => channel);
 const makeChannel = vi.fn(() => channel);
 const removeChannel = vi.fn();
+// What Realtime sends. Throws if the page has not opened its channel yet.
+function channelUpdate(payload: { new: Record<string, unknown> }) {
+  if (!channel.update) throw new Error("The channel is not open yet.");
+  channel.update(payload);
+}
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -46,7 +51,13 @@ const from = vi.fn((table: string) => ({
   update,
 }));
 vi.mock("@/lib/supabase/browser", () => ({
-  createBrowserSupabase: () => ({ from, rpc, channel: makeChannel, removeChannel }),
+  createBrowserSupabase: () => ({
+    from,
+    rpc,
+    channel: makeChannel,
+    removeChannel,
+    realtime: { setAuth: async () => {} },
+  }),
 }));
 
 const flush = vi.fn();
@@ -412,14 +423,14 @@ describe("SpotsView: opening a spot", () => {
     const next = () => screen.getByRole("button", { name: "Next slide" });
     fireEvent.click(next());
     expect(next()).toBeDisabled();
-    act(() => channel.update?.({ new: { current_slide: 6, status: "live" } }));
+    act(() => channelUpdate({ new: { current_slide: 6, status: "live" } }));
     expect(next()).toBeEnabled();
     fireEvent.click(next());
     fireEvent.click(next());
     expect(screen.getByRole("img")).toHaveAttribute("src", "https://signed/6.webp");
     expect(next()).toBeDisabled();
     expect(refresh).not.toHaveBeenCalled();
-    act(() => channel.update?.({ new: { current_slide: 6, status: "ended" } }));
+    act(() => channelUpdate({ new: { current_slide: 6, status: "ended" } }));
     expect(refresh).toHaveBeenCalledTimes(1);
     // One subscription for the page: opening a spot did not start a second one.
     expect(makeChannel).toHaveBeenCalledTimes(1);

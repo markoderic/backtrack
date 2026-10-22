@@ -114,6 +114,9 @@ export function LostButton({
   const loaded = useRef(false);
   const loading = useRef(false);
   const takenBack = useRef(new Set<string>());
+  // A tap the database refused while the page was open. It is gone from the queue,
+  // so the flush on leaving must still tell the spots page.
+  const refusedTap = useRef(false);
   useEffect(() => {
     sendRef.current = send;
     loadOwnRef.current = loadOwn;
@@ -143,11 +146,13 @@ export function LostButton({
   const flush = useCallback(async (ending = false) => {
     try {
       const { rejected: refused } = await queue().flush((op) => sendRef.current(op));
+      if (ending && refusedTap.current) markRejected(lectureId);
       if (refused.length === 0) return;
       // The page is going (or gone): nobody is here to show it, so leave a note for the spots page.
       if (ending || !mounted.current) markRejected(lectureId);
       if (!mounted.current) return;
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
+      if (gone.size > 0) refusedTap.current = true;
       setBar((b) => (b && gone.has(b.id) ? null : b));
       setRejected(gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
       if (!ending) onRejectedRef.current?.();

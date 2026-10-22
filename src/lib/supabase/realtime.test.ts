@@ -150,6 +150,41 @@ describe("openChannel", () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the channel anyway when the token takes more than 5 seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const { supabase } = fakeClient();
+      const open = vi.fn(() => ({}) as RealtimeChannel);
+      openChannel(supabase, open);
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(open).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(open).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks once more when setAuth returned without setting a token", async () => {
+    const realtime = { accessTokenValue: null as string | null, setAuth: vi.fn() };
+    realtime.setAuth
+      .mockImplementationOnce(async () => {})
+      .mockImplementationOnce(async () => {
+        realtime.accessTokenValue = "jwt";
+      });
+    const supabase = { realtime, removeChannel: vi.fn() } as unknown as SupabaseClient;
+    let tokenAtOpen: string | null = null;
+    const open = vi.fn(() => {
+      tokenAtOpen = realtime.accessTokenValue;
+      return {} as RealtimeChannel;
+    });
+    openChannel(supabase, open);
+    await flush();
+    expect(realtime.setAuth).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(tokenAtOpen).toBe("jwt");
+  });
+
   it("removes the channel it opened when closed", async () => {
     const { supabase, removeChannel, resolveAuth } = fakeClient();
     const channel = {} as RealtimeChannel;

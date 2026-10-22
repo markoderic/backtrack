@@ -422,6 +422,39 @@ describe("useLiveLecture", () => {
       expect(result.current.state?.ended).toBe(true);
     });
 
+    it("a read that started before a Realtime slide change does not take the slide back", async () => {
+      const { result } = await started();
+      let finish: (v: unknown) => void = () => {};
+      single.mockReturnValueOnce(new Promise((r) => (finish = r)));
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      act(() => channel.update?.({ new: { current_slide: 5, status: "live" } }));
+      await act(async () => finish(row(4)));
+      expect(result.current.state).toMatchObject({ live: 5, viewing: 5 });
+    });
+
+    it("the read after the channel comes back keeps a newer Realtime slide and still says live", async () => {
+      const { result } = await started();
+      act(() => channel.status?.("CHANNEL_ERROR"));
+      let finish: (v: unknown) => void = () => {};
+      single.mockReturnValueOnce(new Promise((r) => (finish = r)));
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      act(() => channel.update?.({ new: { current_slide: 5, status: "live" } }));
+      await act(async () => finish(row(4)));
+      expect(result.current.state).toMatchObject({ live: 5, viewing: 5, conn: "live" });
+    });
+
+    it("while the channel is down, the 20 second check updates live but keeps Reconnecting and the student's place", async () => {
+      const { result } = await started();
+      act(() => result.current.back());
+      act(() => channel.status?.("CHANNEL_ERROR"));
+      single.mockResolvedValue(row(6));
+      await wait(20000);
+      expect(result.current.state).toMatchObject({ live: 6, viewing: 2, following: false, conn: "reconnecting" });
+      // The channel coming back is what says live again and jumps to the live slide.
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      expect(result.current.state).toMatchObject({ live: 6, viewing: 6, following: true, conn: "live" });
+    });
+
     it("keeps the newest read when an older one comes back last", async () => {
       const { result } = await started();
       let older: (v: unknown) => void = () => {};

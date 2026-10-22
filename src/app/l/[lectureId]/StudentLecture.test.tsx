@@ -562,6 +562,8 @@ describe("StudentLecture", () => {
         expect(single.mock.calls.length).toBe(reads + 1);
         expect(replace).toHaveBeenCalledTimes(1);
         expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+        // So My spots says the tap did not save.
+        expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
       } finally {
         vi.useRealTimers();
       }

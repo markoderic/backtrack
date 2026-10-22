@@ -518,6 +518,34 @@ describe("LostButton", () => {
       expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
     });
 
+    it("sets the key when the page leaves after a tap was refused while it was open", async () => {
+      sessionStorage.clear();
+      let flush: ((ending?: boolean) => Promise<void>) | undefined;
+      setup({ send: vi.fn<Send>(async () => "rejected"), onFlushReady: (f) => (flush = f) });
+      await settle();
+      press();
+      await settle();
+      expect(screen.getByText(REJECTED)).toBeInTheDocument();
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
+      // Nothing is left in the queue for the leaving flush to refuse.
+      await act(async () => flush?.(true));
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
+    });
+
+    it("does not set the key on leaving when only an update was refused", async () => {
+      sessionStorage.clear();
+      let flush: ((ending?: boolean) => Promise<void>) | undefined;
+      const send = vi.fn<Send>(async (op) => (op.op === "update" ? "rejected" : "ok"));
+      setup({ send, onFlushReady: (f) => (flush = f) });
+      await settle();
+      press();
+      await settle();
+      undo();
+      await settle();
+      await act(async () => flush?.(true));
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
+    });
+
     it("does not set the key for a rejection while the page is still open", async () => {
       sessionStorage.clear();
       setup({ send: vi.fn<Send>(async () => "rejected") });

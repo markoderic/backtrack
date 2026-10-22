@@ -54,6 +54,13 @@ export function useLiveLecture(
     let latest = 0;
     let reading = false;
     let readStarted = 0;
+    // Realtime slide changes so far, and the last one: a read that started before
+    // one of them brings an older slide, so the Realtime one wins.
+    let events = 0;
+    let eventSlide = 0;
+    // The channel reported an error and has not said SUBSCRIBED since. A read then
+    // updates the slide but does not say live again; only the channel does.
+    let channelDown = false;
 
     const end = () => {
       ended = true;
@@ -66,6 +73,7 @@ export function useLiveLecture(
       clearTimeout(timer);
       timer = undefined;
       const mine = ++latest;
+      const eventsAtStart = events;
       reading = true;
       readStarted = Date.now();
       // Should this read never come back, the 20 second check still goes out.
@@ -95,15 +103,16 @@ export function useLiveLecture(
       clearTimeout(timer);
       timer = undefined;
       failures = 0;
+      const n = events !== eventsAtStart ? eventSlide : data.current_slide;
       if (data.status === "ended") {
         end();
-      } else if (!readyRef.current || droppedRef.current) {
-        // The first read, or the channel came back: show the live slide.
+      } else if (!readyRef.current || (droppedRef.current && !channelDown)) {
+        // The first read, or the connection came back: show the live slide.
         readyRef.current = true;
         droppedRef.current = false;
-        dispatch({ type: "reconnected", n: data.current_slide });
+        dispatch({ type: "reconnected", n });
       } else {
-        dispatch({ type: "liveChanged", n: data.current_slide });
+        dispatch({ type: "liveChanged", n });
       }
       setReady(true);
       // Still live: read again in 20 seconds, in case the channel misses the end.
@@ -135,15 +144,19 @@ export function useLiveLecture(
           (payload) => {
             if (cancelled || ended) return;
             const row = payload.new as { current_slide: number; status: string };
-            if (row.status === "ended") end();
-            else dispatch({ type: "liveChanged", n: row.current_slide });
+            if (row.status === "ended") return end();
+            events++;
+            eventSlide = row.current_slide;
+            dispatch({ type: "liveChanged", n: row.current_slide });
           },
         )
         .subscribe((status) => {
           if (cancelled || ended) return;
           if (status === "SUBSCRIBED") {
+            channelDown = false;
             void load();
           } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            channelDown = true;
             droppedRef.current = true;
             dispatch({ type: "disconnected" });
           }
