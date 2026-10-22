@@ -607,7 +607,7 @@ export function SpotDetail({
 
         <div className="flex flex-col gap-3">
           {confirmRemove ? (
-            <div className="flex animate-fade-in flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="flex animate-fade-in flex-wrap items-center gap-x-6 gap-y-3">
               <p className="type-small text-ink">Remove this spot?</p>
               <button type="button" onClick={() => void remove()} disabled={removing} className={action}>
                 Yes, remove
@@ -626,7 +626,7 @@ export function SpotDetail({
               </button>
             </div>
           ) : (
-            <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+            <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
               {onSpotSlide && !boxWaiting && (
                 <button
                   ref={highlightRef}

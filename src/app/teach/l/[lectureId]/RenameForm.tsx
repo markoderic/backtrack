@@ -115,7 +115,7 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
 
   return (
     <form onSubmit={(e) => void submit(e)} className="flex w-full max-w-[640px] animate-pop-in flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <label htmlFor="rename-lecture" className="sr-only">
           Lecture name
         </label>

@@ -71,6 +71,12 @@ describe("RenameForm", () => {
     expect(screen.queryByLabelText("Lecture name")).toBeNull();
   });
 
+  it("keeps 12 px between wrapped rows so Cancel's 44 px hit area never covers the field", () => {
+    render(<RenameForm lectureId="l1" initialName="Lecture 1, Oct 19" />);
+    open();
+    expect(field().parentElement?.className).toContain("gap-y-3");
+  });
+
   it("does not save an empty or blank name and says why", () => {
     render(<RenameForm lectureId="l1" initialName="Lecture 1, Oct 19" />);
     open();

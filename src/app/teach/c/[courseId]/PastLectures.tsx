@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatLectureDate } from "@/lib/lectureDate";
 import { Icon } from "@/components/Icon";
-import { hitAreaBelowClass, rowLinkClass, staggerClass, staggerStyle } from "../../ui";
+import { rowLinkClass, staggerClass, staggerStyle } from "../../ui";
+
+/** The 44 px hit area of "N more": it starts at the text's top edge and reaches down, so it never covers the last row's padding above it. */
+const MORE_HIT_AREA = "relative after:absolute after:-inset-x-2 after:top-0 after:-bottom-6 after:content-['']";
 
 export type PastLecture = {
   id: string;
@@ -103,7 +106,7 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
             moveFocus.current = true;
             setAll(true);
           }}
-          className={`press focus-ring w-fit rounded-sm type-small text-secondary hover:text-ink ${hitAreaBelowClass}`}
+          className={`press focus-ring w-fit rounded-sm type-small text-secondary hover:text-ink ${MORE_HIT_AREA}`}
         >
           {more} more
         </button>

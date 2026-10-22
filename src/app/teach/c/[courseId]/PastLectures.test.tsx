@@ -16,8 +16,9 @@ describe("PastLectures", () => {
     render(<PastLectures lectures={lectures} />);
     expect(screen.getAllByRole("link")).toHaveLength(5);
     const more = screen.getByRole("button", { name: "3 more" });
-    // A 44 px hit area that reaches down, away from the last row.
-    expect(more.className).toContain("after:-top-1 after:-bottom-5");
+    // A 44 px hit area that reaches down only (20 px text + 24 px), so it never covers the last row above.
+    expect(more.className).toContain("after:top-0 after:-bottom-6");
+    expect(more.className).not.toContain("after:-top-");
     more.focus();
     fireEvent.click(more);
     expect(screen.getAllByRole("link")).toHaveLength(8);

@@ -343,6 +343,14 @@ describe("SpotDetail: the note", () => {
 });
 
 describe("SpotDetail: remove", () => {
+  it("wrapped action rows keep 12 px between lines, as far as the 44 px hit areas reach", () => {
+    show();
+    const row = screen.getByRole("button", { name: "Remove" }).parentElement;
+    expect(row?.className).toContain("gap-y-3");
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByRole("button", { name: "Keep it" }).parentElement?.className).toContain("gap-y-3");
+  });
+
   it("asks once, inline, then marks the row undone and reports it", async () => {
     const { onRemoved } = show();
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
