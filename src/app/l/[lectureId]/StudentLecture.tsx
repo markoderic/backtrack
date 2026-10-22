@@ -8,6 +8,7 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
+import { HighlightLayer, type Highlight } from "./HighlightLayer";
 import { LostButton } from "./LostButton";
 import { SlideStrip } from "./SlideStrip";
 
@@ -50,6 +51,12 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const onFlushReady = useCallback((flush: (ending?: boolean) => Promise<void>) => {
     flushRef.current = flush;
   }, []);
+  // The highlight menu saves through the same queue, bar and Undo as the button.
+  const addRef = useRef<((h: Highlight) => void) | null>(null);
+  const onAddReady = useCallback((add: (h: Highlight) => void) => {
+    addRef.current = add;
+  }, []);
+  const imageRef = useRef<HTMLImageElement>(null);
   const ended = state?.ended ?? false;
   useEffect(() => {
     if (!ended) return;
@@ -96,8 +103,17 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
       <div className="relative min-h-0 flex-1">
         {url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={`Slide ${viewing}`} className="absolute inset-0 h-full w-full object-contain" />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              ref={imageRef}
+              src={url}
+              alt={`Slide ${viewing}`}
+              draggable={false}
+              className="absolute inset-0 h-full w-full object-contain"
+            />
+            <HighlightLayer viewing={viewing} imageRef={imageRef} onChoose={(h) => addRef.current?.(h)} />
+          </>
         )}
       </div>
 
@@ -117,6 +133,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           onSpots={setSpots}
           reconnects={reconnects}
           onFlushReady={onFlushReady}
+          onAddReady={onAddReady}
           before={
             <>
               <button

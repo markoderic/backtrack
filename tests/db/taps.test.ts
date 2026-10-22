@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
 import { newDb, as, type Claims } from "./harness";
+import { rectFromDrag } from "../../src/lib/rect";
 
 const MARKO = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
@@ -231,6 +232,27 @@ describe("highlight check", () => {
     await insertTap(s1, { hl: [0.1, 0.2, 0.5, 0.5] });
     await insertTap(s1, { hl: [0, 0, 1, 1] });
     expect(await count()).toBe(3);
+  });
+
+  it("accepts every box rectFromDrag draws, edges included (float4 rounding must not tip it over 1)", async () => {
+    const box = { width: 997, height: 331 };
+    let n = 0;
+    for (let a = 0; a <= 997; a += 83) {
+      for (let b = 0; b <= 997; b += 97) {
+        const r = rectFromDrag({ x: a, y: 3 }, { x: b, y: 331 }, box);
+        if (!r) continue;
+        await insertTap(s1, { hl: [r.x, r.y, r.w, r.h] });
+        n++;
+      }
+    }
+    // The widest cases that tip a float4 sum: both edges on thirds and sevenths.
+    for (const [x, w] of [[0.3333, 0.6667], [0.1429, 0.8571], [0.7, 0.3], [0.1, 0.9], [0, 1]]) {
+      const r = rectFromDrag({ x: x * 10000, y: 0 }, { x: (x + w) * 10000, y: 10000 }, { width: 10000, height: 10000 });
+      await insertTap(s1, { hl: [r!.x, r!.y, r!.w, r!.h] });
+      n++;
+    }
+    expect(n).toBeGreaterThan(30);
+    expect(await count()).toBe(n);
   });
 
   it("rejects hl_x + hl_w = 1.2", async () => {

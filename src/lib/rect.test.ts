@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRect, rectFromDrag } from "./rect";
+import { containedBox, isRect, rectFromDrag } from "./rect";
 
 const BOX = { width: 1000, height: 500 };
 
@@ -68,5 +68,23 @@ describe("isRect", () => {
     expect(isRect({ x: 0.1, y: 0.2, w: 0, h: 0.4 })).toBe(false);
     expect(isRect({ x: 0.9, y: 0.2, w: 0.3, h: 0.4 })).toBe(false);
     expect(isRect({ x: 0.1, y: 0.2, w: 0.3, h: Number.NaN })).toBe(false);
+  });
+});
+
+describe("containedBox", () => {
+  it("centers a square image in a wide box", () => {
+    expect(containedBox(1000, 500, 800, 800)).toEqual({ left: 250, top: 0, width: 500, height: 500 });
+  });
+
+  it("centers a wide image in a tall box", () => {
+    expect(containedBox(400, 600, 1600, 900)).toEqual({ left: 0, top: 187.5, width: 400, height: 225 });
+  });
+
+  it("is the whole box when the image has the box's shape", () => {
+    expect(containedBox(1000, 500, 2000, 1000)).toEqual({ left: 0, top: 0, width: 1000, height: 500 });
+  });
+
+  it("fills the box while the image size is not known", () => {
+    expect(containedBox(1000, 500, 0, 0)).toEqual({ left: 0, top: 0, width: 1000, height: 500 });
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 type Handler = (payload: { new: Record<string, unknown> }) => void;
@@ -441,5 +441,90 @@ describe("StudentLecture", () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+describe("StudentLecture highlighting", () => {
+  const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
+  const layer = () => document.querySelector("[data-highlight-layer]") as HTMLElement;
+  const menu = () => screen.getByRole("group", { name: "Highlight" });
+
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, width: 1000, height: 500, toJSON: () => ({}),
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function drag() {
+    fireEvent.pointerDown(layer(), { ...mouse, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(layer(), { ...mouse, clientX: 300, clientY: 200 });
+    fireEvent.pointerUp(layer(), { ...mouse, clientX: 300, clientY: 200 });
+  }
+
+  it("puts the highlight layer over the slide image and still shows the one image", () => {
+    show(7);
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    const img = screen.getByRole("img");
+    expect(img.parentElement?.contains(layer())).toBe(true);
+  });
+
+  it("Save this sends a save with the box on the slide being viewed, and gives the strip a dot", async () => {
+    show(7);
+    await act(async () => {});
+    fireEvent.click(back());
+    drag();
+    fireEvent.click(within(menu()).getByRole("button", { name: "Save this" }));
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    expect(upsert.mock.calls[0][0]).toMatchObject({
+      lecture_id: LECTURE,
+      anon_id: STUDENT,
+      kind: "save",
+      tapped_on_slide: 6,
+      slide_number: 6,
+      hl_x: 0.1,
+      hl_y: 0.2,
+      hl_w: 0.2,
+      hl_h: 0.2,
+    });
+    expect(screen.getByText("Saved slide 6")).toBeInTheDocument();
+    expect(within(strip()).getByRole("button", { name: "Slide 6, viewing, saved" })).toBeInTheDocument();
+  });
+
+  it("I'm lost from the menu sends kind lost with the box", async () => {
+    show(7);
+    await act(async () => {});
+    drag();
+    fireEvent.click(within(menu()).getByRole("button", { name: "I'm lost" }));
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    expect(upsert.mock.calls[0][0]).toMatchObject({ kind: "lost", slide_number: 7, hl_x: 0.1, hl_w: 0.2 });
+  });
+
+  it("the plain I'm lost button sends no highlight", async () => {
+    show(7);
+    await act(async () => {});
+    fireEvent.click(lost());
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    const row = upsert.mock.calls[0][0] as Record<string, unknown>;
+    expect(row.kind).toBe("lost");
+    expect(Object.keys(row).some((k) => k.startsWith("hl_"))).toBe(false);
+  });
+
+  it("drops an open menu when the teacher moves a following student to the next slide", async () => {
+    show(7);
+    await act(async () => {});
+    drag();
+    expect(menu()).toBeInTheDocument();
+    teacherMoves(8);
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument());
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("shows no Highlight button, no total and no hint text on a mouse screen", () => {
+    show(7);
+    expect(screen.queryByRole("button", { name: "Highlight" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/drag on the slide/i)).not.toBeInTheDocument();
   });
 });

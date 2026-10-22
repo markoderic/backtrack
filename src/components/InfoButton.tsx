@@ -33,6 +33,7 @@ export function InfoButton() {
           className="absolute right-0 top-12 z-20 flex w-72 max-w-[calc(100vw-2rem)] flex-col gap-3 border border-current bg-black p-4 text-white"
         >
           <p>Tap I&apos;m lost when you lose track. Backtrack saves the slide so you can come back to it after class.</p>
+          <p>Drag on the slide to highlight a part, then pick I&apos;m lost or Save this. Saves are only for you.</p>
           <p>Nobody sees your name.</p>
           <button type="button" onClick={() => setOpen(false)} className="self-start border border-current px-4 py-2">
             Close

@@ -60,3 +60,21 @@ export function rectFromDrag(
   if (!ax || !ay) return null;
   return { x: ax.start, y: ay.start, w: ax.size, h: ay.size };
 }
+
+/** A box in pixels inside its container. */
+export type Box = { left: number; top: number; width: number; height: number };
+
+/**
+ * Where an image is drawn inside a box of the given size when it is fitted with
+ * object-contain: as large as it can be, centered. An image whose size is not
+ * known yet fills the box.
+ */
+export function containedBox(width: number, height: number, naturalWidth: number, naturalHeight: number): Box {
+  if (!(naturalWidth > 0) || !(naturalHeight > 0) || !(width > 0) || !(height > 0)) {
+    return { left: 0, top: 0, width, height };
+  }
+  const scale = Math.min(width / naturalWidth, height / naturalHeight);
+  const w = naturalWidth * scale;
+  const h = naturalHeight * scale;
+  return { left: (width - w) / 2, top: (height - h) / 2, width: w, height: h };
+}

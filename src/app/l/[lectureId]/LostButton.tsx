@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { TapQueue, type QueueOp, type SendResult } from "@/lib/tapQueue";
+import type { Rect } from "@/lib/rect";
+import { TapQueue, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
 
 const UNDO_WINDOW_MS = 8000;
@@ -25,12 +26,17 @@ type Props = {
    * a refusal then sets the rejected key for the spots page. The page may wait on it.
    */
   onFlushReady?: (flush: (ending?: boolean) => Promise<void>) => void;
+  /**
+   * Gives the page a way to save a highlighted tap (from the box drawn on the slide)
+   * on the slide on screen. It goes through the same queue, bar and Undo as the button.
+   */
+  onAddReady?: (add: (highlight: { kind: "lost" | "save"; rect: Rect; note?: string }) => void) => void;
   /** Shown in the same row, left and right of the button. */
   before?: ReactNode;
   after?: ReactNode;
 };
 
-type Bar = { id: string; slide: number; note: string; saved: boolean };
+type Bar = { id: string; slide: number; note: string; saved: boolean; kind: "lost" | "save" };
 
 function newId(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -59,7 +65,18 @@ function pendingTaps(ops: QueueOp[]): Map<string, number> {
  * Undo and an optional note for 8 seconds, in a row of fixed height so nothing
  * moves.
  */
-export function LostButton({ lectureId, viewing, send, loadOwn, onSpots, reconnects = 0, onFlushReady, before, after }: Props) {
+export function LostButton({
+  lectureId,
+  viewing,
+  send,
+  loadOwn,
+  onSpots,
+  reconnects = 0,
+  onFlushReady,
+  onAddReady,
+  before,
+  after,
+}: Props) {
   const [taps, setTaps] = useState<ReadonlyMap<string, number>>(new Map());
   const [bar, setBar] = useState<Bar | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
@@ -179,15 +196,25 @@ export function LostButton({ lectureId, viewing, send, loadOwn, onSpots, reconne
     return () => clearTimeout(timer);
   }, [bar]);
 
+  function record(extra: Pick<PendingTap, "kind" | "rect" | "note"> = {}) {
+    const id = newId();
+    queue().enqueue({ id, tappedOnSlide: viewing, tappedAt: new Date().toISOString(), ...extra });
+    setTaps((prev) => new Map(prev).set(id, viewing));
+    setRejected(null);
+    // A note typed in the highlight menu is already on the tap.
+    setBar({ id, slide: viewing, note: extra.note ?? "", saved: !!extra.note, kind: extra.kind ?? "lost" });
+    void flush();
+  }
+
+  // The page calls this from the highlight menu. It always reads the slide on screen now.
+  useEffect(() => {
+    onAddReady?.((h) => record({ kind: h.kind, rect: h.rect, ...(h.note ? { note: h.note } : {}) }));
+  });
+
   if (fatal) throw fatal;
 
   function press() {
-    const id = newId();
-    queue().enqueue({ id, tappedOnSlide: viewing, tappedAt: new Date().toISOString() });
-    setTaps((prev) => new Map(prev).set(id, viewing));
-    setRejected(null);
-    setBar({ id, slide: viewing, note: "", saved: false });
-    void flush();
+    record();
   }
 
   function undo() {
@@ -227,8 +254,8 @@ export function LostButton({ lectureId, viewing, send, loadOwn, onSpots, reconne
                 <input
                   type="text"
                   maxLength={140}
-                  placeholder="What lost you? Optional"
-                  aria-label="What lost you? Optional"
+                  placeholder={bar.kind === "save" ? "Add a note. Optional" : "What lost you? Optional"}
+                  aria-label={bar.kind === "save" ? "Add a note. Optional" : "What lost you? Optional"}
                   value={bar.note}
                   onChange={(e) => setBar({ ...bar, note: e.target.value })}
                   className="h-10 min-w-0 flex-1 border border-white bg-transparent px-2"

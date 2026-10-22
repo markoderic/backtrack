@@ -12,13 +12,16 @@ describe("InfoButton", () => {
     expect(screen.queryByText(HELP)).not.toBeInTheDocument();
   });
 
-  it("opens a panel with the two lines", () => {
+  it("opens a panel with the three lines", () => {
     render(<InfoButton />);
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
     const panel = screen.getByRole("dialog");
     expect(panel).toHaveTextContent(HELP);
+    expect(panel).toHaveTextContent(
+      "Drag on the slide to highlight a part, then pick I'm lost or Save this. Saves are only for you.",
+    );
     expect(panel).toHaveTextContent("Nobody sees your name.");
-    expect(panel.querySelectorAll("p")).toHaveLength(2);
+    expect(panel.querySelectorAll("p")).toHaveLength(3);
   });
 
   it("closes with the Close button", () => {
