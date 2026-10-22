@@ -75,7 +75,7 @@ export function LectureList() {
         <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
       </header>
 
-      <main className="mx-auto flex w-full max-w-180 animate-rise-in flex-col gap-1 px-4 pb-12 pt-6 sm:px-6">
+      <main className="mx-auto flex w-full max-w-180 animate-page-in flex-col gap-1 px-4 pb-12 pt-6 sm:px-6">
         <h1 className="type-display text-ink">My spots</h1>
         {items &&
           (items.length === 0 ? (

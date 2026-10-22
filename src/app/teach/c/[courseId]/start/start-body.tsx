@@ -40,7 +40,7 @@ export async function StartBody({ params }: { params: Promise<{ courseId: string
       teacherName={teacherName}
     >
       {/* Figma 33:979: a 720 wide column (360 side padding at 1440). */}
-      <main className="mx-auto flex w-full max-w-[784px] animate-rise-in flex-col gap-7 px-4 py-12 sm:px-8">
+      <main className="mx-auto flex w-full max-w-[784px] animate-page-in flex-col gap-7 px-4 py-12 sm:px-8">
         <h1 className="type-display text-ink">Start lecture</h1>
         <StartForm courseId={course.id} existingCount={count ?? 0} />
       </main>

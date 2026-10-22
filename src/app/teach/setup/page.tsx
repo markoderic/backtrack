@@ -39,7 +39,7 @@ export default function SetupPage() {
           <LogoLockup size="S" />
         </Link>
       </header>
-      <main className="mx-auto flex w-full max-w-[544px] flex-1 animate-rise-in flex-col justify-center gap-7 px-4 pt-6 pb-16 sm:px-8">
+      <main className="mx-auto flex w-full max-w-[544px] flex-1 animate-page-in flex-col justify-center gap-7 px-4 pt-6 pb-16 sm:px-8">
         <h1 className="type-display text-ink">Set up your classes</h1>
         <Suspense fallback={null}>
           <SetupBody />

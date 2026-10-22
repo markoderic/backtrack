@@ -54,8 +54,8 @@ export const rowPressClass =
   "focus-ring transition-[outline-color,scale] duration-(--dur-fast) ease-spring motion-safe:active:scale-[0.99]";
 export const rowLinkClass = `group rounded-sm ${rowPressClass}`;
 
-/** Page content that rises in on load (200 ms; a fade only with reduced motion). */
-export const pageInClass = "animate-rise-in";
+/** Page content that comes in on load: 120 ms from half opacity, never blank (a fade only with reduced motion). */
+export const pageInClass = "animate-page-in";
 
 /**
  * Rise-in with a small stagger for list items: 30 ms each, at most 8 staggered, the rest

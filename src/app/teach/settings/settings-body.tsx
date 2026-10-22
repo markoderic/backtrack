@@ -43,7 +43,7 @@ export async function SettingsBody() {
       teacherName={teacher.display_name}
       onSettings
     >
-      <main className="mx-auto flex w-full max-w-[784px] animate-rise-in flex-col gap-8 px-4 py-12 sm:px-8">
+      <main className="mx-auto flex w-full max-w-[784px] animate-page-in flex-col gap-8 px-4 py-12 sm:px-8">
         <h1 className="type-display text-ink">Settings</h1>
         <NameForm initialName={teacher.display_name} />
         <section aria-labelledby="settings-courses" className="flex flex-col">

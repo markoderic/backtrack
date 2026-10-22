@@ -477,7 +477,7 @@ export function SpotDetail({
         </button>
       </header>
 
-      <main className="mx-auto flex w-full max-w-180 animate-rise-in flex-col gap-5 px-4 pb-10 pt-2">
+      <main className="mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-10 pt-2">
         <div className="flex min-w-0 items-center gap-4">
           <span aria-hidden data-spot-number="" className={`shrink-0 type-number-l ${lost ? "text-lost" : "text-ink"}`}>
             {spot.slideNumber}

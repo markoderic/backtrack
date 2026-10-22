@@ -10,7 +10,7 @@ import { SignInButton } from "./sign-in-button";
 export function SignInView({ message }: { message?: string | null }) {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-8 px-4 py-16">
-      <div className="flex animate-rise-in flex-col items-center gap-8">
+      <div className="flex animate-page-in flex-col items-center gap-8">
         <h1>
           <LogoLockup size="L" />
         </h1>

@@ -27,7 +27,7 @@ export async function PresentBody({ params }: { params: Promise<{ lectureId: str
 
   if (lecture.status === "ended") {
     return (
-      <main className="flex min-h-screen w-full animate-rise-in flex-col items-center justify-center gap-6 bg-bg p-4 text-center">
+      <main className="flex min-h-screen w-full animate-page-in flex-col items-center justify-center gap-6 bg-bg p-4 text-center">
         <p className="type-title text-ink">This lecture has ended.</p>
         <ButtonPrimaryLink href={`/teach/c/${lecture.course_id}`}>Back to the course</ButtonPrimaryLink>
       </main>

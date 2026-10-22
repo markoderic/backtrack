@@ -7,7 +7,7 @@ import { ButtonPrimary } from "@/components/ButtonPrimary";
 export default function ErrorPage({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const router = useRouter();
   return (
-    <main className="flex min-h-dvh w-full animate-fade-in flex-col items-center justify-center gap-6 bg-bg p-4 pb-20 text-ink">
+    <main className="flex min-h-dvh w-full animate-page-in flex-col items-center justify-center gap-6 bg-bg p-4 pb-20 text-ink">
       <p className="type-title">Something went wrong.</p>
       <ButtonPrimary
         onClick={() => {

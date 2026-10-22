@@ -85,7 +85,7 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
       const list = courses ?? [];
       return (
         <TeacherPage crumbs={[{ label: "Courses" }]} teacherName={teacher.display_name}>
-          <main className="mx-auto flex w-full max-w-[1104px] animate-rise-in flex-col gap-2 px-4 py-12 sm:px-8">
+          <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
             {(live ?? []).length > 0 && (
               <div className="mb-8 flex flex-col">
                 {(live ?? []).map((lecture) => (

@@ -338,7 +338,7 @@ export function SpotsView({
 
         {loaded &&
           (spots.length === 0 ? (
-            <main className="mx-auto flex w-full max-w-180 flex-1 animate-rise-in flex-col items-center justify-center gap-2 px-6 pb-20 text-center">
+            <main className="mx-auto flex w-full max-w-180 flex-1 animate-page-in flex-col items-center justify-center gap-2 px-6 pb-20 text-center">
               {notice && <div className="pb-4">{notice}</div>}
               <h1 ref={listHeadingRef} tabIndex={-1} className="type-title text-ink outline-hidden">
                 No spots yet
@@ -346,7 +346,7 @@ export function SpotsView({
               <p className="type-body text-secondary">Slides you mark show up here.</p>
             </main>
           ) : (
-            <main className="mx-auto flex w-full max-w-180 animate-rise-in flex-col gap-1 px-4 pb-12 pt-6 sm:px-6">
+            <main className="mx-auto flex w-full max-w-180 animate-page-in flex-col gap-1 px-4 pb-12 pt-6 sm:px-6">
               {notice && <div className="pb-4">{notice}</div>}
               <h1 ref={listHeadingRef} tabIndex={-1} className="type-display text-ink outline-hidden">
                 My spots

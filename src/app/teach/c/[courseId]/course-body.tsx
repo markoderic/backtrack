@@ -163,7 +163,7 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
 
   return (
     <TeacherPage crumbs={[{ label: "Courses", href: "/teach" }, { label: code }]} teacherName={teacherName}>
-      <main className="mx-auto flex w-full max-w-[1104px] animate-rise-in flex-col gap-2 px-4 py-12 sm:px-8">
+      <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <h1 className="type-display break-words text-ink">{code}</h1>

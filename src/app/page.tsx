@@ -9,7 +9,7 @@ import { LogoLockup } from "@/components/Logo";
 export default function Home() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-bg px-4">
-      <div className="flex w-full animate-rise-in flex-col items-center gap-10">
+      <div className="flex w-full animate-page-in flex-col items-center gap-10">
         <h1>
           <LogoLockup size="L" />
         </h1>

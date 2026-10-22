@@ -175,7 +175,7 @@ export default function JoinPage() {
         }}
         className="flex flex-1 flex-col items-center justify-center px-4 pb-14"
       >
-        <div className="flex w-full animate-rise-in flex-col items-center gap-4">
+        <div className="flex w-full animate-page-in flex-col items-center gap-4">
           <h1 id="code-label" className="type-title text-center text-ink">
             Enter the code on the screen
           </h1>
