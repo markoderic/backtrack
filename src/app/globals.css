@@ -19,6 +19,20 @@
   --color-lost-hover: #a92d18;
   --color-lost-tint: #f6dad4;
 
+  /*
+   * Course colors (batch D): eight calm swatches for the bar on each course card and the dot on
+   * the course page. None is the I'm lost red. Each is at least 4.5:1 on the page background and
+   * on white, so a bar or dot reads on both. Utilities: bg-course-slate ... bg-course-ochre.
+   */
+  --color-course-slate: #5e6b7a;
+  --color-course-blue: #2f6db5;
+  --color-course-indigo: #5551a8;
+  --color-course-plum: #84508f;
+  --color-course-teal: #1f7a75;
+  --color-course-green: #3e7b3a;
+  --color-course-olive: #6b7022;
+  --color-course-ochre: #946507;
+
   /* Radius: sm for slides and thumbnails, md for buttons, fields, popovers. Highlight boxes use rounded-xs (2px). */
   --radius-sm: 4px;
   --radius-md: 8px;
