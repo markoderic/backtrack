@@ -98,6 +98,19 @@ describe("Projector", () => {
     expect(corner).toHaveTextContent("482916");
   });
 
+  it("ignores ArrowRight with Cmd held: no update and the join card stays", () => {
+    show();
+    fireEvent.keyDown(window, { key: "ArrowRight", metaKey: true });
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+  });
+
+  it("ignores Cmd+d: does not open the data view", () => {
+    show();
+    fireEvent.keyDown(window, { key: "d", metaKey: true });
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("second ArrowRight updates current_slide to 2 and redraws after the write succeeds", async () => {
     show();
     press("ArrowRight");

@@ -16,8 +16,13 @@ export function slideKeyAction(e: {
   key: string;
   repeat: boolean;
   target: EventTarget | null;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
 }): SlideKeyAction | null {
   if (e.repeat || isTyping(e.target)) return null;
+  // Cmd+D, Cmd+P, Ctrl+N and friends belong to the browser. Shift alone is fine.
+  if (e.metaKey || e.ctrlKey || e.altKey) return null;
   if (NEXT.has(e.key)) return "next";
   if (PREV.has(e.key)) return "prev";
   if (e.key === "d" || e.key === "D") return "data";

@@ -1,7 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { slideKeyAction, clampSlide } from "./slideKeys";
 
-const press = (key: string, extra: Partial<{ repeat: boolean; target: EventTarget | null }> = {}) =>
+const press = (
+  key: string,
+  extra: Partial<{
+    repeat: boolean;
+    target: EventTarget | null;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    altKey: boolean;
+    shiftKey: boolean;
+  }> = {},
+) =>
   slideKeyAction({ key, repeat: false, target: null, ...extra });
 
 describe("slideKeyAction", () => {
@@ -46,6 +56,41 @@ describe("slideKeyAction", () => {
 
   it("still works when the target is a plain element", () => {
     expect(press("n", { target: document.createElement("div") })).toBe("next");
+  });
+});
+
+describe("slideKeyAction with modifier keys", () => {
+  it("ignores Cmd+d", () => {
+    expect(press("d", { metaKey: true })).toBeNull();
+  });
+  it("ignores Ctrl+ArrowRight", () => {
+    expect(press("ArrowRight", { ctrlKey: true })).toBeNull();
+  });
+  it("ignores Alt+ArrowLeft", () => {
+    expect(press("ArrowLeft", { altKey: true })).toBeNull();
+  });
+  it("ignores Cmd+p (print)", () => {
+    expect(press("p", { metaKey: true })).toBeNull();
+  });
+  it("ignores Meta+b", () => {
+    expect(press("b", { metaKey: true })).toBeNull();
+  });
+  it("ignores Ctrl+n", () => {
+    expect(press("n", { ctrlKey: true })).toBeNull();
+  });
+  it("ignores a combo with several modifiers", () => {
+    expect(press("d", { metaKey: true, shiftKey: true })).toBeNull();
+  });
+  it("still works with the modifier flags set to false", () => {
+    expect(press("ArrowRight", { metaKey: false, ctrlKey: false, altKey: false })).toBe("next");
+    expect(press("d", { metaKey: false, ctrlKey: false, altKey: false })).toBe("data");
+  });
+  it("still works with no modifier flags at all", () => {
+    expect(press("ArrowRight")).toBe("next");
+    expect(press("d")).toBe("data");
+  });
+  it("lets Shift+D through as data", () => {
+    expect(press("D", { shiftKey: true })).toBe("data");
   });
 });
 
