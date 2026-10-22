@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toCsv, CSV_HEADER, csvFileName, attachmentDisposition } from "./csv";
+import { toCsv, CSV_HEADER, csvFileName, lectureCsvFileName, attachmentDisposition } from "./csv";
 
 const BOM = "﻿";
 
@@ -142,5 +142,13 @@ describe("attachmentDisposition", () => {
   it("never lets a quote, backslash or percent into the quoted fallback", () => {
     const h = attachmentDisposition('a"b\\c%d.csv');
     expect(h).toContain('filename="a_b_c_d.csv"');
+  });
+});
+
+describe("lectureCsvFileName", () => {
+  it("is the lecture name plus .csv, cleaned like the semester file name", () => {
+    expect(lectureCsvFileName("Week 8: Adjusting")).toBe("Week 8: Adjusting.csv");
+    expect(lectureCsvFileName('Week "8"/9\r\n')).toBe("Week 89.csv");
+    expect(lectureCsvFileName("  ")).toBe("lecture.csv");
   });
 });

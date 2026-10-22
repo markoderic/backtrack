@@ -16,7 +16,8 @@ vi.mock("@/lib/supabase/server", () => ({
       const chain = {
         maybeSingle: teacher,
         order: (...args: unknown[]) =>
-          table === "courses" ? courses(...args) : columns.startsWith("course_id") ? held(...args) : live(...args),
+          table === "courses" ? courses(...args) : columns.startsWith("course_id") ? chain : live(...args),
+        range: () => held(),
         eq: (column: string, value: unknown) => {
           eqCalls.push([table, column, value]);
           return chain;
@@ -121,6 +122,15 @@ describe("TeachBody", () => {
     expect(html).toContain("No lectures yet");
     expect(html).toContain("Marko");
     expect(html).toContain('data-start-open="false"');
+  });
+
+  it("still lists the courses, without the line under them, when that read fails", async () => {
+    held.mockResolvedValue({ data: null, error: { message: "meta broke" } });
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(html).toContain('href="/teach/c/c1"');
+    expect(html).toContain("IMS 452");
+    expect(html).not.toContain("No lectures yet");
+    expect(html).not.toContain("last on");
   });
 
   it("opens the add course field when there are no courses", async () => {

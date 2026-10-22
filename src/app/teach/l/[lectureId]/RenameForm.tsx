@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Icon } from "@/components/Icon";
-import { textLinkClass } from "../../ui";
+import { rowPressClass, textLinkClass } from "../../ui";
 
 const NAME_MAX = 120;
 
@@ -92,7 +92,7 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
             ref={nameButton}
             type="button"
             onClick={open}
-            className="group press focus-ring flex min-w-0 items-center gap-2.5 rounded-sm text-left"
+            className={`group flex min-w-0 items-center gap-2.5 rounded-sm text-left ${rowPressClass}`}
           >
             <span className="min-w-0 type-lecture-l break-words text-ink">{current}</span>{" "}
             <Icon

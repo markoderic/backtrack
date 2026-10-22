@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatLectureDate } from "@/lib/lectureDate";
 import { Icon } from "@/components/Icon";
-import { rowLinkClass, staggerClass, staggerStyle } from "../../ui";
+import { hitAreaBelowClass, rowLinkClass, staggerClass, staggerStyle } from "../../ui";
 
 export type PastLecture = {
   id: string;
@@ -29,6 +29,16 @@ const COL = {
 /** The past lectures table on the course page: newest first, five shown, the rest one press away. */
 export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
   const [all, setAll] = useState(false);
+  const list = useRef<HTMLUListElement>(null);
+  const moveFocus = useRef(false);
+
+  // "N more" goes away when pressed, so the keyboard lands on the first lecture it brought in.
+  useEffect(() => {
+    if (all && moveFocus.current) {
+      moveFocus.current = false;
+      list.current?.querySelectorAll<HTMLAnchorElement>("li > a")[SHOWN]?.focus();
+    }
+  }, [all]);
   const shown = all ? lectures : lectures.slice(0, SHOWN);
   const more = lectures.length - shown.length;
 
@@ -42,7 +52,7 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
         <span className={`h-6 items-center ${COL.most}`}>Most lost slide</span>
         <span className="size-4.5 shrink-0" />
       </div>
-      <ul className="flex flex-col">
+      <ul ref={list} className="flex flex-col">
         {shown.map((l, i) => (
           <li key={l.id} className={`border-t border-hairline ${staggerClass}`} style={staggerStyle(i)}>
             <Link href={`/teach/l/${l.id}`} className={`${rowLinkClass} flex items-center py-4 type-body`}>
@@ -89,8 +99,11 @@ export function PastLectures({ lectures }: { lectures: PastLecture[] }) {
       {more > 0 && (
         <button
           type="button"
-          onClick={() => setAll(true)}
-          className="press focus-ring w-fit rounded-sm type-small text-secondary hover:text-ink"
+          onClick={() => {
+            moveFocus.current = true;
+            setAll(true);
+          }}
+          className={`press focus-ring w-fit rounded-sm type-small text-secondary hover:text-ink ${hitAreaBelowClass}`}
         >
           {more} more
         </button>

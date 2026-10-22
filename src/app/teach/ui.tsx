@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LogoLockup } from "@/components/Logo";
+import { Icon } from "@/components/Icon";
 
 /*
  * Shared pieces of the teacher screens (Figma Final, rows 33:706 to 34:1243).
@@ -16,10 +17,25 @@ export const fieldClass =
 /** A field label: Small strong, ink. */
 export const labelClass = "type-small-strong text-ink";
 
-/** An underlined text action (Add a course, Export semester CSV, Cancel ...): Small strong, ink. */
-export const textLinkClass =
+/**
+ * Invisible 44 px hit areas for 20 px text actions (as on My spots): an ::after box around the text,
+ * so the look and the layout do not move. `hitAreaClass` reaches 12 px above and below;
+ * `hitAreaBelowClass` is for actions right under a field or a row link, so it reaches 4 px up and
+ * 20 px down instead of covering the control above.
+ */
+export const hitAreaClass = "relative after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']";
+export const hitAreaBelowClass =
+  "relative after:absolute after:-inset-x-2 after:-top-1 after:-bottom-5 after:content-['']";
+
+const textLinkBase =
   "press focus-ring inline-flex w-fit items-center gap-1.5 rounded-sm type-small-strong text-ink underline " +
   "decoration-from-font underline-offset-[3px] hover:text-ink-hover disabled:cursor-default disabled:text-secondary";
+
+/** An underlined text action (Export semester CSV, Cancel, Change file ...): Small strong, ink, 44 px hit area. */
+export const textLinkClass = `${textLinkBase} ${hitAreaClass}`;
+
+/** The same, for an action directly under a field or a list (Add a course, Add another course). */
+export const textLinkBelowClass = `${textLinkBase} ${hitAreaBelowClass}`;
 
 /** A small outlined button (the live lecture row): 40 high, 1px ink, radius md, Small strong. */
 export const secondaryButtonClass =
@@ -30,9 +46,9 @@ export const secondaryButtonClass =
  * A whole list row that is one link (a course, a past lecture). A 1000 px row scaled to .97
  * jumps 30 px, so rows press to .99 instead; the ring fades in like everywhere else.
  */
-export const rowLinkClass =
-  "group focus-ring rounded-sm transition-[outline-color,scale] duration-(--dur-fast) ease-spring " +
-  "motion-safe:active:scale-[0.99]";
+export const rowPressClass =
+  "focus-ring transition-[outline-color,scale] duration-(--dur-fast) ease-spring motion-safe:active:scale-[0.99]";
+export const rowLinkClass = `group rounded-sm ${rowPressClass}`;
 
 /** Page content that rises in on load (200 ms; a fade only with reduced motion). */
 export const pageInClass = "animate-rise-in";
@@ -54,11 +70,23 @@ export type Crumb = { label: string; href?: string };
  * on the right. The design's Settings link belongs to Task 11 and is not shown yet.
  */
 export function TeacherTopBar({ crumbs, teacherName }: { crumbs: Crumb[]; teacherName?: string | null }) {
+  // On a phone the breadcrumb is hidden, so the page one level up gets a short back link instead.
+  const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2] : undefined;
   return (
     <header className="flex h-16 shrink-0 items-center gap-6 border-b border-hairline px-4 sm:px-8">
       <Link href="/teach" aria-label="backtrack, courses" className="press focus-ring shrink-0 rounded-sm">
         <LogoLockup size="S" />
       </Link>
+      {parent?.href && (
+        <Link
+          href={parent.href}
+          data-testid="back-link"
+          className={`press focus-ring flex min-w-0 items-center gap-1 rounded-sm type-small text-secondary hover:text-ink sm:hidden ${hitAreaClass}`}
+        >
+          <Icon name="back" size={18} />
+          <span className="truncate">{parent.label}</span>
+        </Link>
+      )}
       <nav aria-label="Breadcrumb" className="hidden min-w-0 sm:block">
         <ol className="flex min-w-0 items-center gap-2 type-small whitespace-nowrap">
           {crumbs.map((crumb, i) => {
@@ -75,7 +103,10 @@ export function TeacherTopBar({ crumbs, teacherName }: { crumbs: Crumb[]; teache
                     {crumb.label}
                   </span>
                 ) : crumb.href ? (
-                  <Link href={crumb.href} className="press focus-ring rounded-sm text-secondary hover:text-ink">
+                  <Link
+                    href={crumb.href}
+                    className="press focus-ring relative rounded-sm text-secondary after:absolute after:-inset-x-1 after:-inset-y-3 after:content-[''] hover:text-ink"
+                  >
                     {crumb.label}
                   </Link>
                 ) : (

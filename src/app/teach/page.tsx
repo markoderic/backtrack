@@ -19,6 +19,34 @@ function courseMeta(list: LectureMeta[] | undefined): string {
   return `${list.length} ${list.length === 1 ? "lecture" : "lectures"}, last on ${formatLectureDate(last)}`;
 }
 
+type Supabase = Awaited<ReturnType<typeof createServerSupabase>>;
+const PAGE = 1000;
+
+/**
+ * Every lecture's course and date, for the line under each course name. Read in pages (the API
+ * returns at most 1000 rows a call). Only a label: a failed read shows the list without the line.
+ */
+async function readLectureMeta(supabase: Supabase, teacherId: string): Promise<LectureMeta[] | null> {
+  try {
+    const out: LectureMeta[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("lectures")
+        .select("course_id, lecture_date, courses!inner(teacher_id)")
+        .eq("courses.teacher_id", teacherId)
+        .order("lecture_date", { ascending: false })
+        .order("id")
+        .range(from, from + PAGE - 1);
+      if (error) return null;
+      const page = (data ?? []) as LectureMeta[];
+      out.push(...page);
+      if (page.length < PAGE) return out;
+    }
+  } catch {
+    return null;
+  }
+}
+
 export async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
   const supabase = await createServerSupabase();
   const {
@@ -48,15 +76,9 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
         .eq("courses.teacher_id", user.id)
         .order("started_at", { ascending: false });
       if (liveError) throw new Error(liveError.message);
-      // How many lectures each course has and the last one's date, for the line under its name.
-      const { data: held, error: heldError } = await supabase
-        .from("lectures")
-        .select("course_id, lecture_date, courses!inner(teacher_id)")
-        .eq("courses.teacher_id", user.id)
-        .order("lecture_date", { ascending: false });
-      if (heldError) throw new Error(heldError.message);
+      const held = await readLectureMeta(supabase, user.id);
       const byCourse = new Map<string, LectureMeta[]>();
-      for (const l of (held ?? []) as LectureMeta[]) {
+      for (const l of held ?? []) {
         byCourse.set(l.course_id, [...(byCourse.get(l.course_id) ?? []), l]);
       }
 
@@ -84,7 +106,9 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
                         <span className="truncate type-title text-ink transition-colors duration-(--dur-fast) ease-out group-hover:text-ink-hover">
                           {course.name}
                         </span>
-                        <span className="type-small text-secondary">{courseMeta(byCourse.get(course.id))}</span>
+                        {held && (
+                          <span className="type-small text-secondary">{courseMeta(byCourse.get(course.id))}</span>
+                        )}
                       </span>
                       <span className="min-w-0 flex-1" />
                       <Icon

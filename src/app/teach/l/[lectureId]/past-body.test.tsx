@@ -170,7 +170,9 @@ describe("PastBody", () => {
     expect(eqCalls).toContainEqual(["participants", "lecture_id", "l1"]);
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(crumbs).toHaveTextContent("Courses/ACC 221/Lecture 1, Oct 19");
-    expect(screen.getByRole("link", { name: "ACC 221" })).toHaveAttribute("href", "/teach/c/c1");
+    expect(crumbs.querySelector('a[href="/teach/c/c1"]')).toHaveTextContent("ACC 221");
+    // On a phone the breadcrumb is hidden; a back link goes to the course instead.
+    expect(screen.getByTestId("back-link")).toHaveAttribute("href", "/teach/c/c1");
     expect(screen.getByText("Linda Carter")).toBeInTheDocument();
     // 14:02 to 14:55 UTC is 10:02 to 10:55 in Oxford, Ohio (EDT).
     expect(screen.getByText("Oct 19, 10:02 to 10:55")).toBeInTheDocument();

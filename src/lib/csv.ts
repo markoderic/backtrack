@@ -20,14 +20,25 @@ export function toCsv(header: string[], rows: (string | number)[][]): string {
   return `${BOM}${lines.join("\r\n")}\r\n`;
 }
 
-/** "<course name> semester.csv", with what would break a header or a file name taken out. */
-export function csvFileName(courseName: string): string {
-  const clean = courseName
+// Takes out what would break a header or a file name, and squeezes spaces.
+function cleanFileName(name: string): string {
+  return name
     .replace(/\t/g, " ")
     .replace(/["\\/\u0000-\u001f\u007f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** "<course name> semester.csv", with what would break a header or a file name taken out. */
+export function csvFileName(courseName: string): string {
+  const clean = cleanFileName(courseName);
   return clean ? `${clean} semester.csv` : "semester.csv";
+}
+
+/** "<lecture name>.csv" for one lecture's export, cleaned the same way. */
+export function lectureCsvFileName(lectureName: string): string {
+  const clean = cleanFileName(lectureName);
+  return clean ? `${clean}.csv` : "lecture.csv";
 }
 
 // RFC 5987 attr-char leaves out ' ( ) * which encodeURIComponent does not escape.

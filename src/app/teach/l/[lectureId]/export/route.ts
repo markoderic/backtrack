@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { CSV_HEADER, attachmentDisposition, toCsv } from "@/lib/csv";
-import { lectureCsvFileName } from "./filename";
+import { CSV_HEADER, attachmentDisposition, lectureCsvFileName, toCsv } from "@/lib/csv";
 
 const notFound = () => new Response("Not found", { status: 404 });
 

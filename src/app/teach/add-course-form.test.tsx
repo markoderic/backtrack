@@ -25,6 +25,14 @@ describe("AddCourseForm", () => {
     expect(screen.queryByLabelText("Course name")).toBeNull();
   });
 
+  it("gives Add a course and Cancel an invisible 44 px hit area", () => {
+    render(<AddCourseForm />);
+    // Under the course list: reaches 4 px up and 20 px down (20 px text + 24).
+    expect(screen.getByRole("button", { name: "Add a course" }).className).toMatch(/after:-top-1 .*after:-bottom-5/);
+    fireEvent.click(screen.getByRole("button", { name: "Add a course" }));
+    expect(screen.getByRole("button", { name: "Cancel" }).className).toContain("after:-inset-y-3");
+  });
+
   it("is open from the start when the teacher has no courses", () => {
     render(<AddCourseForm startOpen />);
     expect(screen.getByLabelText("Course name")).toBeInTheDocument();

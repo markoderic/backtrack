@@ -39,7 +39,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { GET } from "./route";
-import { lectureCsvFileName } from "./filename";
 
 const call = () => GET(new Request("http://x/teach/l/l1/export"), { params: Promise.resolve({ lectureId: "l1" }) });
 const lecture = { id: "l1", name: "Week 8: Adjusting", status: "ended", lecture_date: "2026-10-21", slide_count: 3 };
@@ -117,8 +116,4 @@ describe("GET /teach/l/[lectureId]/export", () => {
     ]);
   });
 
-  it("names the file after the lecture, without characters that break a file name", () => {
-    expect(lectureCsvFileName('Week "8"/9')).toBe("Week 89.csv");
-    expect(lectureCsvFileName("  ")).toBe("lecture.csv");
-  });
 });

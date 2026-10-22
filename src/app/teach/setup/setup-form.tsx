@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { saveSetup } from "../actions";
 import { ButtonPrimary } from "@/components/ButtonPrimary";
-import { fieldClass, labelClass, textLinkClass } from "../ui";
+import { fieldClass, labelClass, textLinkBelowClass } from "../ui";
 
 export function SetupForm({ defaultName = "" }: { defaultName?: string }) {
   const [name, setName] = useState(defaultName);
@@ -43,7 +43,7 @@ export function SetupForm({ defaultName = "" }: { defaultName?: string }) {
             className={`${fieldClass} ${i > 0 ? "animate-pop-in" : ""}`}
           />
         ))}
-        <button type="button" onClick={() => setCourses([...courses, ""])} className={textLinkClass}>
+        <button type="button" onClick={() => setCourses([...courses, ""])} className={textLinkBelowClass}>
           Add another course
         </button>
       </fieldset>

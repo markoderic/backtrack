@@ -36,13 +36,13 @@ function fileSize(bytes: number): string {
 
 function ProgressBar({ done, total, label }: { done: number; total: number; label: string }) {
   const part = total > 0 ? Math.min(1, done / total) : 0;
+  // Indeterminate (no value) until the page count is known.
+  const value = total > 0 ? { "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done } : {};
   return (
     <div
       role="progressbar"
       aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={total}
-      aria-valuenow={done}
+      {...value}
       className="h-1.5 w-full overflow-hidden rounded-[3px] bg-hairline"
     >
       {/* Grows with transform only (no width animation), from the left. */}
@@ -64,6 +64,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const touchedName = useRef(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   // Each picked file gets a new run; a cancelled or replaced run is ignored and stopped at its next page.
   const run = useRef(0);
 
@@ -181,6 +182,17 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   }
 
   const ready = prep.status === "ready";
+  // One live region that is always there, so screen readers hear the progress as it changes.
+  const status =
+    starting && upload
+      ? `Uploading slide ${upload.done} of ${upload.total}`
+      : prep.status === "preparing"
+        ? prep.total > 0
+          ? `Preparing slide ${prep.done} of ${prep.total}`
+          : "Preparing slides"
+        : prep.status === "ready"
+          ? `${prep.blobs.length} ${prep.blobs.length === 1 ? "slide" : "slides"} ready`
+          : "";
   const pages = prep.status === "ready" ? prep.blobs.length : prep.status === "preparing" ? prep.total : 0;
 
   return (
@@ -230,6 +242,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       >
         <input
           id="pdf-file"
+          ref={fileInput}
           type="file"
           accept="application/pdf,.pdf"
           aria-label="PDF file"
@@ -267,16 +280,16 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                 </button>
               )}
               {ready && !starting && (
-                <label htmlFor="pdf-file" className={`${textLinkClass} cursor-pointer`}>
+                <button type="button" onClick={() => fileInput.current?.click()} className={textLinkClass}>
                   Change file
-                </label>
+                </button>
               )}
             </div>
 
             {prep.status === "preparing" && (
               <>
                 <ProgressBar done={prep.done} total={prep.total} label="Preparing slides" />
-                <p className="type-small text-secondary">
+                <p aria-hidden className="type-small text-secondary">
                   {prep.total > 0 ? `Preparing slide ${prep.done} of ${prep.total}` : "Preparing slides"}
                 </p>
               </>
@@ -285,7 +298,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
             {ready && starting && upload && (
               <>
                 <ProgressBar done={upload.done} total={upload.total} label="Uploading slides" />
-                <p className="type-small text-secondary">{`Uploading slide ${upload.done} of ${upload.total}`}</p>
+                <p aria-hidden className="type-small text-secondary">{`Uploading slide ${upload.done} of ${upload.total}`}</p>
               </>
             )}
 
@@ -308,7 +321,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                     )}
                   </div>
                 )}
-                <p className="type-small text-secondary">
+                <p aria-hidden className="type-small text-secondary">
                   {prep.blobs.length} {prep.blobs.length === 1 ? "slide" : "slides"} ready
                 </p>
               </>
@@ -316,6 +329,10 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
           </div>
         )}
       </div>
+
+      <p role="status" aria-live="polite" data-testid="start-status" className="sr-only">
+        {status}
+      </p>
 
       {error && (
         <p role="alert" className="-mt-3 flex animate-fade-in items-center gap-2 type-small text-ink">

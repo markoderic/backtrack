@@ -103,7 +103,9 @@ describe("StartForm", () => {
     });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     choose();
-    expect(await screen.findByText("Preparing slide 12 of 40")).toBeInTheDocument();
+    // Announced in one polite live region that is always on the page.
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Preparing slide 12 of 40"));
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("progressbar", { name: "Preparing slides" })).toHaveAttribute("aria-valuenow", "12");
     expect(screen.getByText(/^40 pages, /)).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
@@ -118,15 +120,43 @@ describe("StartForm", () => {
     expect(startButton()).toBeDisabled();
   });
 
-  it("says how many slides are ready and what Start does", async () => {
+  it("stops preparing when the page goes away", async () => {
+    let progress: (d: number, t: number) => void = () => {};
+    renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void) => {
+      progress = onProgress;
+      return new Promise(() => {});
+    });
+    const { unmount } = render(<StartForm courseId={COURSE} existingCount={0} />);
+    choose();
+    await waitFor(() => expect(renderPdf).toHaveBeenCalled());
+    expect(() => progress(1, 10)).not.toThrow();
+    unmount();
+    expect(() => progress(2, 10)).toThrow();
+  });
+
+    it("says how many slides are ready and what Start does", async () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("Week 8 slides.pdf");
     expect(screen.getByText("Week 8 slides.pdf")).toBeInTheDocument();
-    expect(screen.getByText("2 slides ready")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("2 slides ready");
     expect(screen.getByText(/^2 pages, /)).toBeInTheDocument();
     expect(screen.getByText("Opens the projector view with the join code.")).toBeInTheDocument();
-    expect(screen.getByText("Change file")).toBeInTheDocument();
+    // Change file is a real button that opens the file picker.
+    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const click = vi.spyOn(input, "click").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Change file" }));
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an indeterminate bar until the page count is known", async () => {
+    renderPdf.mockReturnValue(new Promise(() => {}));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    choose();
+    const bar = await screen.findByRole("progressbar", { name: "Preparing slides" });
+    expect(bar).not.toHaveAttribute("aria-valuemax");
+    expect(bar).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing slides");
   });
 
   it("does not start the lecture when an upload fails, and can try again without preparing again", async () => {
@@ -148,7 +178,7 @@ describe("StartForm", () => {
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady();
     fireEvent.click(startButton());
-    expect(await screen.findByText("Uploading slide 0 of 2")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Uploading slide 0 of 2"));
     expect(startButton()).toBeDisabled();
     expect(nameField()).toBeDisabled();
   });

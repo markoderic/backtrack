@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { addCourse } from "./actions";
-import { fieldClass, labelClass, textLinkClass } from "./ui";
+import { fieldClass, labelClass, textLinkBelowClass, textLinkClass } from "./ui";
 
 /** "Add a course" under the course list. Opens a field in place (pops in); open from the start with no courses. */
 export function AddCourseForm({ startOpen = false }: { startOpen?: boolean }) {
@@ -38,7 +38,7 @@ export function AddCourseForm({ startOpen = false }: { startOpen?: boolean }) {
 
   if (!open) {
     return (
-      <button ref={openButton} type="button" onClick={() => setOpen(true)} className={textLinkClass}>
+      <button ref={openButton} type="button" onClick={() => setOpen(true)} className={textLinkBelowClass}>
         Add a course
       </button>
     );
