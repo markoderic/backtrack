@@ -19,7 +19,12 @@ export type QueueOp =
   | { op: "insert"; tap: PendingTap }
   | { op: "update"; id: string; patch: TapPatch };
 
-export type SendResult = "ok" | "rejected" | "offline";
+/**
+ * ok: saved. offline: try again later. rejected: the database said no, retrying will not
+ * help. limited: the database said no because this student made too many taps (the
+ * 0012 limit); the queue drops it like a rejection, and the page says why.
+ */
+export type SendResult = "ok" | "rejected" | "offline" | "limited";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 

@@ -33,6 +33,14 @@ language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
 $$;
 
+create table storage.buckets (
+  id text primary key,
+  name text,
+  public boolean default false,
+  allowed_mime_types text[],
+  file_size_limit bigint
+);
+
 create table storage.objects (
   bucket_id text,
   name text,

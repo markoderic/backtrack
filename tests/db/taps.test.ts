@@ -73,6 +73,7 @@ type Tap = {
 };
 
 /** Inserts a tap as `claims`; the defaults are a valid tap by s1 on slide 3 of lecture A. */
+const insertTapNow = (claims: Claims, t: Tap = {}) => insertTap(claims, t);
 function insertTap(claims: Claims, t: Tap = {}) {
   const hl = t.hl ?? [null, null, null, null];
   const slide = t.slide ?? 3;
@@ -237,6 +238,12 @@ describe("highlight check", () => {
   it("accepts every box rectFromDrag draws, edges included (float4 rounding must not tip it over 1)", async () => {
     const box = { width: 997, height: 331 };
     let n = 0;
+    // Over 100 taps from one student: each earlier one is made to look a few minutes old,
+    // so the 20 a minute limit (0012) stays out of this check.
+    const insertTap = async (claims: Claims, t: Tap) => {
+      await db.query("update public.lost_taps set created_at = now() - interval '5 minutes'");
+      return insertTapNow(claims, t);
+    };
     for (let a = 0; a <= 997; a += 83) {
       for (let b = 0; b <= 997; b += 97) {
         const r = rectFromDrag({ x: a, y: 3 }, { x: b, y: 331 }, box);

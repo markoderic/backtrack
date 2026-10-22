@@ -20,9 +20,18 @@ export function classifyError(error: ErrorLike, status?: number): "offline" | "r
   return s === undefined ? "offline" : "rejected";
 }
 
-/** The result of one supabase-js call, as ok, rejected or offline. */
+/**
+ * The SQLSTATE the tap limit trigger raises (supabase/migrations/0012_tap_limits.sql): one
+ * student made over 20 taps in a minute, or 300 in the lecture. Checked before the status,
+ * so whatever HTTP status the API gives it, the tap is dropped and never retried.
+ */
+export const TAP_LIMIT_CODE = "BT429";
+
+/** The result of one supabase-js call, as ok, rejected, limited or offline. */
 export function classifySend(res: { error: ErrorLike | null; status?: number }): SendResult {
-  return res.error ? classifyError(res.error, res.status) : "ok";
+  if (!res.error) return "ok";
+  if (res.error.code === TAP_LIMIT_CODE) return "limited";
+  return classifyError(res.error, res.status);
 }
 
 /** A fetch that threw because there is no network is offline. Anything else is a bug and goes on up. */
@@ -81,10 +90,22 @@ export async function loadOwnTaps(
   lectureId: string,
 ): Promise<{ id: string; slide: number; kind: "lost" | "save" }[] | null> {
   try {
+    // Only this user's own rows: a teacher who joins their own lecture in the same browser
+    // could otherwise read every student's lost taps here (the teacher's select policy).
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+    if (sessionError) {
+      if (classifyError(sessionError) === "offline") return null;
+      throw new Error(sessionError.message);
+    }
+    if (!session) return [];
     const { data, error, status } = await supabase
       .from("lost_taps")
       .select("id, slide_number, kind")
       .eq("lecture_id", lectureId)
+      .eq("anon_id", session.user.id)
       .eq("undone", false);
     if (error) {
       if (classifyError(error, status) === "offline") return null;

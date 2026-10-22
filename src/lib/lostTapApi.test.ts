@@ -38,6 +38,11 @@ describe("classifySend", () => {
     expect(classifySend({ error: { code: "", message: "slow down" }, status: 429 })).toBe("offline");
   });
 
+  it("is limited for the tap limit error, whatever the status, so it is dropped and never retried", () => {
+    expect(classifySend({ error: { code: "BT429", message: "Too many taps. Try again in a minute." }, status: 400 })).toBe("limited");
+    expect(classifySend({ error: { code: "BT429", message: "Too many taps." }, status: 500 })).toBe("limited");
+  });
+
   it("is rejected for a 4xx with no code", () => {
     expect(classifySend({ error: { message: "nope" }, status: 400 })).toBe("rejected");
   });
@@ -65,12 +70,13 @@ function fakeSupabase(over: {
   const eqUpdate = vi.fn(over.eq ?? (async () => ({ error: null, status: 204 })));
   const update = vi.fn(() => ({ eq: eqUpdate }));
   const eqUndone = vi.fn(over.select ?? (async () => ({ data: [], error: null, status: 200 })));
-  const eqLecture = vi.fn(() => ({ eq: eqUndone }));
+  const eqAnon = vi.fn(() => ({ eq: eqUndone }));
+  const eqLecture = vi.fn(() => ({ eq: eqAnon }));
   const select = vi.fn(() => ({ eq: eqLecture }));
   const from = vi.fn(() => ({ upsert, update, select }));
   const getSession = vi.fn(async () => ("session" in over ? over.session : { data: { session: { user: { id: USER } } }, error: null }));
   const supabase = { from, auth: { getSession } } as unknown as SupabaseClient;
-  return { supabase, from, upsert, update, eqUpdate, select, eqLecture, eqUndone, getSession };
+  return { supabase, from, upsert, update, eqUpdate, select, eqLecture, eqAnon, eqUndone, getSession };
 }
 
 describe("makeSend", () => {
@@ -195,7 +201,27 @@ describe("loadOwnTaps", () => {
     expect(f.from).toHaveBeenCalledWith("lost_taps");
     expect(f.select).toHaveBeenCalledWith("id, slide_number, kind");
     expect(f.eqLecture).toHaveBeenCalledWith("lecture_id", LECTURE);
+    expect(f.eqAnon).toHaveBeenCalledWith("anon_id", USER);
     expect(f.eqUndone).toHaveBeenCalledWith("undone", false);
+  });
+
+  it("asks only for the signed in user's own rows (a teacher who joined their own lecture gets theirs only)", async () => {
+    const f = fakeSupabase({ session: { data: { session: { user: { id: "teacher-id" } } }, error: null } });
+    await loadOwnTaps(f.supabase, LECTURE);
+    expect(f.eqAnon).toHaveBeenCalledWith("anon_id", "teacher-id");
+  });
+
+  it("gives no rows and asks nothing when nobody is signed in", async () => {
+    const f = fakeSupabase({ session: { data: { session: null }, error: null } });
+    expect(await loadOwnTaps(f.supabase, LECTURE)).toEqual([]);
+    expect(f.from).not.toHaveBeenCalled();
+  });
+
+  it("gives null when the session can not be read offline, and throws any other session error", async () => {
+    const offline = fakeSupabase({ session: { data: { session: null }, error: { message: "Failed to fetch" } } });
+    expect(await loadOwnTaps(offline.supabase, LECTURE)).toBeNull();
+    const broken = fakeSupabase({ session: { data: { session: null }, error: { code: "x", message: "bad session", status: 400 } } });
+    await expect(loadOwnTaps(broken.supabase, LECTURE)).rejects.toThrow("bad session");
   });
 
   it("gives null when the network is down so the caller can try again", async () => {

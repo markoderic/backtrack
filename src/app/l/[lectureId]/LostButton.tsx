@@ -11,6 +11,7 @@ import { markRejected } from "@/lib/tapSync";
 export const UNDO_WINDOW_MS = 10000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
+const TOO_MANY = "Too many taps. Try again in a minute.";
 
 type Props = {
   lectureId: string;
@@ -117,6 +118,9 @@ export function LostButton({
   // A tap the database refused while the page was open. It is gone from the queue,
   // so the flush on leaving must still tell the spots page.
   const refusedTap = useRef(false);
+  // The ops the database refused for the tap limit (send said "limited"). Shared by every
+  // caller of a flush run, as two flushes at once get the same run and the same refusals.
+  const limitedOps = useRef(new WeakSet<QueueOp>());
   useEffect(() => {
     sendRef.current = send;
     loadOwnRef.current = loadOwn;
@@ -144,18 +148,29 @@ export function LostButton({
   }, []);
 
   const flush = useCallback(async (ending = false) => {
+    // Known before the flush starts, so it is noted first: the page leaves after at most
+    // 3 seconds, maybe before a slow leaving flush comes back.
+    if (ending && refusedTap.current) markRejected(lectureId);
     try {
-      const { rejected: refused } = await queue().flush((op) => sendRef.current(op));
-      if (ending && refusedTap.current) markRejected(lectureId);
+      const { rejected: refused } = await queue().flush(async (op) => {
+        const result = await sendRef.current(op);
+        if (result !== "limited") return result;
+        // Dropped like any refusal (never retried); remembered so the message can say why.
+        limitedOps.current.add(op);
+        return "rejected";
+      });
       if (refused.length === 0) return;
+      // Refused only for the tap limit: the lecture did not end, so the page need not check
+      // and the spots page gets no "lecture had ended" note.
+      const tooMany = refused.every((op) => limitedOps.current.has(op));
       // The page is going (or gone): nobody is here to show it, so leave a note for the spots page.
-      if (ending || !mounted.current) markRejected(lectureId);
+      if ((ending || !mounted.current) && !tooMany) markRejected(lectureId);
       if (!mounted.current) return;
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
-      if (gone.size > 0) refusedTap.current = true;
+      if (gone.size > 0 && !tooMany) refusedTap.current = true;
       setBar((b) => (b && gone.has(b.id) ? null : b));
-      setRejected(gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
-      if (!ending) onRejectedRef.current?.();
+      setRejected(tooMany ? TOO_MANY : gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
+      if (!ending && !tooMany) onRejectedRef.current?.();
     } catch (e) {
       fail(e);
     }

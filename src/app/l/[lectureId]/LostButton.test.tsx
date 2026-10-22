@@ -421,6 +421,53 @@ describe("LostButton", () => {
     });
   });
 
+  describe("taps over the limit (too many from one student)", () => {
+    const TOO_MANY = "Too many taps. Try again in a minute.";
+
+    it("says too many taps, takes the dot away, sends it once and never again", async () => {
+      const send = vi.fn<Send>(async () => "limited");
+      const { lastSpots } = setup({ send });
+      await settle();
+      press();
+      await settle();
+      expect(screen.getByRole("alert")).toHaveTextContent(TOO_MANY);
+      expect(screen.queryByText(REJECTED)).not.toBeInTheDocument();
+      expect(lastSpots()).toEqual([]);
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+      expect(send).toHaveBeenCalledTimes(1);
+      // Dropped from the queue: nothing is left to send on reconnect or online.
+      expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
+      await act(async () => window.dispatchEvent(new Event("online")));
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not ask the page to check for the end, and leaves no note for the spots page", async () => {
+      sessionStorage.clear();
+      const onRejected = vi.fn();
+      let flush: ((ending?: boolean) => Promise<void>) | undefined;
+      setup({ send: vi.fn<Send>(async () => "limited"), onRejected, onFlushReady: (f) => (flush = f) });
+      await settle();
+      press();
+      await settle();
+      expect(onRejected).not.toHaveBeenCalled();
+      await act(async () => flush?.(true));
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
+    });
+
+    it("a later tap that saves clears the message", async () => {
+      const send = vi.fn<Send>().mockResolvedValueOnce("limited").mockResolvedValue("ok");
+      setup({ send });
+      await settle();
+      press();
+      await settle();
+      expect(screen.getByText(TOO_MANY)).toBeInTheDocument();
+      press();
+      await settle();
+      expect(screen.queryByText(TOO_MANY)).not.toBeInTheDocument();
+      expect(screen.getByText("Saved slide 7")).toBeInTheDocument();
+    });
+  });
+
   describe("offline queue", () => {
     it("keeps an offline tap in localStorage and sends it on the online event", async () => {
       const send = vi.fn<Send>().mockResolvedValueOnce("offline").mockResolvedValue("ok");
@@ -544,6 +591,25 @@ describe("LostButton", () => {
       await settle();
       await act(async () => flush?.(true));
       expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
+    });
+
+    it("notes a tap refused while open before waiting on the leaving flush, which may never come back in time", async () => {
+      sessionStorage.clear();
+      let flush: ((ending?: boolean) => Promise<void>) | undefined;
+      // The first tap is refused while the page is open; the second one's send hangs.
+      const send = vi.fn<Send>().mockResolvedValueOnce("rejected").mockImplementation(() => new Promise<SendResult>(() => {}));
+      setup({ send, onFlushReady: (f) => (flush = f) });
+      await settle();
+      press();
+      await settle();
+      expect(screen.getByText(REJECTED)).toBeInTheDocument();
+      press();
+      await settle();
+      // Not awaited: the leaving flush is stuck behind the hung send.
+      void act(() => {
+        void flush?.(true);
+      });
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
     });
 
     it("does not set the key for a rejection while the page is still open", async () => {

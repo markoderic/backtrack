@@ -23,12 +23,23 @@ const insert = vi.fn();
 const update = vi.fn();
 const upsert = vi.fn();
 const rpc = vi.fn();
-// The student's own rows: select(...).eq("lecture_id", ...).eq("undone", false)
+// The student's own rows: select(...).eq("lecture_id", ...).eq("anon_id", ...).eq("undone", false)
 const ownRows = vi.fn();
+const ownFilters = vi.fn();
 const getSession = vi.fn();
 const from = vi.fn((table: string) =>
   table === "lost_taps"
-    ? { select: () => ({ eq: () => ({ eq: ownRows }) }), insert, update, upsert }
+    ? {
+        select: () => ({
+          eq: (...a: unknown[]) => (
+            ownFilters(...a),
+            { eq: (...b: unknown[]) => (ownFilters(...b), { eq: ownRows }) }
+          ),
+        }),
+        insert,
+        update,
+        upsert,
+      }
     : { select: () => ({ eq: () => ({ single }) }), insert, update, upsert },
 );
 vi.mock("@/lib/supabase/browser", () => ({
@@ -92,7 +103,9 @@ function channelStatus(status: string) {
 const teacherMoves = (n: number) => act(() => channelUpdate({ new: { current_slide: n, status: "live", slide_count: 10 } }));
 
 beforeEach(() => {
-  [single, insert, update, upsert, rpc, from, replace, useSlideImages, ownRows, getSession].forEach((m) => m.mockClear());
+  [single, insert, update, upsert, rpc, from, replace, useSlideImages, ownRows, ownFilters, getSession].forEach((m) =>
+    m.mockClear(),
+  );
   localStorage.clear();
   sessionStorage.clear();
   upsert.mockResolvedValue({ error: null, status: 201 });
@@ -394,6 +407,10 @@ describe("StudentLecture", () => {
       expect(within(strip()).getByRole("button", { name: "Slide 5, saved" })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: /My spots/ })).toHaveTextContent("My spots2");
       expect(within(strip()).getByRole("button", { name: "Slide 7, live, viewing" })).toBeInTheDocument();
+      // Only this user's rows are asked for.
+      expect(ownFilters).toHaveBeenCalledWith("lecture_id", LECTURE);
+      expect(ownFilters).toHaveBeenCalledWith("anon_id", STUDENT);
+      expect(ownRows).toHaveBeenCalledWith("undone", false);
     });
   });
 
