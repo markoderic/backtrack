@@ -89,6 +89,55 @@ describe("HighlightLayer", () => {
     expect(box.style.height).toBe("20%");
   });
 
+  describe("where the menu goes", () => {
+    // The slide is 1000 x 500 px; the menu is about 106 px tall.
+    const top = () => parseFloat((menu() as HTMLElement).style.top);
+    const insideSlide = () => {
+      expect(top()).toBeGreaterThanOrEqual(0);
+      expect(top() + 106).toBeLessThanOrEqual(500);
+    };
+
+    it("goes under a small box high on the slide", () => {
+      render(<Stage onChoose={vi.fn()} />);
+      drag([100, 100], [300, 200]);
+      expect(top()).toBe(208);
+      insideSlide();
+    });
+
+    it("goes above a small box low on the slide", () => {
+      render(<Stage onChoose={vi.fn()} />);
+      drag([100, 400], [300, 480]);
+      expect(top()).toBeLessThan(400);
+      insideSlide();
+    });
+
+    it("stays inside the slide for a box that covers the whole slide", () => {
+      render(<Stage onChoose={vi.fn()} />);
+      drag([0, 0], [1000, 500]);
+      insideSlide();
+    });
+
+    it("stays inside the slide for a tall box with no room above or below", () => {
+      render(<Stage onChoose={vi.fn()} />);
+      drag([100, 50], [300, 450]);
+      insideSlide();
+    });
+
+    it("stays inside the slide when the slide is shorter than the menu", () => {
+      mockLayerSize(1000, 90);
+      render(<Stage onChoose={vi.fn()} />);
+      drag([100, 10], [300, 80]);
+      expect(top()).toBe(0);
+    });
+
+    it("lets the buttons and the note field be used: the menu is selectable text with a normal cursor", () => {
+      render(<Stage onChoose={vi.fn()} />);
+      drag([100, 100], [300, 200]);
+      expect(menu()!.className).toContain("select-text");
+      expect(menu()!.className).toContain("cursor-auto");
+    });
+  });
+
   it("a pen drag starts a highlight too", () => {
     render(<Stage onChoose={vi.fn()} />);
     drag([100, 100], [300, 200], { pointerType: "pen", button: 0, pointerId: 2 });

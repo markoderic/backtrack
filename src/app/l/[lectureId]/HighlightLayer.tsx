@@ -18,6 +18,24 @@ type Props = {
 
 const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
 
+/** The menu is about 106 px tall (note field, buttons, padding); a little extra keeps it clear of the edge. */
+const MENU_HEIGHT = 116;
+const MENU_GAP = 8;
+
+/**
+ * Where the menu's top edge goes, in px from the top of the slide: under the box if
+ * there is room, else above it, else inside the slide against the box's bottom edge.
+ * It never leaves the slide, so the note field and both buttons are always on screen.
+ */
+export function menuTop(rect: Rect, slideHeight: number): number {
+  const top = rect.y * slideHeight;
+  const bottom = (rect.y + rect.h) * slideHeight;
+  const lowest = Math.max(0, slideHeight - MENU_HEIGHT);
+  if (bottom + MENU_GAP + MENU_HEIGHT <= slideHeight) return bottom + MENU_GAP;
+  if (top - MENU_GAP - MENU_HEIGHT >= 0) return top - MENU_GAP - MENU_HEIGHT;
+  return Math.min(lowest, Math.max(0, bottom - MENU_HEIGHT - MENU_GAP));
+}
+
 /**
  * Sits over the slide image. A drag with a mouse or pen draws a box and opens a
  * small menu by it: I'm lost, Save this, and an optional note. On a touch screen
@@ -96,7 +114,6 @@ export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
   }
 
   const shown = draft ?? pending?.rect ?? null;
-  const placeBelow = pending ? pending.rect.y + pending.rect.h <= 0.7 : true;
   const centre = pending ? pending.rect.x + pending.rect.w / 2 : 0;
 
   return (
@@ -119,13 +136,11 @@ export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
               ref={menuRef}
               role="group"
               aria-label="Highlight"
-              className="absolute z-10 flex w-64 max-w-full flex-col gap-2 border border-white bg-black p-2 text-white"
+              className="absolute z-10 flex w-64 max-w-full cursor-auto select-text flex-col gap-2 border border-white bg-black p-2 text-white"
               style={{
                 left: pct(centre),
                 transform: `translateX(-${pct(centre)})`,
-                ...(placeBelow
-                  ? { top: `calc(${pct(pending.rect.y + pending.rect.h)} + 0.5rem)` }
-                  : { bottom: `calc(${pct(1 - pending.rect.y)} + 0.5rem)` }),
+                top: menuTop(pending.rect, box?.height ?? 0),
               }}
             >
               <input
