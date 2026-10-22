@@ -206,7 +206,8 @@ export async function CourseBody({
       <RefreshOnReturn />
       <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
-          <div className="flex min-w-0 flex-1 gap-4">
+          {/* On a phone the name gets the whole row and Start lecture goes under it. */}
+          <div className="flex min-w-0 flex-1 basis-full gap-4 sm:basis-0">
             {details && (
               <span
                 aria-hidden

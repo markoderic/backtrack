@@ -19,6 +19,8 @@ import {
 import { fieldClass, labelClass } from "../../ui";
 import { STATUS_MS } from "../../settings/NameForm";
 
+type ErrorField = "start" | "end" | "days" | "section";
+
 /** The time fields: the teacher field look, as wide as a time needs. */
 const timeClass =
   "h-12 w-40 max-w-full rounded-md border border-hairline bg-surface px-4 type-body text-ink outline-hidden " +
@@ -57,7 +59,13 @@ export function CourseDetailsEditor({
   const [start, setStart] = useState(timeValue(initial.startMinute));
   const [end, setEnd] = useState(timeValue(initial.endMinute));
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorText] = useState<string | null>(null);
+  // Which field the message is about, so only that one is marked invalid and points at it.
+  const [errorAt, setErrorAt] = useState<ErrorField | null>(null);
+  const setError = (text: string | null, at: ErrorField | null = null) => {
+    setErrorText(text);
+    setErrorAt(text ? at : null);
+  };
   const [done, setDone] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -115,23 +123,23 @@ export function CourseDetailsEditor({
     const endMinute = end ? parseTime(end) : null;
     const trimmed = section.trim();
     if ((start && startMinute === null) || (end && endMinute === null)) {
-      setError("Type the times like 10:05 AM.");
+      setError("Type the times like 10:05 AM.", start && startMinute === null ? "start" : "end");
       return;
     }
     if ((startMinute === null) !== (endMinute === null) || (days.length > 0 && startMinute === null)) {
-      setError("Add when class starts and ends.");
+      setError("Add when class starts and ends.", startMinute === null ? "start" : "end");
       return;
     }
     if (startMinute !== null && days.length === 0) {
-      setError("Pick the days the class meets.");
+      setError("Pick the days the class meets.", "days");
       return;
     }
     if (startMinute !== null && endMinute !== null && endMinute <= startMinute) {
-      setError("Class has to end after it starts.");
+      setError("Class has to end after it starts.", "end");
       return;
     }
     if (trimmed.length > SECTION_MAX) {
-      setError(`The section can be at most ${SECTION_MAX} characters.`);
+      setError(`The section can be at most ${SECTION_MAX} characters.`, "section");
       return;
     }
     setError(null);
@@ -201,7 +209,8 @@ export function CourseDetailsEditor({
         ref={form}
         onSubmit={(e) => void submit(e)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") {
+          // Esc in a time field belongs to the field (it closes the browser's time picker).
+          if (e.key === "Escape" && !(e.target instanceof HTMLInputElement && e.target.type === "time")) {
             e.preventDefault();
             close();
           }
@@ -258,6 +267,8 @@ export function CourseDetailsEditor({
             maxLength={SECTION_MAX}
             placeholder="Section B, 001"
             disabled={saving}
+            aria-invalid={errorAt === "section" ? true : undefined}
+            aria-describedby={errorAt === "section" ? errorId : undefined}
             onChange={(e) => {
               setSection(e.target.value);
               setError(null);
@@ -266,7 +277,7 @@ export function CourseDetailsEditor({
           />
         </div>
 
-        <fieldset className="flex flex-col">
+        <fieldset className="flex flex-col" aria-describedby={errorAt === "days" ? errorId : undefined}>
           <legend className={`${labelClass} pb-3`}>Meets on</legend>
           <div className="flex flex-wrap gap-2">
             {DAYS.map((d) => {
@@ -303,8 +314,8 @@ export function CourseDetailsEditor({
               type="time"
               value={start}
               disabled={saving}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? errorId : undefined}
+              aria-invalid={errorAt === "start" ? true : undefined}
+              aria-describedby={errorAt === "start" ? errorId : undefined}
               onChange={(e) => {
                 setStart(e.target.value);
                 setError(null);
@@ -321,8 +332,8 @@ export function CourseDetailsEditor({
               type="time"
               value={end}
               disabled={saving}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? errorId : undefined}
+              aria-invalid={errorAt === "end" ? true : undefined}
+              aria-describedby={errorAt === "end" ? errorId : undefined}
               onChange={(e) => {
                 setEnd(e.target.value);
                 setError(null);

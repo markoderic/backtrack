@@ -431,6 +431,8 @@ describe("CourseBody: color, section and schedule (batch D)", () => {
     expect(html).toContain("bg-course-plum");
     expect(html).toContain("Section B · Mon Wed Fri · 10:05–11:00 AM");
     expect(html).toContain("Edit details");
+    // On a phone the name block takes the whole row (Start lecture wraps under it), from sm side by side.
+    expect(html).toMatch(/<div class="[^"]*\bbasis-full\b[^"]*\bsm:basis-0\b[^"]*"><span aria-hidden="true" data-course-color="plum"/);
     // The header comes before the past lectures and the setting.
     expect(html.indexOf("bg-course-plum")).toBeLessThan(html.indexOf('data-testid="course-details"'));
   });

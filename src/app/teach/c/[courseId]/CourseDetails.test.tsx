@@ -170,6 +170,42 @@ describe("CourseDetailsEditor", () => {
     expect(h.updates).toEqual([]);
   });
 
+  it.each([
+    ["days without a time: the start time", { days: ["Monday"], start: "", end: "" }, "start"],
+    ["a start without an end: the end time", { days: ["Monday"], start: "10:05", end: "" }, "end"],
+    ["an end before the start: the end time", { days: ["Monday"], start: "11:00", end: "10:05" }, "end"],
+    ["a time without days: the days", { days: [], start: "10:05", end: "11:00" }, "days"],
+  ])("points the message at the field it is about, %s", (_name, input, at) => {
+    show(empty);
+    edit();
+    for (const d of input.days) fireEvent.click(day(d));
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: input.start } });
+    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: input.end } });
+    save();
+    const errorId = screen.getByRole("alert").id;
+    const fields = {
+      start: screen.getByLabelText("Starts"),
+      end: screen.getByLabelText("Ends"),
+      days: screen.getByRole("group", { name: "Meets on" }),
+      section: screen.getByLabelText(/Section/),
+    };
+    for (const [name, el] of Object.entries(fields)) {
+      const mine = name === at;
+      expect(el.getAttribute("aria-describedby"), name).toBe(mine ? errorId : null);
+      if (name !== "days") expect(el.getAttribute("aria-invalid"), name).toBe(mine ? "true" : null);
+    }
+  });
+
+  it("Esc in a time field leaves the form open (it closes the browser's time picker); Esc elsewhere closes it", () => {
+    show();
+    edit();
+    fireEvent.keyDown(screen.getByLabelText("Starts"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText("Ends"), { key: "Escape" });
+    expect(screen.getByTestId("course-details-form")).toBeInTheDocument();
+    fireEvent.keyDown(day("Monday"), { key: "Escape" });
+    expect(screen.queryByTestId("course-details-form")).toBeNull();
+  });
+
   it("a failed save keeps the form open with the teacher's choices", async () => {
     h.select.mockResolvedValue({ data: [], error: null });
     show();
