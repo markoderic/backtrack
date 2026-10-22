@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
 import { useSlideImages } from "@/lib/useSlideImages";
+import { useJoinedCount } from "@/lib/useJoinedCount";
 
 type Props = {
   lectureId: string;
@@ -22,6 +23,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const [joinCardShowing, setJoinCardShowing] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { urlFor } = useSlideImages(lectureId, current);
+  const joined = useJoinedCount(lectureId);
 
   // The key handler reads these instead of state, so a fast key press never sees a stale value.
   const currentRef = useRef(initialSlide);
@@ -101,11 +103,13 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
         >
           <p className="text-[4vw]">{siteAddress}</p>
           <p className="font-mono text-[14vw] leading-none tracking-widest">{code}</p>
+          {joined !== null && <p className="text-[3vw]">{joined} joined</p>}
         </div>
       ) : (
         <div data-testid="corner-card" className="absolute bottom-4 left-4 border border-white bg-black px-4 py-3">
           <p className="text-lg">{siteAddress}</p>
           <p className="font-mono text-3xl tracking-widest">{code}</p>
+          {joined !== null && <p className="text-lg">{joined} joined</p>}
         </div>
       )}
 

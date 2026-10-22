@@ -3,14 +3,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const maybeSingle = vi.fn();
 const lectures = vi.fn();
 const getUser = vi.fn();
+const eqCalls: [string, string, unknown][] = [];
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => ({
     auth: { getUser },
-    from: (table: string) => ({
-      select: () => ({
-        eq: () => (table === "lectures" ? { order: lectures } : { maybeSingle }),
-      }),
-    }),
+    from: (table: string) => {
+      const chain = {
+        order: lectures,
+        maybeSingle,
+        eq: (column: string, value: unknown) => {
+          eqCalls.push([table, column, value]);
+          return chain;
+        },
+      };
+      return { select: () => chain };
+    },
   }),
 }));
 vi.mock("next/navigation", () => ({
@@ -28,6 +35,7 @@ import { CourseBody } from "./course-body";
 const params = Promise.resolve({ courseId: "c1" });
 
 beforeEach(() => {
+  eqCalls.length = 0;
   maybeSingle.mockReset();
   lectures.mockReset();
   lectures.mockResolvedValue({ data: [], error: null });
@@ -77,6 +85,14 @@ describe("CourseBody", () => {
     expect(html).toContain("Lecture 1, Oct 19");
     expect(html).not.toContain("No lectures yet.");
     expect(html).not.toContain('href="/teach/l/l1/present"');
+  });
+
+  it("asks only for a course and lectures that belong to the signed in teacher", async () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
+    await CourseBody({ params });
+    expect(eqCalls).toContainEqual(["courses", "id", "c1"]);
+    expect(eqCalls).toContainEqual(["courses", "teacher_id", "u1"]);
+    expect(eqCalls).toContainEqual(["lectures", "course_id", "c1"]);
   });
 
   it("says there are no lectures yet when there are none", async () => {

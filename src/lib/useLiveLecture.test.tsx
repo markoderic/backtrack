@@ -1,0 +1,177 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook, render, act, waitFor, screen } from "@testing-library/react";
+import { Component, type ReactNode } from "react";
+
+type Handler = (payload: { new: Record<string, unknown> }) => void;
+const channel = {
+  filter: null as unknown,
+  update: null as Handler | null,
+  status: null as ((s: string) => void) | null,
+  on: vi.fn(),
+  subscribe: vi.fn(),
+};
+channel.on.mockImplementation((_type: string, filter: unknown, cb: Handler) => {
+  channel.filter = filter;
+  channel.update = cb;
+  return channel;
+});
+channel.subscribe.mockImplementation((cb: (s: string) => void) => {
+  channel.status = cb;
+  return channel;
+});
+
+const single = vi.fn();
+const eq = vi.fn(() => ({ single }));
+const select = vi.fn(() => ({ eq }));
+const from = vi.fn(() => ({ select }));
+const makeChannel = vi.fn(() => channel);
+const removeChannel = vi.fn();
+vi.mock("@/lib/supabase/browser", () => ({
+  createBrowserSupabase: () => ({ from, channel: makeChannel, removeChannel }),
+}));
+
+import { useLiveLecture } from "./useLiveLecture";
+
+const LECTURE = "11111111-1111-1111-1111-111111111111";
+const row = (current_slide: number, status = "live") => ({ data: { current_slide, status }, error: null });
+
+beforeEach(() => {
+  channel.filter = null;
+  channel.update = null;
+  channel.status = null;
+  [single, eq, select, from, makeChannel, removeChannel].forEach((m) => m.mockClear());
+  single.mockResolvedValue(row(3));
+});
+
+describe("useLiveLecture", () => {
+  it("reads the lecture and follows its current slide", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    expect(result.current.state).toBeNull();
+    await waitFor(() => expect(result.current.state).toMatchObject({ live: 3, viewing: 3, following: true, conn: "live" }));
+    expect(from).toHaveBeenCalledWith("lectures");
+    expect(select).toHaveBeenCalledWith("current_slide, status");
+    expect(eq).toHaveBeenCalledWith("id", LECTURE);
+  });
+
+  it("starts from the slide it is given without waiting for the read", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE, 5));
+    expect(result.current.state).toMatchObject({ live: 5, viewing: 5 });
+    await waitFor(() => expect(single).toHaveBeenCalled());
+  });
+
+  it("listens for updates of this lecture row only", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    expect(channel.filter).toEqual({ event: "UPDATE", schema: "public", table: "lectures", filter: `id=eq.${LECTURE}` });
+  });
+
+  it("moves to the new live slide when the teacher changes it", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => channel.update?.({ new: { current_slide: 4, status: "live" } }));
+    expect(result.current.state).toMatchObject({ live: 4, viewing: 4 });
+  });
+
+  it("does not move a student who went back", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => result.current.back());
+    act(() => channel.update?.({ new: { current_slide: 4, status: "live" } }));
+    expect(result.current.state).toMatchObject({ live: 4, viewing: 2, following: false });
+    act(() => result.current.forward());
+    expect(result.current.state).toMatchObject({ viewing: 3, following: false });
+    act(() => result.current.jumpToLive());
+    expect(result.current.state).toMatchObject({ viewing: 4, following: true });
+  });
+
+  it("ends when an update says the lecture ended", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => channel.update?.({ new: { current_slide: 3, status: "ended" } }));
+    expect(result.current.state?.ended).toBe(true);
+  });
+
+  it("ends when the first read finds the lecture already ended", async () => {
+    single.mockResolvedValue(row(3, "ended"));
+    const { result } = renderHook(() => useLiveLecture(LECTURE, 3));
+    await waitFor(() => expect(result.current.state?.ended).toBe(true));
+  });
+
+  it("reads the lecture again every time the channel reports SUBSCRIBED", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    const before = single.mock.calls.length;
+    single.mockResolvedValue(row(6));
+    await act(async () => channel.status?.("SUBSCRIBED"));
+    await waitFor(() => expect(result.current.state).toMatchObject({ live: 6, viewing: 6 }));
+    expect(single.mock.calls.length).toBe(before + 1);
+  });
+
+  it("a plain refetch does not move a student who went back", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => result.current.back());
+    single.mockResolvedValue(row(6));
+    await act(async () => channel.status?.("SUBSCRIBED"));
+    await waitFor(() => expect(result.current.state?.live).toBe(6));
+    expect(result.current.state).toMatchObject({ viewing: 2, following: false });
+  });
+
+  it.each(["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"])("shows reconnecting on %s", async (status) => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => channel.status?.(status));
+    expect(result.current.state?.conn).toBe("reconnecting");
+  });
+
+  it("jumps to the live slide when the channel comes back", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => result.current.back());
+    act(() => channel.status?.("CHANNEL_ERROR"));
+    single.mockResolvedValue(row(8));
+    await act(async () => channel.status?.("SUBSCRIBED"));
+    await waitFor(() => expect(result.current.state).toMatchObject({ conn: "live", live: 8, viewing: 8, following: true }));
+  });
+
+  it("removes the channel when it unmounts", async () => {
+    const { result, unmount } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    unmount();
+    expect(removeChannel).toHaveBeenCalledWith(channel);
+  });
+
+  it("does not react to channel status after it unmounts", async () => {
+    const { result, unmount } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    unmount();
+    const calls = single.mock.calls.length;
+    await act(async () => channel.status?.("SUBSCRIBED"));
+    expect(single.mock.calls.length).toBe(calls);
+  });
+
+  it("throws when the read fails", async () => {
+    single.mockResolvedValue({ data: null, error: { message: "read broke" } });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+      state = { error: null as Error | null };
+      static getDerivedStateFromError(error: Error) {
+        return { error };
+      }
+      render() {
+        return this.state.error ? <p>caught: {this.state.error.message}</p> : this.props.children;
+      }
+    }
+    function Probe() {
+      useLiveLecture(LECTURE);
+      return <p>ok</p>;
+    }
+    render(
+      <Boundary>
+        <Probe />
+      </Boundary>,
+    );
+    expect(await screen.findByText("caught: read broke")).toBeInTheDocument();
+    spy.mockRestore();
+  });
+});

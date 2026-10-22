@@ -6,7 +6,7 @@ import { isMiamiEmail } from "@/lib/email";
 import { SignInButton } from "./sign-in-button";
 import { AddCourseForm } from "./add-course-form";
 
-async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
+export async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
   const supabase = await createServerSupabase();
   const {
     data: { user },
@@ -26,10 +26,13 @@ async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: str
         .eq("archived", false)
         .order("created_at");
       if (coursesError) throw new Error(coursesError.message);
+      // Joined students can read the lectures they joined, so ask for the
+      // teacher's own courses explicitly instead of relying on row level security.
       const { data: live, error: liveError } = await supabase
         .from("lectures")
-        .select("id, name")
+        .select("id, name, courses!inner(teacher_id)")
         .eq("status", "live")
+        .eq("courses.teacher_id", user.id)
         .order("started_at", { ascending: false });
       if (liveError) throw new Error(liveError.message);
       return (

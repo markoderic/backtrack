@@ -11,11 +11,13 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
   } = await supabase.auth.getUser();
   if (!user) redirect("/teach");
 
-  // Row level security only returns the course to the teacher who owns it.
+  // Row level security only returns the course to the teacher who owns it, and
+  // the query asks for the teacher's own course explicitly as well.
   const { data: course, error } = await supabase
     .from("courses")
     .select("id, name")
     .eq("id", courseId)
+    .eq("teacher_id", user.id)
     .maybeSingle();
   // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing course.
   if (error && error.code !== "22P02") throw new Error(error.message);

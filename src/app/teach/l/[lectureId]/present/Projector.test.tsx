@@ -17,6 +17,10 @@ vi.mock("@/lib/useSlideImages", () => ({
   useSlideImages: (id: string, current?: number) => useSlideImages(id, current),
 }));
 
+let joined: number | null = 0;
+const useJoinedCount = vi.fn<(id: string) => number | null>(() => joined);
+vi.mock("@/lib/useJoinedCount", () => ({ useJoinedCount: (id: string) => useJoinedCount(id) }));
+
 import { Projector } from "./Projector";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
@@ -37,7 +41,8 @@ const press = (key: string) => fireEvent.keyDown(window, { key });
 const shownSlide = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
-  [single, select, eq, update, from, push, urlFor, useSlideImages].forEach((m) => m.mockClear());
+  [single, select, eq, update, from, push, urlFor, useSlideImages, useJoinedCount].forEach((m) => m.mockClear());
+  joined = 0;
   single.mockImplementation(async () => ({ data: { current_slide: 0 }, error: null }));
 });
 
@@ -50,6 +55,23 @@ describe("Projector", () => {
     expect(screen.queryByTestId("corner-card")).not.toBeInTheDocument();
     expect(screen.getByText("backtrack-ebon-sigma.vercel.app")).toBeInTheDocument();
     expect(screen.getByText("482916")).toBeInTheDocument();
+  });
+
+  it("shows how many students have joined on the join card and in the corner card", () => {
+    joined = 12;
+    show();
+    expect(useJoinedCount).toHaveBeenCalledWith(LECTURE);
+    expect(screen.getByTestId("join-card")).toHaveTextContent("12 joined");
+    press("ArrowRight");
+    expect(screen.getByTestId("corner-card")).toHaveTextContent("482916");
+    expect(screen.getByTestId("corner-card")).toHaveTextContent("12 joined");
+  });
+
+  it("shows no count until the first count has arrived", () => {
+    joined = null;
+    show();
+    press("ArrowRight");
+    expect(screen.getByTestId("corner-card")).not.toHaveTextContent(/joined/);
   });
 
   it("shows the lecture's current slide full viewport and letterboxed, not stretched", () => {
