@@ -160,6 +160,24 @@ describe("course_export", () => {
     expect(r[2]).toMatchObject({ slide_number: 3, first_line: "" });
   });
 
+  it("leaves out a live lecture, rows and taps both, and keeps the ended ones", async () => {
+    await addLecture(LECTURE_B, { name: "Live now", date: "2026-10-21", startedAt: "2026-10-21 14:05+00", slides: 3 });
+    await db.query("update public.lectures set status = 'live', code = '123456', ended_at = null where id = $1", [LECTURE_B]);
+    await addTap(LECTURE_B, student(1), 2);
+    await addTap(LECTURE_A, student(1), 2);
+    const r = await exportRows(marko);
+    expect(r).toHaveLength(10);
+    expect(r.every((x) => x.lecture_name === "Lecture 1, Oct 19")).toBe(true);
+    expect(r[1]).toMatchObject({ slide_number: 2, lost_taps: 1, students: 1 });
+  });
+
+  it("returns no rows while the only lecture is live, and includes it once it has ended", async () => {
+    await db.query("update public.lectures set status = 'live', code = '123456', ended_at = null where id = $1", [LECTURE_A]);
+    expect(await exportRows(marko)).toEqual([]);
+    await db.query("update public.lectures set status = 'ended', code = null, ended_at = now() where id = $1", [LECTURE_A]);
+    expect(await exportRows(marko)).toHaveLength(10);
+  });
+
   it("raises for another teacher, for a student and for a course that does not exist", async () => {
     await expect(exportRows(other)).rejects.toMatchObject({ code: "42501" });
     await expect(exportRows(student(1))).rejects.toMatchObject({ code: "42501" });
@@ -168,6 +186,20 @@ describe("course_export", () => {
 
   it("is not callable when signed out", async () => {
     await expect(exportRows(null)).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("still raises for a non-owner when the course has a live lecture", async () => {
+    await addLecture(LECTURE_B, { name: "Live now", date: "2026-10-21", startedAt: "2026-10-21 14:05+00", slides: 3 });
+    await db.query("update public.lectures set status = 'live', code = '123456', ended_at = null where id = $1", [LECTURE_B]);
+    await expect(exportRows(other)).rejects.toMatchObject({ code: "42501" });
+    await expect(exportRows(student(1))).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("keeps the grants: authenticated can run it, anon cannot", async () => {
+    const q = async (role: string) =>
+      (await db.query<{ ok: boolean }>(`select has_function_privilege('${role}', 'public.course_export(uuid)', 'execute') as ok`)).rows[0].ok;
+    expect(await q("authenticated")).toBe(true);
+    expect(await q("anon")).toBe(false);
   });
 });
 
