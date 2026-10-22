@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { newDb, as, type Claims } from "./harness";
 
 const MARKO = "11111111-1111-1111-1111-111111111111";
@@ -353,5 +355,77 @@ describe("slides storage policies", () => {
     await db.query("insert into storage.objects (bucket_id, name) values ('slides', 'not-a-uuid/1.webp'), ('slides', 'loose.webp')");
     const seen = await as(db, marko, async () => (await db.query("select name from storage.objects")).rows);
     expect(seen).toHaveLength(0);
+  });
+});
+
+describe("lecture_date in Eastern time", () => {
+  const easternDate = async (at: string) =>
+    (await db.query<{ d: string }>("select public.eastern_date($1::timestamptz)::text as d", [at])).rows[0].d;
+
+  it("eastern_date gives the day before when UTC has already rolled over (EDT)", async () => {
+    expect(await easternDate("2026-10-22 01:30+00")).toBe("2026-10-21");
+  });
+
+  it("eastern_date gives the same day later in the UTC day (EDT)", async () => {
+    expect(await easternDate("2026-10-22 05:30+00")).toBe("2026-10-22");
+  });
+
+  it("eastern_date follows standard time in winter (EST)", async () => {
+    expect(await easternDate("2026-01-15 04:30+00")).toBe("2026-01-14");
+    expect(await easternDate("2026-01-15 05:30+00")).toBe("2026-01-15");
+  });
+
+  it("eastern_date of a null time is null", async () => {
+    expect(await easternDate(null as unknown as string)).toBeNull();
+  });
+
+  it("a lecture made by start_lecture gets lecture_date = eastern_date(started_at)", async () => {
+    const started = await start(marko);
+    const r = await db.query<{ lecture_date: string; expected: string }>(
+      "select lecture_date::text, public.eastern_date(started_at)::text as expected from public.lectures where id = $1",
+      [started.lecture_id],
+    );
+    expect(r.rows[0].lecture_date).toBe(r.rows[0].expected);
+  });
+
+  it("a lecture inserted without a lecture_date gets the Eastern date by default", async () => {
+    await db.query(
+      "insert into public.lectures (id, course_id, name, code, status, slide_count) values ($1, $2, 'x', '123456', 'live', 1)",
+      [newId(), MARKO_COURSE],
+    );
+    const r = await db.query<{ same: boolean }>(
+      "select lecture_date = public.eastern_date(started_at) as same from public.lectures",
+    );
+    expect(r.rows).toEqual([{ same: true }]);
+  });
+
+  it("the column default is eastern_date(now()), not current_date", async () => {
+    const r = await db.query<{ d: string }>(
+      `select pg_get_expr(adbin, adrelid) as d
+       from pg_attrdef where adrelid = 'public.lectures'::regclass
+         and adnum = (select attnum from pg_attribute where attrelid = 'public.lectures'::regclass and attname = 'lecture_date')`,
+    );
+    expect(r.rows[0].d).toContain("eastern_date");
+  });
+
+  it("the migration moves existing lectures to their Eastern date and leaves correct ones alone", async () => {
+    const wrong = newId();
+    const right = newId();
+    await db.query(
+      `insert into public.lectures (id, course_id, name, code, status, slide_count, started_at, lecture_date) values
+         ($1, $3, 'late', '111111', 'ended', 1, '2026-10-22 01:30+00', '2026-10-22'),
+         ($2, $3, 'fine', '222222', 'ended', 1, '2026-10-22 15:00+00', '2026-10-22')`,
+      [wrong, right, MARKO_COURSE],
+    );
+    // Run part 2 of the migration again, as the hosted database will run it once.
+    const file = readFileSync(path.resolve(__dirname, "../../supabase/migrations/0009_join_attempts.sql"), "utf8");
+    await db.exec(file.slice(file.indexOf("-- Part 2")));
+    const r = await db.query<{ id: string; lecture_date: string }>(
+      "select id, lecture_date::text from public.lectures where id in ($1, $2)",
+      [wrong, right],
+    );
+    const byId = Object.fromEntries(r.rows.map((x) => [x.id, x.lecture_date]));
+    expect(byId[wrong]).toBe("2026-10-21");
+    expect(byId[right]).toBe("2026-10-22");
   });
 });

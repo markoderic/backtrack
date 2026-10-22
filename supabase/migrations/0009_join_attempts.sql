@@ -57,3 +57,21 @@ $$;
 
 revoke all on function public.join_lecture(text) from public, anon;
 grant execute on function public.join_lecture(text) to authenticated;
+
+-- Part 2: lecture_date in Eastern time.
+--
+-- The default current_date is UTC on Supabase, so a lecture started after about
+-- 8 PM Eastern got tomorrow's date. start_lecture (0003) does not set
+-- lecture_date, so it picks up this default and needs no change.
+create or replace function public.eastern_date(p_at timestamptz) returns date
+language sql stable
+as $$
+  select (p_at at time zone 'America/New_York')::date
+$$;
+
+alter table public.lectures alter column lecture_date set default public.eastern_date(now());
+
+-- Fixes the lectures already stored with a UTC date.
+update public.lectures
+set lecture_date = public.eastern_date(started_at)
+where lecture_date <> public.eastern_date(started_at);
