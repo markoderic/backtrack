@@ -37,6 +37,19 @@ describe("followReducer", () => {
     expect(s).toMatchObject({ viewing: 6, following: true });
   });
 
+  it("goTo moves the view to that slide and follows only when it is live", () => {
+    let s = run(initialFollowState(8), { type: "goTo", n: 3 });
+    expect(s).toMatchObject({ live: 8, viewing: 3, following: false });
+    s = run(s, { type: "goTo", n: 8 });
+    expect(s).toMatchObject({ live: 8, viewing: 8, following: true });
+  });
+
+  it("goTo never goes past live or before slide 1", () => {
+    expect(run(initialFollowState(8), { type: "goTo", n: 9 })).toMatchObject({ viewing: 8, following: true });
+    expect(run(initialFollowState(8), { type: "goTo", n: 0 })).toMatchObject({ viewing: 1, following: false });
+    expect(run(initialFollowState(8), { type: "goTo", n: 2.5 })).toMatchObject({ viewing: 2, following: false });
+  });
+
   it("forward at live does nothing", () => {
     const start = initialFollowState(6);
     expect(run(start, { type: "forward" })).toEqual(start);

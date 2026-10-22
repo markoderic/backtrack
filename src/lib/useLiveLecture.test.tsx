@@ -83,6 +83,16 @@ describe("useLiveLecture", () => {
     expect(result.current.state).toMatchObject({ viewing: 4, following: true });
   });
 
+  it("goTo moves the view to a slide, never past live, and following again at live", async () => {
+    const { result } = renderHook(() => useLiveLecture(LECTURE));
+    await waitFor(() => expect(result.current.state).not.toBeNull());
+    act(() => channel.update?.({ new: { current_slide: 6, status: "live" } }));
+    act(() => result.current.goTo(2));
+    expect(result.current.state).toMatchObject({ live: 6, viewing: 2, following: false });
+    act(() => result.current.goTo(9));
+    expect(result.current.state).toMatchObject({ viewing: 6, following: true });
+  });
+
   it("ends when an update says the lecture ended", async () => {
     const { result } = renderHook(() => useLiveLecture(LECTURE));
     await waitFor(() => expect(result.current.state).not.toBeNull());

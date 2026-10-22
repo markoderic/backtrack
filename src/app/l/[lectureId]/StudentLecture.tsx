@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { InfoButton } from "@/components/InfoButton";
+import { loadOwnTaps, makeSend } from "@/lib/lostTapApi";
+import { createBrowserSupabase } from "@/lib/supabase/browser";
+import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
+import { LostButton } from "./LostButton";
+import { SlideStrip } from "./SlideStrip";
 
 type Props = {
   lectureId: string;
@@ -15,11 +20,26 @@ type Props = {
 };
 
 // No student component reads or shows the slide count: the screen only knows
-// the slide the teacher is on and the ones before it. No keyboard shortcuts.
+// the slide the teacher is on and the ones before it (the strip runs 1 to live).
+// No keyboard shortcuts, I'm lost included: it is only the button.
 export function StudentLecture({ lectureId, lectureName, courseName, initialSlide }: Props) {
   const router = useRouter();
-  const { state, back, forward, jumpToLive } = useLiveLecture(lectureId, initialSlide);
+  const { state, back, forward, jumpToLive, goTo } = useLiveLecture(lectureId, initialSlide);
   const { urlFor } = useSlideImages(lectureId, state?.viewing);
+
+  // The client is made when a tap is sent, not while rendering.
+  const send = useMemo(() => (op: QueueOp) => makeSend(createBrowserSupabase(), lectureId)(op), [lectureId]);
+  const loadOwn = useMemo(() => () => loadOwnTaps(createBrowserSupabase(), lectureId), [lectureId]);
+  const [spots, setSpots] = useState<Set<number>>(new Set());
+
+  // Counts the times the live connection came back, so the queue is sent again then.
+  const conn = state?.conn;
+  const [lastConn, setLastConn] = useState(conn);
+  const [reconnects, setReconnects] = useState(0);
+  if (conn !== lastConn) {
+    setLastConn(conn);
+    if (lastConn === "reconnecting" && conn === "live") setReconnects((n) => n + 1);
+  }
 
   const ended = state?.ended ?? false;
   useEffect(() => {
@@ -65,25 +85,39 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
             Jump to live, slide {state.live}
           </button>
         )}
-        <div className="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={back}
-            disabled={!state || state.viewing <= 1}
-            className="min-w-24 border border-white px-4 py-3 disabled:opacity-40"
-          >
-            Back
-          </button>
-          <span className="text-2xl">{viewing}</span>
-          <button
-            type="button"
-            onClick={forward}
-            disabled={!state || state.viewing >= state.live}
-            className="min-w-24 border border-white px-4 py-3 disabled:opacity-40"
-          >
-            Forward
-          </button>
-        </div>
+        <SlideStrip live={state?.live ?? initialSlide} viewing={viewing} spotSlides={spots} onPick={goTo} />
+        <LostButton
+          key={lectureId}
+          lectureId={lectureId}
+          viewing={viewing}
+          send={send}
+          loadOwn={loadOwn}
+          onSpots={setSpots}
+          reconnects={reconnects}
+          before={
+            <>
+              <button
+                type="button"
+                onClick={back}
+                disabled={!state || state.viewing <= 1}
+                className="min-w-20 border border-white px-3 py-3 disabled:opacity-40"
+              >
+                Back
+              </button>
+              <span className="min-w-8 text-center text-2xl">{viewing}</span>
+            </>
+          }
+          after={
+            <button
+              type="button"
+              onClick={forward}
+              disabled={!state || state.viewing >= state.live}
+              className="min-w-20 border border-white px-3 py-3 disabled:opacity-40"
+            >
+              Forward
+            </button>
+          }
+        />
       </footer>
     </div>
   );

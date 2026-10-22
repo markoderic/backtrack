@@ -23,6 +23,7 @@ export function useLiveLecture(
   back(): void;
   forward(): void;
   jumpToLive(): void;
+  goTo(n: number): void;
 } {
   const [state, dispatch] = useReducer(followReducer, initialFollowState(initialLive ?? 1));
   const [ready, setReady] = useState(initialLive !== undefined);
@@ -105,6 +106,7 @@ export function useLiveLecture(
   const back = useCallback(() => dispatch({ type: "back" }), []);
   const forward = useCallback(() => dispatch({ type: "forward" }), []);
   const jumpToLive = useCallback(() => dispatch({ type: "jumpToLive" }), []);
+  const goTo = useCallback((n: number) => dispatch({ type: "goTo", n }), []);
 
-  return { state: ready ? state : null, back, forward, jumpToLive };
+  return { state: ready ? state : null, back, forward, jumpToLive, goTo };
 }

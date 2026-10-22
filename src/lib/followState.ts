@@ -14,6 +14,7 @@ export type FollowEvent =
   | { type: "back" }
   | { type: "forward" }
   | { type: "jumpToLive" }
+  | { type: "goTo"; n: number }
   | { type: "disconnected" }
   | { type: "reconnected"; n: number }
   | { type: "ended" };
@@ -38,6 +39,11 @@ export function followReducer(state: FollowState, ev: FollowEvent): FollowState 
     case "forward": {
       if (state.viewing >= state.live) return state;
       const viewing = state.viewing + 1;
+      return { ...state, viewing, following: viewing >= state.live };
+    }
+    case "goTo": {
+      // Any slide from 1 to live. The student follows again only on the live slide.
+      const viewing = Math.min(Math.max(Math.floor(ev.n), 1), state.live);
       return { ...state, viewing, following: viewing >= state.live };
     }
     case "jumpToLive":
