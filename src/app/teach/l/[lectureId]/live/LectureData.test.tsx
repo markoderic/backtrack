@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
 
 type Query = { table: string; cols?: string; opts?: unknown; range: [number, number] | null; eqs: [string, unknown][] };
@@ -138,7 +138,7 @@ describe("LectureData live", () => {
     expect(screen.getByText("7 joined")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Lecture 1, Oct 26" })).toBeInTheDocument();
     expect(within(slideRow(3)).getByText("Current slide")).toBeInTheDocument();
-    expect(within(slideRow(3)).getByText(/3 now/)).toBeInTheDocument();
+    expect(within(slideRow(3)).getByTestId("label").textContent).toBe("3\u00a0now");
     expect(within(slideRow(2)).queryByText("Current slide")).not.toBeInTheDocument();
     expect(screen.getByText("Live, on slide 3")).toBeInTheDocument();
   });
@@ -938,5 +938,107 @@ describe("LectureData highlights", () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("1 person, 2 taps"));
     expect(boxesOn(2)).toHaveLength(0);
+  });
+});
+
+describe("LectureData with many slides", () => {
+  // jsdom has no ResizeObserver: this one lets a test say how wide the chart is.
+  let resize: ((width: number) => void) | null = null;
+  class FakeResizeObserver {
+    constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
+      resize = (width) => cb([{ contentRect: { width } }]);
+    }
+    observe() {}
+    disconnect() {
+      resize = null;
+    }
+  }
+  const many = Array.from({ length: 50 }, (_, i) => ({ number: i + 1, first_line: `Heading ${i + 1}` }));
+  const label = (n: number) => within(slideRow(n)).getByTestId("label");
+  const shown = (n: number) => label(n).getAttribute("data-shown") === "true";
+
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 17 }),
+        row("b", { slide_number: 17, anon_id: "s2" }),
+        row("c", { slide_number: 17, anon_id: "s3" }),
+        row("d", { slide_number: 33 }),
+        row("e", { slide_number: 33, anon_id: "s2" }),
+        row("f", { slide_number: 42 }),
+      ],
+      error: null,
+    });
+    h.lectureQuery.mockResolvedValue({ data: { current_slide: 23, status: "live" }, error: null });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function renderMany(width: number) {
+    renderLive({ slides: many, initialCurrentSlide: 23 });
+    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    await waitFor(() => expect(within(slideRow(23)).getByText("Current slide")).toBeInTheDocument());
+    act(() => resize?.(width));
+  }
+
+  it("shows every slide number while the columns are wide enough", async () => {
+    renderLive();
+    await waitFor(() => expect(screen.getByTestId("bars")).toBeInTheDocument());
+    act(() => resize?.(760));
+    expect(screen.getByTestId("bars")).toHaveAttribute("data-dense", "false");
+    for (const n of [1, 2, 3, 4, 5]) expect(shown(n)).toBe(true);
+  });
+
+  it("thins the numbers to slide 1 and every 5th when 50 slides share a laptop wide chart", async () => {
+    // 876 px for 50 slides is 17.5 px a slide (the columns stop at 24 px and scroll).
+    await renderMany(876);
+    expect(screen.getByTestId("bars")).toHaveAttribute("data-dense", "true");
+    for (const n of [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) expect(shown(n)).toBe(true);
+    for (const n of [2, 3, 4, 6, 9, 11, 16, 24, 41, 49]) expect(shown(n)).toBe(false);
+    // A hidden number keeps its line (invisible), so the bars stay aligned.
+    expect(label(2).className).toContain("invisible");
+    expect(label(2).className).toContain("h-9");
+    expect(label(5).className).toContain("h-9");
+  });
+
+  it("always shows the top 3, the live slide and the selected slide, with now under the live number", async () => {
+    await renderMany(876);
+    for (const n of [17, 33, 42]) expect(shown(n)).toBe(true);
+    expect(shown(23)).toBe(true);
+    expect(label(23).textContent).toBe("23now");
+    expect(within(label(23)).getByText("now").className).toContain("type-caption");
+    expect(shown(8)).toBe(false);
+    select(8);
+    expect(shown(8)).toBe(true);
+  });
+
+  it("keeps the full name on every bar, numbers shown or not", async () => {
+    await renderMany(876);
+    expect(within(slideRow(2)).getByRole("button")).toHaveAccessibleName("Slide 2, Heading 2: 0 people, 0 taps");
+    expect(within(slideRow(17)).getByRole("button")).toHaveAccessibleName("Slide 17, Heading 17: 3 people, 3 taps, Top 3");
+    expect(within(slideRow(23)).getByRole("button")).toHaveAccessibleName(
+      "Slide 23, Heading 23: 0 people, 0 taps, Current slide",
+    );
+  });
+
+  it("goes back to every number when the window gets wide enough again", async () => {
+    await renderMany(876);
+    act(() => resize?.(2400));
+    expect(screen.getByTestId("bars")).toHaveAttribute("data-dense", "false");
+    expect(shown(2)).toBe(true);
+    expect(label(23).textContent).toBe("23\u00a0now");
+  });
+
+  it("thins to every 10th past 99 slides", async () => {
+    const hundred = Array.from({ length: 120 }, (_, i) => ({ number: i + 1, first_line: "" }));
+    renderLive({ slides: hundred, initialCurrentSlide: 1 });
+    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    act(() => resize?.(876));
+    expect(shown(10)).toBe(true);
+    expect(shown(100)).toBe(true);
+    expect(shown(15)).toBe(false);
+    expect(shown(105)).toBe(false);
   });
 });

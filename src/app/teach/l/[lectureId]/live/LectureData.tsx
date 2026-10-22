@@ -19,6 +19,12 @@ const PAGE = 1000;
 const BAR_MAX = 260;
 /** A slide nobody is lost on still shows a 2 px bar. */
 const BAR_MIN = 2;
+/**
+ * Below this column width (px) the slide numbers thin out to every 5th (10th past 99 slides)
+ * plus slide 1, the top 3, the live slide and the selected one, and "now" goes under its
+ * number. Columns are never narrower than 24 px (the WCAG 2.5.8 target minimum).
+ */
+const DENSE_COLUMN = 40;
 
 type Props = {
   lectureId: string;
@@ -149,6 +155,9 @@ export function LectureData({
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const backLink = useRef<HTMLAnchorElement>(null);
+  const bars = useRef<HTMLOListElement>(null);
+  // Columns too narrow for every slide number (measured, so it follows the window).
+  const [dense, setDense] = useState(false);
   // Where focus goes once the confirm it was in is gone: the way back after ending here,
   // or End lecture again after a failure. Ended by someone else, focus is left alone.
   const focusAfterEnd = useRef<"back" | "end" | null>(null);
@@ -329,6 +338,19 @@ export function LectureData({
     focusAfterEnd.current = null;
   }, [ending, justEnded, endError]);
 
+  // One observer on the chart: dense flips only when the room per slide crosses the line, so
+  // resizing the window renders at most once per crossing.
+  useEffect(() => {
+    const ol = bars.current;
+    if (!ol || typeof ResizeObserver === "undefined" || slides.length === 0) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setDense(width / slides.length < DENSE_COLUMN);
+    });
+    observer.observe(ol);
+    return () => observer.disconnect();
+  }, [slides.length, loaded]);
+
   const rows = useMemo(() => Array.from(taps.values()), [taps]);
   const stats = useMemo(() => slideStats(rows, slides.length), [rows, slides.length]);
   const ranked = useMemo(() => topThree(stats), [stats]);
@@ -474,9 +496,17 @@ export function LectureData({
 
           {loaded && (
             <>
+              {/*
+               * Columns sit flush and share the width: each is 1/n of it, at most 76 px (the
+               * design's 64 + 12 gap, the gap now padding inside the column so the whole column
+               * is the click target) and at least 24 px. Past that the chart scrolls inside itself.
+               * -mx-3 + px-1.5 line the first bar up with the heading and leave room for its ring.
+               */}
               <ol
+                ref={bars}
                 data-testid="bars"
-                className="-mx-1 -my-2 flex h-[396px] animate-fade-in items-end gap-1.5 overflow-x-auto overflow-y-hidden px-1 py-2 sm:gap-3"
+                data-dense={dense ? "true" : "false"}
+                className="-mx-3 -my-2 flex h-[396px] animate-fade-in items-end overflow-x-auto overflow-y-hidden px-1.5 py-2"
               >
                 {slides.map((slide) => {
                   const stat = stats[slide.number - 1];
@@ -487,13 +517,20 @@ export function LectureData({
                   const isSelected = slide.number === selected;
                   const share = most === 0 ? 0 : stat.students / most;
                   const scale = Math.round(Math.max(share, BAR_MIN / BAR_MAX) * 1e4) / 1e4;
+                  const step = slides.length > 99 ? 10 : 5;
+                  const labelShown =
+                    !dense || slide.number === 1 || slide.number % step === 0 || isTop || isNow || isSelected;
                   return (
-                    <li key={slide.number} data-testid={`slide-${slide.number}`} className="flex h-full min-w-11 flex-[0_1_64px]">
+                    <li
+                      key={slide.number}
+                      data-testid={`slide-${slide.number}`}
+                      className="flex h-full max-w-[76px] min-w-6 flex-1 basis-0"
+                    >
                       <button
                         type="button"
                         aria-pressed={isSelected}
                         onClick={() => setPicked(slide.number)}
-                        className="group press focus-ring relative flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm"
+                        className="group press focus-ring relative flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm px-[8%]"
                       >
                         {/* What a screen reader hears; the drawing below is hidden from it. */}
                         <span className="sr-only">
@@ -541,18 +578,21 @@ export function LectureData({
                             style={{ transform: `scaleY(${scale})` }}
                           />
                         </span>
+                        {/* Every column keeps its label line, so bars stay aligned when labels thin out. */}
                         <span
                           aria-hidden
-                          className={`whitespace-nowrap ${isSelected ? "type-small-strong" : "type-small"} ${
-                            ahead ? "text-secondary" : "text-ink"
-                          } group-hover:text-ink`}
+                          data-testid="label"
+                          data-shown={labelShown ? "true" : "false"}
+                          className={`flex whitespace-nowrap ${dense ? "h-9 flex-col items-center" : "items-baseline"} ${
+                            isSelected ? "type-small-strong" : "type-small"
+                          } ${ahead ? "text-secondary" : "text-ink"} ${labelShown ? "" : "invisible"} group-hover:text-ink`}
                         >
-                          {slide.number}
-                          {isNow && " now"}
+                          <span>{slide.number}</span>
+                          {isNow && <span className={dense ? "type-caption" : ""}>{dense ? "now" : "\u00a0now"}</span>}
                         </span>
                         <span
                           aria-hidden
-                          className={`h-0.5 w-6 shrink-0 bg-ink transition-opacity duration-(--dur-fast) ease-out ${
+                          className={`h-0.5 w-6 max-w-full shrink-0 bg-ink transition-opacity duration-(--dur-fast) ease-out ${
                             isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-30"
                           }`}
                         />
