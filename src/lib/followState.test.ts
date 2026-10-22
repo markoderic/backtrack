@@ -98,4 +98,9 @@ describe("followReducer", () => {
     const following = run(initialFollowState(5), { type: "disconnected" }, { type: "readOk", n: 6 });
     expect(following).toEqual({ live: 6, viewing: 6, following: true, conn: "live", ended: false });
   });
+
+  it("readOk never clears ended", () => {
+    const ended = run(initialFollowState(5), { type: "ended" }, { type: "readOk", n: 6 });
+    expect(ended.ended).toBe(true);
+  });
 });

@@ -90,7 +90,8 @@ export function useLiveLecture(
         if (readError || !row) throw new Error(readError?.message ?? "Lecture not found.");
         data = row;
       } catch {
-        if (cancelled || mine !== latest) return;
+        // Ended meanwhile (Realtime said so): nothing to retry.
+        if (cancelled || ended || mine !== latest) return;
         reading = false;
         // Not connected, as far as the student can tell: say so and try again. Only the
         // channel going down counts as dropped (see subscribe): a failed read alone, like

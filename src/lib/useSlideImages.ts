@@ -11,18 +11,28 @@ const RENEW_RETRY_MS = 60 * 1000;
 /** On a renewal the slide on screen is loaded with its new url first, for at most this long. */
 const SWAP_WAIT_MS = 10 * 1000;
 
-/** Resolves once the image has loaded or failed, or after `ms`, whichever is first. */
-function loadFirst(img: HTMLImageElement, url: string, ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    const done = () => {
-      clearTimeout(timer);
+/**
+ * Resolves once the image has loaded or failed, or after `ms`, whichever is first.
+ * `stop` drops the timer and the handlers (the page went away meanwhile).
+ */
+function loadFirst(img: HTMLImageElement, url: string, ms: number): { done: Promise<void>; stop: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    clearTimeout(timer);
+    img.onload = null;
+    img.onerror = null;
+  };
+  const done = new Promise<void>((resolve) => {
+    const finish = () => {
+      stop();
       resolve();
     };
-    img.onload = done;
-    img.onerror = done;
+    timer = setTimeout(finish, ms);
+    img.onload = finish;
+    img.onerror = finish;
     img.src = url;
   });
+  return { done, stop };
 }
 
 /**
@@ -52,6 +62,7 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
   useEffect(() => {
     let cancelled = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let stopLoading: (() => void) | undefined;
     const renewing = signed.current?.lectureId === lectureId;
     (async () => {
       const supabase = createBrowserSupabase();
@@ -61,7 +72,11 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
         .eq("lecture_id", lectureId)
         .order("number");
       if (slidesError) throw new Error(slidesError.message);
-      if (!rows || rows.length === 0) return;
+      // No rows on a renewal (a session that lapsed, say) is a failed renewal: tried again.
+      if (!rows || rows.length === 0) {
+        if (renewing) throw new Error("No slide rows.");
+        return;
+      }
 
       const { data: signedUrls, error: signError } = await supabase.storage
         .from("slides")
@@ -87,7 +102,9 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
       if (renewing && fresh && !preloaded.current.has(fresh)) {
         const img = new Image();
         preloaded.current.set(fresh, img);
-        await loadFirst(img, fresh, SWAP_WAIT_MS);
+        const loading = loadFirst(img, fresh, SWAP_WAIT_MS);
+        stopLoading = loading.stop;
+        await loading.done;
         if (cancelled) return;
       }
       signed.current = { lectureId, at: Date.now() };
@@ -103,6 +120,7 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
     return () => {
       cancelled = true;
       clearTimeout(retry);
+      stopLoading?.();
     };
   }, [lectureId, round]);
 

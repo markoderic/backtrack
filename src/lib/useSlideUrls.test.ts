@@ -152,6 +152,58 @@ describe("useSlideUrls", () => {
       expect(result.current[2]).toBe("https://signed/L/2.webp?v=2");
     });
 
+    it("a slide with no image keeps failing without delaying the next renewal (minute by minute)", async () => {
+      // Slide 9 has no row, as in a seeded demo lecture.
+      slidesResult.mockImplementation(async () => {
+        const asked = (inCall.mock.calls.at(-1)?.[1] as number[]).filter((n) => n !== 9);
+        return { data: asked.map((n) => ({ number: n, image_path: path(n) })), error: null };
+      });
+      const { result, rerender } = renderHook(({ wanted }) => useSlideUrls("L", wanted), {
+        initialProps: { wanted: [2] },
+      });
+      await wait(0);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=1");
+      await wait(RENEW_MS);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=2");
+      // Someone highlights slide 9 a minute later.
+      await wait(60 * 1000);
+      rerender({ wanted: [2, 9] });
+      await wait(0);
+      const asksFor9 = () => inCall.mock.calls.filter((c) => (c[1] as number[]).includes(9)).length;
+      expect(asksFor9()).toBe(1);
+      // 3.5 hours after the last full signing, a minute at a time.
+      for (let m = 1; m < 210; m++) await wait(60 * 1000);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=3");
+      expect(result.current[9]).toBeUndefined();
+      // Slide 9 was only asked for with each renewal, never every minute.
+      expect(asksFor9()).toBe(2);
+    });
+
+    it("a slide whose renewal is refused alone is tried again a minute later", async () => {
+      const { result } = renderHook(() => useSlideUrls("L", [2, 4]));
+      await wait(0);
+      createSignedUrls.mockImplementationOnce(async (paths: string[]) => {
+        signing++;
+        return {
+          data: paths.map((p) =>
+            p === path(4)
+              ? { path: p, signedUrl: null, error: "Object not found" }
+              : { path: p, signedUrl: `https://signed/${p}?v=${signing}`, error: null },
+          ),
+          error: null,
+        };
+      });
+      await wait(RENEW_MS);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=2");
+      expect(result.current[4]).toBe("https://signed/L/4.webp?v=1");
+      await wait(60 * 1000);
+      expect(createSignedUrls).toHaveBeenLastCalledWith([path(4)], 14400);
+      expect(result.current[4]).toBe("https://signed/L/4.webp?v=3");
+      // And the next full renewal still comes 3.5 hours after the last one, not after the retry.
+      await wait(RENEW_MS - 60 * 1000);
+      expect(createSignedUrls).toHaveBeenLastCalledWith([path(2), path(4)], 14400);
+    });
+
     it("starts one renewal, not one per focus", async () => {
       renderHook(() => useSlideUrls("L", [2]));
       await wait(0);

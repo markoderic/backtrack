@@ -180,6 +180,28 @@ describe("useSlideImages", () => {
       expect(result.current.urlFor(2)).toBe("https://signed/L/2.webp?v=2");
     });
 
+    it("treats a renewal that finds no slide rows as failed, and tries again a minute later", async () => {
+      const { result } = renderHook(() => useSlideImages("L"));
+      await wait(0);
+      slidesResult.mockResolvedValueOnce({ data: [], error: null });
+      await wait(RENEW_MS);
+      expect(result.current.urlFor(1)).toBe("https://signed/L/1.webp?v=1");
+      await wait(60 * 1000);
+      expect(result.current.urlFor(1)).toBe("https://signed/L/1.webp?v=2");
+    });
+
+    it("drops the wait for the new image when the page goes away", async () => {
+      const { unmount } = renderHook(() => useSlideImages("L", 2));
+      await wait(0);
+      autoLoad = false;
+      await wait(RENEW_MS);
+      const img = pending.at(-1) as { onload: (() => void) | null };
+      expect(img.onload).not.toBeNull();
+      unmount();
+      expect(img.onload).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
     it("catches up when the page is shown again after a sleep the timer missed", async () => {
       const { result } = renderHook(() => useSlideImages("L"));
       await wait(0);

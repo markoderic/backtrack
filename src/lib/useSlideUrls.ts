@@ -16,17 +16,26 @@ const RENEW_RETRY_MS = 60 * 1000;
  * is never asked for them. A slide that can not be read or signed has no entry and
  * is asked for again the next time the list changes; nothing is thrown. Every 3.5
  * hours (the urls last 4) all the wanted slides are signed again, so a data view left
- * open keeps its images; the old urls stay until the new ones arrive, and a failed
- * renewal is tried again a minute later.
+ * open keeps its images; the old urls stay until the new ones arrive, and a slide whose
+ * renewal failed is tried again a minute later.
  */
 export function useSlideUrls(lectureId: string, wanted: number[]): Record<number, string> {
   const [urls, setUrls] = useState<Record<number, string>>({});
-  // Goes up to sign everything wanted again.
-  const [round, setRound] = useState(0);
+  // Goes up to sign everything wanted again (the 3.5 h timer, or a catch-up after a sleep).
+  const [renewals, setRenewals] = useState(0);
+  // Goes up to try a failed renewal again. Kept apart from `renewals`, so a retry never
+  // restarts the 3.5 h countdown of the urls already on hand.
+  const [retries, setRetries] = useState(0);
   const asked = useRef(new Set<number>());
   const alive = useRef(true);
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // The urls on hand, for the fetch to tell a renewal that failed from a slide that never had one.
+  const have = useRef<Record<number, string>>({});
   const key = [...new Set(wanted)].sort((a, b) => a - b).join(",");
+
+  useEffect(() => {
+    have.current = urls;
+  }, [urls]);
 
   useEffect(() => {
     alive.current = true;
@@ -40,7 +49,15 @@ export function useSlideUrls(lectureId: string, wanted: number[]): Record<number
     const need = key === "" ? [] : key.split(",").map(Number).filter((n) => !asked.current.has(n));
     if (need.length === 0) return;
     for (const n of need) asked.current.add(n);
-    const renewing = round > 0;
+    // Slides that have a url and could not be signed again are tried again in a minute, before
+    // their url expires. A slide that never had one (no image row, a seeded demo) is only asked
+    // for again when the list changes, as before, so it never makes a request every minute.
+    const missed = (failed: number[]) => {
+      for (const n of failed) asked.current.delete(n);
+      if (!alive.current || !failed.some((n) => n in have.current)) return;
+      clearTimeout(retry.current);
+      retry.current = setTimeout(() => setRetries((n) => n + 1), RENEW_RETRY_MS);
+    };
     (async () => {
       const supabase = createBrowserSupabase();
       const { data: rows, error } = await supabase
@@ -63,21 +80,16 @@ export function useSlideUrls(lectureId: string, wanted: number[]): Record<number
         const url = byPath.get(r.image_path as string);
         if (url) got[r.number as number] = url;
       }
-      for (const n of need) if (!(n in got)) asked.current.delete(n);
       if (alive.current && Object.keys(got).length > 0) setUrls((prev) => ({ ...prev, ...got }));
+      missed(need.filter((n) => !(n in got)));
     })().catch(() => {
       // No image for these slides for now. The boxes still show, on a blank slide.
-      for (const n of need) asked.current.delete(n);
-      // A renewal that failed keeps the old urls and goes again in a minute, before they expire.
-      if (renewing && alive.current) {
-        clearTimeout(retry.current);
-        retry.current = setTimeout(() => setRound((n) => n + 1), RENEW_RETRY_MS);
-      }
+      missed(need);
     });
-  }, [lectureId, key, round]);
+  }, [lectureId, key, renewals, retries]);
 
-  // The 3.5 hours count from the first url on hand, then from each renewal. A tab that slept
-  // catches up when it is shown or focused again.
+  // The 3.5 hours count from the first url on hand, then from each renewal (never from a
+  // retry). A tab that slept catches up when it is shown or focused again.
   const any = Object.keys(urls).length > 0;
   useEffect(() => {
     if (!any) return;
@@ -87,7 +99,7 @@ export function useSlideUrls(lectureId: string, wanted: number[]): Record<number
       if (fired) return;
       fired = true;
       asked.current.clear();
-      setRound((n) => n + 1);
+      setRenewals((n) => n + 1);
     };
     const timer = setTimeout(renew, RENEW_MS);
     const catchUp = () => {
@@ -100,7 +112,7 @@ export function useSlideUrls(lectureId: string, wanted: number[]): Record<number
       document.removeEventListener("visibilitychange", catchUp);
       window.removeEventListener("focus", catchUp);
     };
-  }, [any, round]);
+  }, [any, renewals]);
 
   return urls;
 }
