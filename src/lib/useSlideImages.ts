@@ -40,13 +40,19 @@ function loadFirst(img: HTMLImageElement, url: string, ms: number): { done: Prom
  * every 3.5 hours (they last 4), so a projector or My spots tab left open never shows
  * a broken image. A tab that slept is caught up when it is shown or focused again.
  * Pass the slide that is on screen as `current` and the next one is preloaded.
- * urlFor(n) is undefined until the urls have arrived. A failed first query or a slide
+ * urlFor(n) is undefined until the urls have arrived; `loaded` turns true once the
+ * slide list has been read, so after that an undefined url means the slide has no
+ * image (no slide row for it) rather than "still loading". A failed first query or a slide
  * that could not be signed throws on the next render; a failed renewal keeps the old
  * urls and tries again a minute later. On a renewal the slide on screen is loaded with
  * its new url before the urls swap, so it never blinks or shows the loading text.
  */
-export function useSlideImages(lectureId: string, current?: number): { urlFor(n: number): string | undefined } {
+export function useSlideImages(
+  lectureId: string,
+  current?: number,
+): { urlFor(n: number): string | undefined; loaded: boolean } {
   const [urls, setUrls] = useState<Record<number, string>>({});
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   // Goes up to sign the urls again.
   const [round, setRound] = useState(0);
@@ -75,6 +81,7 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
       // No rows on a renewal (a session that lapsed, say) is a failed renewal: tried again.
       if (!rows || rows.length === 0) {
         if (renewing) throw new Error("No slide rows.");
+        if (!cancelled) setLoaded(true);
         return;
       }
 
@@ -109,6 +116,7 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
       }
       signed.current = { lectureId, at: Date.now() };
       setUrls(next);
+      setLoaded(true);
     })().catch((e: unknown) => {
       if (cancelled) return;
       if (renewing) {
@@ -161,5 +169,5 @@ export function useSlideImages(lectureId: string, current?: number): { urlFor(n:
   const urlFor = useCallback((n: number) => urls[n], [urls]);
 
   if (error) throw error;
-  return { urlFor };
+  return { urlFor, loaded };
 }

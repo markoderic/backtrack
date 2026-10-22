@@ -1,13 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
+// The slide write: update(...).eq(...).select(...).abortSignal(...).maybeSingle() -> single().
 const single = vi.fn();
-const select = vi.fn(() => ({ maybeSingle: single }));
-const filters = { eq: vi.fn(), select };
+const abortSignal = vi.fn();
+const filters = { eq: vi.fn(), select: vi.fn(), abortSignal, maybeSingle: single };
 filters.eq.mockImplementation(() => filters);
+filters.select.mockImplementation(() => filters);
+abortSignal.mockImplementation(() => filters);
 const eq = filters.eq;
+const select = filters.select;
 const update = vi.fn(() => filters);
-const from = vi.fn(() => ({ update }));
+// The read after a write that moved no row: select(...).eq(...).abortSignal(...).maybeSingle() -> read().
+const read = vi.fn();
+const readChain = { eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: read };
+readChain.eq.mockImplementation(() => readChain);
+readChain.abortSignal.mockImplementation(() => readChain);
+const readSelect = vi.fn(() => readChain);
+const from = vi.fn(() => ({ update, select: readSelect }));
 const rpc = vi.fn<(fn: string, args: unknown) => Promise<{ data: null; error: { message: string } | null }>>(
   async () => ({ data: null, error: null }),
 );
@@ -22,8 +32,9 @@ vi.mock("@/lib/useLiveLecture", () => ({
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
-const urlFor = vi.fn((n: number) => `https://signed/${n}.webp`);
-const useSlideImages = vi.fn((...args: [string, number?]) => ({ urlFor, args }));
+const urlFor = vi.fn<(n: number) => string | undefined>((n: number) => `https://signed/${n}.webp`);
+let imagesLoaded = true;
+const useSlideImages = vi.fn((...args: [string, number?]) => ({ urlFor, loaded: imagesLoaded, args }));
 vi.mock("@/lib/useSlideImages", () => ({
   useSlideImages: (id: string, current?: number) => useSlideImages(id, current),
 }));
@@ -53,9 +64,12 @@ const press = (key: string) => fireEvent.keyDown(window, { key });
 const shownSlide = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
-  [single, select, eq, update, from, push, urlFor, useSlideImages, useJoinedCount, useLiveLecture, rpc].forEach((m) =>
-    m.mockClear(),
+  [single, select, eq, update, from, push, urlFor, useSlideImages, useJoinedCount, useLiveLecture, rpc, abortSignal, read, readSelect].forEach(
+    (m) => m.mockClear(),
   );
+  urlFor.mockImplementation((n: number) => `https://signed/${n}.webp`);
+  imagesLoaded = true;
+  read.mockImplementation(async () => ({ data: null, error: null }));
   rpc.mockImplementation(async () => ({ data: null, error: null }));
   joined = 0;
   liveEnded = false;
@@ -169,8 +183,9 @@ describe("Projector", () => {
     expect(from).toHaveBeenCalledWith("lectures");
     expect(update).toHaveBeenCalledWith({ current_slide: 2 });
     expect(eq).toHaveBeenCalledWith("id", LECTURE);
-    // Only a live lecture moves.
+    // Only a live lecture moves, and only from the slide on screen.
     expect(eq).toHaveBeenCalledWith("status", "live");
+    expect(eq).toHaveBeenCalledWith("current_slide", 1);
     await waitFor(() => expect(shownSlide()).toBe("https://signed/2.webp"));
   });
 
@@ -227,7 +242,7 @@ describe("Projector", () => {
     press("ArrowRight");
     await act(async () => finish({ data: null, error: { message: "nope" } }));
     expect(update).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("alert")).toHaveTextContent("Could not change the slide.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't move to slide 5. Try again.");
     press("ArrowRight");
     expect(update).toHaveBeenLastCalledWith({ current_slide: 5 });
   });
@@ -268,7 +283,7 @@ describe("Projector", () => {
     show();
     press("ArrowRight");
     press("ArrowRight");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not change the slide.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't move to slide 2. Try again.");
     expect(shownSlide()).toBe("https://signed/1.webp");
   });
 
@@ -626,12 +641,82 @@ describe("Projector End class", () => {
     expect(dialog()).not.toBeInTheDocument();
   });
 
-  it("slide keys do nothing while it is open", () => {
+  it("a slide key closes it (Keep going) and moves the slide, so a teacher with only a clicker is never stuck", async () => {
     open();
     press("ArrowRight");
-    press("PageDown");
+    expect(dialog()).not.toBeInTheDocument();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({ current_slide: 4 });
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/4.webp"));
+  });
+
+  it("Space and Page Up from Keep going (where focus starts) close it and move the slide too", async () => {
+    open();
+    const keep = screen.getByRole("button", { name: "Keep going" });
+    expect(fireEvent.keyDown(keep, { key: " " })).toBe(false);
+    expect(dialog()).not.toBeInTheDocument();
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/4.webp"));
+    fireEvent.click(endClass());
+    fireEvent.keyDown(screen.getByRole("button", { name: "Keep going" }), { key: "PageUp" });
+    expect(dialog()).not.toBeInTheDocument();
+    expect(update).toHaveBeenLastCalledWith({ current_slide: 3 });
+  });
+
+  it("Space on its own End class (reached with Tab) is left to the button, not taken as a slide key", () => {
+    open();
+    const confirmEnd = within(dialog()!).getByRole("button", { name: "End class" });
+    confirmEnd.focus();
+    expect(fireEvent.keyDown(confirmEnd, { key: " " })).toBe(true);
+    expect(dialog()).toBeInTheDocument();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("slide keys wait while it is ending", async () => {
+    rpc.mockImplementationOnce(() => new Promise(() => {}));
+    open();
+    fireEvent.click(within(dialog()!).getByRole("button", { name: "End class" }));
+    press("ArrowRight");
     expect(update).not.toHaveBeenCalled();
     expect(dialog()).toBeInTheDocument();
+  });
+
+  it("after Keep going, Space on the refocused End class moves the slide and does not press it again", async () => {
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "Keep going" }));
+    expect(endClass()).toHaveFocus();
+    // Prevented, and the button loses focus, so no browser can press it on the keyup either.
+    expect(fireEvent.keyDown(endClass(), { key: " " })).toBe(false);
+    expect(endClass()).not.toHaveFocus();
+    fireEvent.keyUp(document.body, { key: " " });
+    expect(dialog()).not.toBeInTheDocument();
+    expect(endClass()).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/4.webp"));
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes (Keep going) when the page leaves fullscreen, since the browser took the Esc", () => {
+    open();
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => null });
+    act(() => {
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    expect(dialog()).not.toBeInTheDocument();
+    expect(endClass()).toHaveFocus();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("stays open when the page enters fullscreen", () => {
+    open();
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => document.documentElement });
+    try {
+      act(() => {
+        document.dispatchEvent(new Event("fullscreenchange"));
+      });
+      expect(dialog()).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => null });
+    }
   });
 
   it("End class in it ends the lecture and shows the ended state with the way back to the course", async () => {
@@ -670,5 +755,115 @@ describe("Projector End class", () => {
     expect(corner).not.toBeNull();
     // The join card and its fading copy are z-10, under the corner box.
     expect(screen.getByRole("img").className).not.toMatch(/z-/);
+  });
+});
+
+describe("Projector slide write that hangs", () => {
+  const wait = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
+
+  it("gives up after 8 s: aborts the request, says so quietly and unlocks the keys, with one write at a time", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      abortSignal.mockImplementation((s: AbortSignal) => ((signal = s), filters));
+      single.mockImplementation(() => new Promise(() => {}));
+      show({ initialSlide: 3 });
+      press("ArrowRight");
+      press("ArrowRight"); // made during the hang: waits, no second write
+      expect(update).toHaveBeenCalledTimes(1);
+      await wait(7999);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(signal?.aborted).toBe(false);
+      await wait(1);
+      expect(signal?.aborted).toBe(true);
+      expect(screen.getByRole("alert")).toHaveTextContent("Couldn't move to slide 4. Try again.");
+      expect(shownSlide()).toBe("https://signed/3.webp");
+      expect(update).toHaveBeenCalledTimes(1);
+      // The keys work again, from the slide on screen.
+      single.mockImplementation(async () => ({ data: { current_slide: 4 }, error: null }));
+      press("ArrowRight");
+      await wait(0);
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(update).toHaveBeenLastCalledWith({ current_slide: 4 });
+      expect(eq).toHaveBeenLastCalledWith("current_slide", 3);
+      expect(shownSlide()).toBe("https://signed/4.webp");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      abortSignal.mockImplementation(() => filters);
+    }
+  });
+
+  it("when the write that timed out landed after all, the next press shows where the lecture is instead of ending", async () => {
+    vi.useFakeTimers();
+    try {
+      single.mockImplementationOnce(() => new Promise(() => {}));
+      show({ initialSlide: 3 });
+      press("ArrowRight");
+      await wait(8000);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      // The database is on 4 now, so "from 3 to 4" moves no row; a read says where it is.
+      single.mockImplementation(async () => ({ data: null, error: null }));
+      read.mockImplementation(async () => ({ data: { current_slide: 4, status: "live" }, error: null }));
+      press("ArrowRight");
+      await wait(0);
+      expect(readSelect).toHaveBeenCalledWith("current_slide, status");
+      expect(shownSlide()).toBe("https://signed/4.webp");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText("This lecture has ended.")).not.toBeInTheDocument();
+      expect(update).toHaveBeenCalledTimes(2);
+      // And the next press goes on from there.
+      single.mockImplementation(async () => ({ data: { current_slide: 5 }, error: null }));
+      press("ArrowRight");
+      await wait(0);
+      expect(update).toHaveBeenLastCalledWith({ current_slide: 5 });
+      expect(shownSlide()).toBe("https://signed/5.webp");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a read that hangs too gives up the same way", async () => {
+    vi.useFakeTimers();
+    try {
+      single.mockImplementation(async () => ({ data: null, error: null }));
+      read.mockImplementation(() => new Promise(() => {}));
+      show({ initialSlide: 3 });
+      press("ArrowRight");
+      await wait(8000);
+      expect(screen.getByRole("alert")).toHaveTextContent("Couldn't move to slide 4. Try again.");
+      expect(screen.queryByText("This lecture has ended.")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Projector slide that has no image", () => {
+  it("says which slide didn't load instead of an empty screen, and the keys still work", async () => {
+    urlFor.mockImplementation((n: number) => (n === 4 ? undefined : `https://signed/${n}.webp`));
+    single.mockImplementation(async () => ({ data: { current_slide: 0 }, error: null }));
+    show({ initialSlide: 4 });
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Slide 4 didn't load.");
+    press("ArrowRight");
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/5.webp"));
+    expect(screen.queryByText(/didn't load/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing while the slide list is still loading", () => {
+    urlFor.mockImplementation(() => undefined);
+    imagesLoaded = false;
+    show({ initialSlide: 4 });
+    expect(screen.queryByText(/didn't load/)).not.toBeInTheDocument();
+  });
+
+  it("says so when the image itself fails to load (a deleted file), and the next slide shows", async () => {
+    show({ initialSlide: 4 });
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Slide 4 didn't load.");
+    press("ArrowLeft");
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/3.webp"));
   });
 });

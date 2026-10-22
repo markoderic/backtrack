@@ -75,6 +75,21 @@ describe("useSlideImages", () => {
     expect(result.current.urlFor(1)).toBeUndefined();
   });
 
+  it("says loaded once the urls are in, and not before", async () => {
+    const { result } = renderHook(() => useSlideImages("L"));
+    expect(result.current.loaded).toBe(false);
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.urlFor(1)).toBe("https://signed/L/1.webp");
+  });
+
+  it("says loaded with no urls when the lecture has no slide rows, so a page can tell missing from loading", async () => {
+    slidesResult.mockResolvedValue({ data: [], error: null });
+    const { result } = renderHook(() => useSlideImages("L"));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.urlFor(1)).toBeUndefined();
+    expect(createSignedUrls).not.toHaveBeenCalled();
+  });
+
   it("preloads the next slide when told the current one", async () => {
     const { result, rerender } = renderHook(({ n }) => useSlideImages("L", n), { initialProps: { n: 1 } });
     await waitFor(() => expect(result.current.urlFor(1)).toBeDefined());

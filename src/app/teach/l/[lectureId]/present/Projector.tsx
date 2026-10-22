@@ -26,6 +26,28 @@ type Props = {
 /** How long the join card takes to fade out on the first arrow (--dur-slow, plus room). */
 const JOIN_FADE_MS = 400;
 
+/**
+ * A slide change that has not come back in this long is given up: the request is aborted,
+ * the teacher sees "Couldn't move to slide N. Try again." and the keys work again.
+ */
+export const SLIDE_WRITE_TIMEOUT_MS = 8000;
+
+class TimedOut extends Error {}
+
+/** Resolves with `request`, or aborts it and rejects with TimedOut after `ms`. */
+function within<T>(request: PromiseLike<T>, ms: number, controller: AbortController): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.resolve(request),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new TimedOut());
+      }, ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 /** sessionStorage key: the join card of this lecture was put away in this tab. */
 export const joinCardKey = (lectureId: string) => `backtrack:joincard:${lectureId}`;
 
@@ -153,7 +175,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   // The join card fading out after the first arrow, drawn over the slide and then removed.
   const [joinCardFading, setJoinCardFading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { urlFor } = useSlideImages(lectureId, current);
+  const { urlFor, loaded } = useSlideImages(lectureId, current);
+  // The signed url whose image failed to load (deleted object, expired url). A renewed url
+  // for the same slide is a different string, so it is tried again.
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
   const joined = useJoinedCount(lectureId);
   // Hears an End from anywhere else (the dashboard, a phone): Realtime, plus a read every 20 s.
   const ended = useLiveLecture(lectureId, initialSlide).state?.ended ?? false;
@@ -165,6 +190,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const confirmingRef = useRef(false);
+  const endingRef = useRef(false);
   useEffect(() => {
     confirmingRef.current = confirming;
   }, [confirming]);
@@ -188,31 +214,65 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const go = useCallback(async () => {
     if (updating.current) return;
     updating.current = true;
+    let target = wantedRef.current;
     try {
       while (wantedRef.current !== currentRef.current && !endedRef.current) {
-        const target = wantedRef.current;
-        // Only a live lecture moves: no row back means it ended somewhere else.
-        const { data, error: updateError } = await createBrowserSupabase()
-          .from("lectures")
-          .update({ current_slide: target })
-          .eq("id", lectureId)
-          .eq("status", "live")
-          .select("current_slide")
-          .maybeSingle();
+        target = wantedRef.current;
+        const from = currentRef.current;
+        const supabase = createBrowserSupabase();
+        // Only a live lecture moves, and only from the slide on screen: a write that timed out
+        // but still lands later can't move the lecture once the slide has moved on.
+        const write = new AbortController();
+        const { data, error: updateError } = await within(
+          supabase
+            .from("lectures")
+            .update({ current_slide: target })
+            .eq("id", lectureId)
+            .eq("status", "live")
+            .eq("current_slide", from)
+            .select("current_slide")
+            .abortSignal(write.signal)
+            .maybeSingle(),
+          SLIDE_WRITE_TIMEOUT_MS,
+          write,
+        );
         if (updateError) throw new Error(updateError.message);
-        if (!data) {
+        if (data) {
+          currentRef.current = target;
+          setCurrent(target);
+          setError(null);
+          continue;
+        }
+        // No row moved: the lecture ended somewhere else, or it is not on the slide this screen
+        // shows (an earlier write that timed out landed after all). Read where it is.
+        const check = new AbortController();
+        const { data: row, error: readError } = await within(
+          supabase
+            .from("lectures")
+            .select("current_slide, status")
+            .eq("id", lectureId)
+            .abortSignal(check.signal)
+            .maybeSingle(),
+          SLIDE_WRITE_TIMEOUT_MS,
+          check,
+        );
+        if (readError) throw new Error(readError.message);
+        if (!row || row.status !== "live") {
           endedRef.current = true;
           setEndedHere(true);
           return;
         }
-        currentRef.current = target;
-        setCurrent(target);
+        // Show where the lecture really is; the press that assumed another slide is dropped.
+        currentRef.current = row.current_slide;
+        wantedRef.current = row.current_slide;
+        setCurrent(row.current_slide);
         setError(null);
       }
     } catch {
-      // Presses made meanwhile are dropped with it: the next press starts from the slide on screen.
+      // Failed or timed out (the request was aborted). Presses made meanwhile are dropped with
+      // it: the next press starts from the slide on screen, and nothing else is sent until then.
       wantedRef.current = currentRef.current;
-      setError("Could not change the slide.");
+      setError(`Couldn't move to slide ${target}. Try again.`);
     } finally {
       updating.current = false;
     }
@@ -233,15 +293,36 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     setCardChoice(true);
   }
 
+  // Esc closes the confirm (closing a dialog, not a shortcut), and Keep going does the same;
+  // both hand focus back to End class. A press outside closes it and leaves focus alone.
+  const closeConfirm = useCallback((refocus: boolean) => {
+    confirmingRef.current = false;
+    setConfirming(false);
+    if (refocus) endButton.current?.focus();
+  }, []);
+
   // The only keys: a clicker's (arrows, Page Up and Down, Space) move the slide. No shortcuts.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // The End class confirm is open: keys belong to it (Esc closes it, Space presses its buttons).
-      if (confirmingRef.current) return;
       const action = slideKeyAction(e);
       if (!action) return;
       if (endedRef.current) return;
+      if (confirmingRef.current) {
+        // Ending: the keys wait for it.
+        if (endingRef.current) return;
+        // Space on the confirm's own End class presses it: only a keyboard (Tab) gets focus
+        // there, a clicker can't.
+        if (e.key === " " && e.target instanceof HTMLElement && e.target.dataset.confirmEnd !== undefined) return;
+        // A teacher holding only a clicker is never stuck behind the confirm: a slide key is
+        // Keep going plus the move.
+        closeConfirm(false);
+      }
       e.preventDefault();
+      // The key moves the slide and never also presses the projector's own control that has
+      // focus (End class after Keep going, Fullscreen, Data): some browsers press a focused
+      // button on Space's keyup, which would open the confirm in front of the room.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && endArea.current?.contains(active)) active.blur();
       if (joinCardRef.current) {
         putCardAway();
         return;
@@ -253,15 +334,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [go, putCardAway, slideCount]);
-
-  // Esc closes the confirm (closing a dialog, not a shortcut), and Keep going does the same;
-  // both hand focus back to End class. A press outside closes it and leaves focus alone.
-  const closeConfirm = useCallback((refocus: boolean) => {
-    confirmingRef.current = false;
-    setConfirming(false);
-    if (refocus) endButton.current?.focus();
-  }, []);
+  }, [go, putCardAway, slideCount, closeConfirm]);
 
   useEffect(() => {
     if (!confirming || ending) return;
@@ -274,15 +347,23 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
       if (e.target instanceof Node && endArea.current?.contains(e.target)) return;
       closeConfirm(false);
     }
+    // In fullscreen the browser takes Esc to leave fullscreen and the page never sees the key,
+    // so leaving fullscreen with the confirm open is the teacher's Esc: Keep going.
+    function onFullscreenChange() {
+      if (!document.fullscreenElement) closeConfirm(true);
+    }
     window.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
     };
   }, [confirming, ending, closeConfirm]);
 
   async function endClass() {
+    endingRef.current = true;
     setEnding(true);
     try {
       const { error: endError } = await createBrowserSupabase().rpc("end_lecture", { p_lecture_id: lectureId });
@@ -293,6 +374,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
       closeConfirm(true);
       setError("Could not end the lecture.");
     } finally {
+      endingRef.current = false;
       setEnding(false);
     }
   }
@@ -317,6 +399,9 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   }
 
   const url = urlFor(current);
+  // The slide has no image (no slide row or signed url once the list is in), or its image
+  // failed to load: say so instead of an empty screen. The keys keep working.
+  const missing = url ? brokenUrl === url : loaded;
 
   if (isEnded) {
     return (
@@ -405,7 +490,13 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
             The code stops working and students land on My spots.
           </p>
           <div className="flex items-center gap-4">
-            <ButtonPrimary disabled={ending} onClick={() => void endClass()} className="h-11! w-35!">
+            <ButtonPrimary
+              // The one place Space keeps its button meaning while the confirm is open (see the keys).
+              data-confirm-end=""
+              disabled={ending}
+              onClick={() => void endClass()}
+              className="h-11! w-35!"
+            >
               End class
             </ButtonPrimary>
             <button
@@ -426,9 +517,21 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   return (
     <div className="fixed inset-0 overflow-hidden bg-bg text-ink">
       {/* The slide fills the screen at its own ratio and is never scaled past it. It swaps instantly. */}
-      {url && (
+      {url && !missing && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={`Slide ${current}`} className="h-full w-full object-contain" />
+        <img
+          src={url}
+          alt={`Slide ${current}`}
+          onError={() => setBrokenUrl(url)}
+          className="h-full w-full object-contain"
+        />
+      )}
+      {missing && (
+        <div className="absolute inset-0 flex items-center justify-center p-4">
+          <p role="status" className="type-title text-secondary">
+            Slide {current} didn&apos;t load.
+          </p>
+        </div>
       )}
 
       {joinCardShowing && <JoinCard code={code} siteAddress={siteAddress} joined={joined} onStart={putCardAway} />}
