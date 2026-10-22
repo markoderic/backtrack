@@ -217,7 +217,13 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
           {/* At least 560 px (or the window) wide, so the saved line never wraps in a short, wide window. */}
           <div className="flex max-w-full shrink-0 flex-col gap-2" style={{ width: `max(${frameWidth}, min(100cqw, 560px))` }}>
-            <div className="flex h-14 w-full items-center gap-3">
+            {/* Behind live on a phone, the slide number and Jump to live take a second line, so the strip keeps its room. */}
+            <div
+              data-controls=""
+              className={`flex h-14 w-full items-center gap-3 ${
+                behind ? "max-sm:h-auto max-sm:min-h-14 max-sm:flex-wrap max-sm:gap-y-2" : ""
+              }`}
+            >
               <div className="flex shrink-0">
                 <button
                   type="button"
@@ -239,7 +245,11 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
                 </button>
               </div>
               <SlideStrip live={live} viewing={viewing} spots={spotKinds} onPick={goTo} />
-              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+              <div
+                className={`flex shrink-0 items-center gap-2 whitespace-nowrap ${
+                  behind ? "max-sm:basis-full max-sm:justify-center" : ""
+                }`}
+              >
                 <span data-slide-number="" className="type-number-s text-ink">
                   {viewing}
                 </span>

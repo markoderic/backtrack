@@ -225,6 +225,19 @@ describe("StudentLecture", () => {
     expect(screen.queryByRole("button", { name: /Jump to live/ })).not.toBeInTheDocument();
   });
 
+  it("behind live on a phone, moves the slide number and Jump to live to a second line (the strip keeps its room)", async () => {
+    const { container } = show();
+    await settle();
+    const row = container.querySelector("[data-controls]") as HTMLElement;
+    expect(row.className).not.toMatch(/max-sm:flex-wrap/);
+    fireEvent.click(back());
+    expect(row.className).toMatch(/max-sm:flex-wrap/);
+    const jump = screen.getByRole("button", { name: /Jump to live/ });
+    expect(jump.parentElement?.className).toMatch(/max-sm:basis-full/);
+    fireEvent.click(jump);
+    expect(row.className).not.toMatch(/max-sm:flex-wrap/);
+  });
+
   it("Back is disabled on slide 1", () => {
     single.mockResolvedValue({ data: { current_slide: 1, status: "live", slide_count: 10 }, error: null });
     show(1);
