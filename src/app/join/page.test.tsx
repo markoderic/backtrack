@@ -192,6 +192,30 @@ describe("Join page", () => {
     expect(input().selectionStart).toBe(3);
   });
 
+  it("keeps all 6 digits when the same code is pasted or autofilled over a full field", () => {
+    render(<JoinPage />);
+    input().focus();
+    type("482913");
+    // Select all, paste "482913" (no space): the browser leaves "482913" with the caret at 6.
+    edit("482913", 6, "insertFromPaste");
+    expect(input().value).toBe("482 913");
+    expect(input().selectionStart).toBe(7);
+    edit("482913", 6, "insertReplacementText");
+    expect(input().value).toBe("482 913");
+    // Cutting only the space changes nothing.
+    edit("482913", 3, "deleteByCut");
+    expect(input().value).toBe("482 913");
+  });
+
+  it("takes a pasted code into an empty field", () => {
+    render(<JoinPage />);
+    input().focus();
+    edit("482913", 6, "insertFromPaste");
+    expect(input().value).toBe("482 913");
+    expect(input().selectionStart).toBe(7);
+    expect(joinButton()).toBeEnabled();
+  });
+
   it("draws each typed digit in its own span so it can pop in", () => {
     const { container } = render(<JoinPage />);
     type("4829");

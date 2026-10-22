@@ -40,8 +40,11 @@ function readEdit(
   let digits = value.replace(/\D/g, "");
   let digitsBefore = value.slice(0, caret).replace(/\D/g, "").length;
   let afterSpace = caret > 0 && value[caret - 1] === " ";
-  if (digits === before && value.length < spaced(before).length) {
-    if (inputType === "deleteContentForward") {
+  // Only a key delete (Backspace, Delete, word deletes) that took out just the space. A paste or autofill of the
+  // same code, or a cut of only the space, is not a delete of a digit. No inputType (old browsers) counts as a key delete.
+  const keyDelete = inputType === undefined || (inputType.startsWith("delete") && inputType !== "deleteByCut" && inputType !== "deleteByDrag");
+  if (keyDelete && digits === before && value.length < spaced(before).length) {
+    if (inputType?.endsWith("Forward")) {
       digits = before.slice(0, digitsBefore) + before.slice(digitsBefore + 1);
     } else if (digitsBefore > 0) {
       digits = before.slice(0, digitsBefore - 1) + before.slice(digitsBefore);
