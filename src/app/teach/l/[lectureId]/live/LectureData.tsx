@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { notesBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
+import { formatLectureDate } from "@/lib/lectureDate";
 
 const RETRY_FIRST_MS = 1000;
 const RETRY_MAX_MS = 10000;
@@ -20,6 +21,10 @@ type Props = {
   initialCurrentSlide?: number;
   /** Past mode links back to this course. */
   courseId?: string;
+  /** YYYY-MM-DD, shown as "Oct 21" under the name. */
+  lectureDate?: string;
+  /** Shown under the heading, e.g. the rename field on the past lecture page. */
+  children?: React.ReactNode;
 };
 
 type Supabase = ReturnType<typeof createBrowserSupabase>;
@@ -72,7 +77,16 @@ function isTyping(target: EventTarget | null): boolean {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function LectureData({ lectureId, mode, lectureName, slides, initialCurrentSlide, courseId }: Props) {
+export function LectureData({
+  lectureId,
+  mode,
+  lectureName,
+  slides,
+  initialCurrentSlide,
+  courseId,
+  lectureDate,
+  children,
+}: Props) {
   const router = useRouter();
   const [live, setLive] = useState(mode === "live");
   const [justEnded, setJustEnded] = useState(false);
@@ -243,6 +257,7 @@ export function LectureData({ lectureId, mode, lectureName, slides, initialCurre
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl">{lectureName}</h1>
+          {lectureDate && <p>{formatLectureDate(lectureDate)}</p>}
           {joined !== null && <p>{joined} joined</p>}
         </div>
         {live ? (
@@ -264,6 +279,8 @@ export function LectureData({ lectureId, mode, lectureName, slides, initialCurre
           )
         )}
       </header>
+
+      {children}
 
       {!live && justEnded && <p role="status">Lecture ended.</p>}
       {endError && <p role="alert">Could not end the lecture.</p>}

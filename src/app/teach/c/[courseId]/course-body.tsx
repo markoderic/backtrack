@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { formatLectureDate } from "@/lib/lectureDate";
 
 export async function CourseBody({ params }: { params: Promise<{ courseId: string }> }) {
   const { courseId } = await params;
@@ -27,6 +28,7 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
     .from("lectures")
     .select("id, name, status, lecture_date")
     .eq("course_id", course.id)
+    .order("lecture_date", { ascending: false })
     .order("started_at", { ascending: false });
   if (lecturesError) throw new Error(lecturesError.message);
   const live = (lectures ?? []).filter((l) => l.status === "live");
@@ -50,13 +52,25 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
       {past.length === 0 ? (
         <p>No lectures yet.</p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {past.map((lecture) => (
-            <li key={lecture.id} className="border border-current px-4 py-3">
-              {lecture.name}
-            </li>
-          ))}
-        </ul>
+        <>
+          {/* A plain link, not next/link: it downloads a file and must not be prefetched as a page. */}
+          <a href={`/teach/c/${course.id}/export`} download className="self-start border border-current px-4 py-2">
+            Export semester CSV
+          </a>
+          <ul className="flex flex-col gap-2">
+            {past.map((lecture) => (
+              <li key={lecture.id}>
+                <Link
+                  href={`/teach/l/${lecture.id}`}
+                  className="flex flex-wrap items-baseline justify-between gap-x-3 border border-current px-4 py-3"
+                >
+                  <span>{lecture.name}</span>
+                  <span>{formatLectureDate(lecture.lecture_date)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </main>
   );

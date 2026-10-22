@@ -588,6 +588,31 @@ describe("LectureData past", () => {
     expect(screen.getByRole("link", { name: "Back to the course" })).toHaveAttribute("href", "/teach/c/c1");
   });
 
+  it("shows the lecture date like Oct 21 when it is given, and nothing when it is not", async () => {
+    const { unmount } = renderLive({ mode: "past", lectureDate: "2026-10-21" });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(screen.getByText("Oct 21")).toBeInTheDocument();
+    unmount();
+    renderLive({ mode: "past" });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(screen.queryByText("Oct 21")).not.toBeInTheDocument();
+  });
+
+  it("shows what the page passes in as children (the rename field) under the heading", async () => {
+    renderLive({ mode: "past", children: <p>rename here</p> });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    const heading = screen.getByRole("heading", { name: "Lecture 1, Oct 26" });
+    const child = screen.getByText("rename here");
+    expect(heading.compareDocumentPosition(child) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("does not need slide images: it reads taps and the joined count only, so a missing image object can not break it", async () => {
+    renderLive({ mode: "past" });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(document.querySelector("img")).toBeNull();
+    expect(h.lectureQuery).not.toHaveBeenCalled();
+  });
+
   it("retries a failed load with backoff", async () => {
     vi.useFakeTimers();
     try {
