@@ -7,7 +7,6 @@ import { menuTop } from "@/app/l/[lectureId]/HighlightLayer";
 import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
-import { useSlideImages } from "@/lib/useSlideImages";
 import { formatClock } from "../time";
 
 export type Spot = {
@@ -28,8 +27,17 @@ type Props = {
   firstLine?: string;
   /** How many different students are lost on the spot's slide. */
   students: number;
-  /** Only used to stop the next arrow on the last slide. It is never shown. */
-  slideCount: number;
+  /**
+   * Only used to stop the next arrow on the last slide, once the lecture has ended. It is never
+   * shown, and it is null while the lecture is live (the page never gets the total then, D10).
+   */
+  slideCount: number | null;
+  /** The signed image url of a slide (one set for the whole page), undefined until it is known. */
+  urlFor: (n: number) => string | undefined;
+  /** Told which slide is on screen, so the page preloads the next one. */
+  onViewingChange?: (n: number) => void;
+  /** Where keyboard focus goes when the spot opens: the heading, or the spot arrow that was used. */
+  focusOnOpen?: "heading" | "prev" | "next";
   /**
    * The lecture's live slide while it is live. Browsing stops there, never past it (D10):
    * a student only knows the slides up to the live one. Null once the lecture has ended.
@@ -79,7 +87,9 @@ const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
 
 /** Underlined text actions (Change highlight, Move to slide 6, Remove). */
 const action =
-  "press rounded-xs type-small-strong text-ink underline underline-offset-2 hover:text-secondary focus-ring " +
+  // The after: box is an invisible hit area: 44 px tall around the 20 px text, no change to the look.
+  "press relative after:absolute after:-inset-x-1 after:-inset-y-3 after:content-[''] " +
+  "rounded-xs type-small-strong text-ink underline underline-offset-2 hover:text-secondary focus-ring " +
   "disabled:cursor-default disabled:opacity-40 disabled:hover:text-ink";
 /** 36 px icon buttons. */
 const iconButton =
@@ -216,11 +226,13 @@ function DrawLayer({
 
 /** One spot: its slide, how many got lost on it, the note, the highlight and the marker. */
 export function SpotDetail({
-  lectureId,
   spot,
   firstLine,
   students,
   slideCount,
+  urlFor,
+  onViewingChange,
+  focusOnOpen,
   liveSlide = null,
   onNoteSaved,
   onHighlightSaved,
@@ -232,10 +244,29 @@ export function SpotDetail({
 }: Props) {
   // The slide on screen. Browsing moves this; only "Move to slide n" moves the marker.
   const [viewing, setViewing] = useState(spot.slideNumber);
-  const { urlFor } = useSlideImages(lectureId, viewing);
   const url = urlFor(viewing);
   // While the lecture is live, the last slide a student may see is the live one.
-  const lastSlide = liveSlide ?? slideCount;
+  const lastSlide = liveSlide ?? slideCount ?? spot.slideNumber;
+  const onViewingRef = useRef(onViewingChange);
+  useEffect(() => {
+    onViewingRef.current = onViewingChange;
+  });
+  useEffect(() => {
+    onViewingRef.current?.(viewing);
+  }, [viewing]);
+
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const prevRef = useRef<HTMLButtonElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
+  // Keyboard focus survives the swap to this spot: the arrow that was used (if it still works), else the heading.
+  useEffect(() => {
+    const arrow = focusOnOpen === "prev" ? prevRef.current : focusOnOpen === "next" ? nextRef.current : null;
+    if (arrow && !arrow.disabled) arrow.focus();
+    else if (focusOnOpen) headingRef.current?.focus();
+  }, [focusOnOpen]);
+  const highlightRef = useRef<HTMLButtonElement>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
 
   const imageRef = useRef<HTMLImageElement>(null);
   const [rect, setRect] = useState<Rect | null>(spot.rect ?? null);
@@ -246,6 +277,15 @@ export function SpotDetail({
   const [highlightSaved, setHighlightSaved] = useState(false);
   // A drawn box waits for Keep highlight or Cancel; the Highlight action steps aside meanwhile (design).
   const [boxWaiting, setBoxWaiting] = useState(false);
+  // When the menu goes (Keep highlight, Cancel) and took focus with it, focus lands on the highlight action.
+  const wasWaiting = useRef(false);
+  useEffect(() => {
+    const ended = wasWaiting.current && !boxWaiting;
+    wasWaiting.current = boxWaiting;
+    if (!ended) return;
+    const active = document.activeElement;
+    if (!active || active === document.body) highlightRef.current?.focus();
+  }, [boxWaiting]);
   // The highlight belongs to the slide of the spot, so it only shows and changes there.
   const onSpotSlide = viewing === spot.slideNumber;
   if (drawing && !onSpotSlide) setDrawing(false);
@@ -265,6 +305,13 @@ export function SpotDetail({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState(false);
+  const confirmShown = useRef(false);
+  // The confirm row takes focus on Keep it; going back puts it on Remove again.
+  useEffect(() => {
+    if (confirmRemove) keepRef.current?.focus();
+    else if (confirmShown.current) removeRef.current?.focus();
+    confirmShown.current = confirmRemove;
+  }, [confirmRemove]);
 
   const [note, setNote] = useState(spot.note ?? "");
   const [editingNote, setEditingNote] = useState(false);
@@ -399,6 +446,7 @@ export function SpotDetail({
         </button>
         <div className="min-w-0 flex-1" />
         <button
+          ref={prevRef}
           type="button"
           onClick={onPrevSpot}
           disabled={!onPrevSpot}
@@ -413,6 +461,7 @@ export function SpotDetail({
           </span>
         </button>
         <button
+          ref={nextRef}
           type="button"
           onClick={onNextSpot}
           disabled={!onNextSpot}
@@ -430,11 +479,11 @@ export function SpotDetail({
 
       <main className="mx-auto flex w-full max-w-180 animate-rise-in flex-col gap-5 px-4 pb-10 pt-2">
         <div className="flex min-w-0 items-center gap-4">
-          <span aria-hidden className={`shrink-0 type-number-l ${lost ? "text-lost" : "text-ink"}`}>
+          <span aria-hidden data-spot-number="" className={`shrink-0 type-number-l ${lost ? "text-lost" : "text-ink"}`}>
             {spot.slideNumber}
           </span>
           <div className="flex min-w-0 flex-col gap-0.5">
-            <h1 className="break-words type-title text-ink">
+            <h1 ref={headingRef} tabIndex={-1} className="break-words type-title text-ink outline-hidden">
               <span className="sr-only">Slide {spot.slideNumber}: </span>
               {firstLine || `Slide ${spot.slideNumber}`}
             </h1>
@@ -532,7 +581,7 @@ export function SpotDetail({
                   type="button"
                   aria-label="Edit note"
                   onClick={() => setEditingNote(true)}
-                  className="press -m-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring"
+                  className="press -m-2.5 flex size-9 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring"
                 >
                   <Icon name="edit" size={16} />
                 </button>
@@ -543,7 +592,7 @@ export function SpotDetail({
               ref={editNoteRef}
               type="button"
               onClick={() => setEditingNote(true)}
-              className="press self-start rounded-xs type-note text-secondary underline underline-offset-2 hover:text-ink focus-ring"
+              className="press relative self-start rounded-xs type-note text-secondary underline after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-[''] underline-offset-2 hover:text-ink focus-ring"
             >
               Add a note
             </button>
@@ -564,6 +613,7 @@ export function SpotDetail({
                 Yes, remove
               </button>
               <button
+                ref={keepRef}
                 type="button"
                 onClick={() => {
                   setConfirmRemove(false);
@@ -579,6 +629,7 @@ export function SpotDetail({
             <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
               {onSpotSlide && !boxWaiting && (
                 <button
+                  ref={highlightRef}
                   type="button"
                   aria-pressed={drawing}
                   onClick={() => {
@@ -597,7 +648,7 @@ export function SpotDetail({
                 </button>
               )}
               {onRemoved && (
-                <button type="button" onClick={() => setConfirmRemove(true)} className={action}>
+                <button ref={removeRef} type="button" onClick={() => setConfirmRemove(true)} className={action}>
                   Remove
                 </button>
               )}

@@ -102,6 +102,7 @@ describe("SpotsBody", () => {
     const props = JSON.parse(screen.getByTestId("view").textContent!);
     expect(props.liveSlide).toBe(5);
     expect(props.endedAt).toBeNull();
-    expect(props.slideCount).toBe(12);
+    // The total stays on the server while the lecture is live (D10).
+    expect(props.slideCount).toBeNull();
   });
 });

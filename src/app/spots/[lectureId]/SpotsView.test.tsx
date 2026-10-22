@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor, act } from "@testing-library/react";
 
 type Result = { data: unknown; error: { message: string } | null };
 
@@ -14,8 +14,27 @@ function chain(table: string, result: () => Result) {
     });
   }
   c.then = (ok: (v: Result) => unknown, bad: (e: unknown) => unknown) => Promise.resolve(result()).then(ok, bad);
+  c.single = () => Promise.resolve(result());
   return c;
 }
+
+// The realtime channel useLiveLecture listens on (same pattern as src/lib/useLiveLecture.test.tsx).
+type Handler = (payload: { new: Record<string, unknown> }) => void;
+const channel = {
+  update: null as Handler | null,
+  on: vi.fn(),
+  subscribe: vi.fn(),
+};
+channel.on.mockImplementation((_type: string, _filter: unknown, cb: Handler) => {
+  channel.update = cb;
+  return channel;
+});
+channel.subscribe.mockImplementation(() => channel);
+const makeChannel = vi.fn(() => channel);
+const removeChannel = vi.fn();
+
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 const tables: Record<string, Result> = {};
 const rpc = vi.fn();
@@ -26,7 +45,9 @@ const from = vi.fn((table: string) => ({
   ...(chain(table, () => tables[table]) as object),
   update,
 }));
-vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ from, rpc }) }));
+vi.mock("@/lib/supabase/browser", () => ({
+  createBrowserSupabase: () => ({ from, rpc, channel: makeChannel, removeChannel }),
+}));
 
 const flush = vi.fn();
 vi.mock("@/lib/tapSync", async (orig) => ({
@@ -37,8 +58,12 @@ vi.mock("@/lib/tapSync", async (orig) => ({
   },
 }));
 
+const useSlideImages = vi.fn();
 vi.mock("@/lib/useSlideImages", () => ({
-  useSlideImages: () => ({ urlFor: (n: number) => `https://signed/${n}.webp` }),
+  useSlideImages: (id: string, current?: number) => {
+    useSlideImages(id, current);
+    return { urlFor: (n: number) => `https://signed/${n}.webp` };
+  },
 }));
 
 import { SpotsView } from "./SpotsView";
@@ -60,6 +85,8 @@ const allStats = (counts: Record<number, number>) =>
   Array.from({ length: 12 }, (_, i) => stat(i + 1, counts[i + 1] ?? 0));
 
 function show(o: { endedAt?: string | null; liveSlide?: number | null } = {}) {
+  // What useLiveLecture reads while the lecture is live.
+  if (o.liveSlide) tables.lectures = { data: { current_slide: o.liveSlide, status: "live" }, error: null };
   return render(
     <SpotsView
       lectureId={LECTURE}
@@ -68,7 +95,7 @@ function show(o: { endedAt?: string | null; liveSlide?: number | null } = {}) {
       lectureName="Lecture 3, Oct 26"
       lectureDate="2026-10-26"
       endedAt={o.endedAt ?? null}
-      slideCount={12}
+      slideCount={o.liveSlide ? null : 12}
       liveSlide={o.liveSlide ?? null}
     />,
   );
@@ -79,7 +106,10 @@ const ready = () => screen.findAllByRole("listitem");
 beforeEach(() => {
   calls.length = 0;
   sessionStorage.clear();
-  [rpc, selectAfter, eqId, update, from, flush].forEach((m) => m.mockClear());
+  [rpc, selectAfter, eqId, update, from, flush, refresh, makeChannel, removeChannel, useSlideImages].forEach((m) =>
+    m.mockClear(),
+  );
+  channel.update = null;
   flush.mockResolvedValue({ sent: 0, rejected: [] });
   tables.lost_taps = {
     data: [
@@ -153,7 +183,7 @@ describe("SpotsView: the list", () => {
   it("shows the number red for a lost spot and ink for a saved one", async () => {
     show();
     const items = await ready();
-    const number = (li: HTMLElement) => li.querySelector("button > span[aria-hidden]")!;
+    const number = (li: HTMLElement) => li.querySelector("[data-spot-number]")!;
     expect(number(items[0])).toHaveTextContent("3");
     expect(number(items[0])).toHaveClass("text-lost");
     expect(number(items[1])).toHaveClass("text-ink");
@@ -188,7 +218,8 @@ describe("SpotsView: the list", () => {
     tables.lost_taps = { data: [], error: null };
     show();
     expect(await screen.findByRole("heading", { name: "No spots yet" })).toBeInTheDocument();
-    expect(screen.getByText("Tap I'm lost during a lecture and the slide shows up here.")).toBeInTheDocument();
+    expect(screen.getByText("Slides you mark show up here.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Tap I.m lost/);
     expect(screen.queryByRole("heading", { name: "My spots" })).not.toBeInTheDocument();
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   });
@@ -371,6 +402,74 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.click(screen.getByRole("button", { name: /Slide 3/ }));
     for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
     expect(screen.getByRole("img")).toHaveAttribute("src", "https://signed/6.webp");
+  });
+
+  it("during a live lecture, a later live slide raises the cap, and the end reads the page again", async () => {
+    show({ liveSlide: 4 });
+    await ready();
+    expect(makeChannel).toHaveBeenCalledWith(`lecture-${LECTURE}`);
+    fireEvent.click(screen.getByRole("button", { name: /Slide 3/ }));
+    const next = () => screen.getByRole("button", { name: "Next slide" });
+    fireEvent.click(next());
+    expect(next()).toBeDisabled();
+    act(() => channel.update?.({ new: { current_slide: 6, status: "live" } }));
+    expect(next()).toBeEnabled();
+    fireEvent.click(next());
+    fireEvent.click(next());
+    expect(screen.getByRole("img")).toHaveAttribute("src", "https://signed/6.webp");
+    expect(next()).toBeDisabled();
+    expect(refresh).not.toHaveBeenCalled();
+    act(() => channel.update?.({ new: { current_slide: 6, status: "ended" } }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // One subscription for the page: opening a spot did not start a second one.
+    expect(makeChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not follow a lecture that has ended", async () => {
+    show();
+    await ready();
+    expect(makeChannel).not.toHaveBeenCalled();
+  });
+
+  it("signs the slides once for the page and preloads from the slide on screen in the detail", async () => {
+    await open("3");
+    expect(new Set(useSlideImages.mock.calls.map((c) => c[0]))).toEqual(new Set([LECTURE]));
+    fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
+    await waitFor(() => expect(useSlideImages).toHaveBeenLastCalledWith(LECTURE, 4));
+  });
+
+  it("puts focus back on the row of the spot that was open, and keeps it on the spot arrow", async () => {
+    await open("3");
+    fireEvent.click(screen.getByRole("button", { name: "Next spot" }));
+    expect(screen.getByRole("button", { name: "Next spot" })).toHaveFocus();
+    // At the last spot the arrow is off, so focus goes to the heading.
+    fireEvent.click(screen.getByRole("button", { name: "Next spot" }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    await ready();
+    expect(screen.getByRole("button", { name: /Slide 9/ })).toHaveFocus();
+  });
+
+  it("a removed spot is gone at once, even before the counts come back", async () => {
+    await open("9");
+    let answer!: (v: unknown) => void;
+    rpc.mockReturnValue(new Promise((r) => (answer = r)));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+    expect(screen.queryByText("Induction")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "My spots" })).toHaveFocus();
+    await act(async () => answer({ data: allStats({ 3: 4, 5: 2 }), error: null }));
+  });
+
+  it("keeps the list when the counts can not be read after a remove", async () => {
+    await open("9");
+    rpc.mockResolvedValue({ data: null, error: { message: "stats broke" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("4 people got lost here");
   });
 
   it("a removed spot leaves the list, and the counts are read again", async () => {

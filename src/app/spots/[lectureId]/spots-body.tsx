@@ -34,7 +34,8 @@ export async function SpotsBody({ params }: { params: Promise<{ lectureId: strin
       lectureName={lecture.name}
       lectureDate={lecture.lecture_date}
       endedAt={live ? null : (lecture.ended_at ?? null)}
-      slideCount={lecture.slide_count}
+      // The total never reaches the browser while the lecture is live (D10); the end re-reads this page.
+      slideCount={live ? null : lecture.slide_count}
       liveSlide={live ? lecture.current_slide : null}
     />
   );

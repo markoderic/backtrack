@@ -8,13 +8,7 @@ const update = vi.fn(() => ({ eq }));
 const from = vi.fn(() => ({ update }));
 vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ from }) }));
 
-const useSlideImages = vi.fn();
-vi.mock("@/lib/useSlideImages", () => ({
-  useSlideImages: (id: string, current?: number) => {
-    useSlideImages(id, current);
-    return { urlFor: (n: number) => `https://signed/${n}.webp` };
-  },
-}));
+const urlFor = (n: number) => `https://signed/${n}.webp`;
 
 import { SpotDetail, type Spot } from "./SpotDetail";
 
@@ -25,8 +19,9 @@ function show(
   o: {
     spot?: Spot;
     students?: number;
-    slideCount?: number;
+    slideCount?: number | null;
     liveSlide?: number | null;
+    focusOnOpen?: "heading" | "prev" | "next";
     firstLine?: string;
     onPrevSpot?: () => void;
     onNextSpot?: () => void;
@@ -37,8 +32,11 @@ function show(
     spot: o.spot ?? lostSpot,
     firstLine: o.firstLine,
     students: o.students ?? 6,
-    slideCount: o.slideCount ?? 23,
+    slideCount: o.slideCount === undefined ? 23 : o.slideCount,
     liveSlide: o.liveSlide ?? null,
+    urlFor,
+    onViewingChange: vi.fn(),
+    focusOnOpen: o.focusOnOpen,
     onNoteSaved: vi.fn(),
     onHighlightSaved: vi.fn(),
     onMoved: vi.fn(async () => {}),
@@ -55,7 +53,7 @@ const move = () => screen.getByRole("button", { name: "Move to slide 6" });
 const shownSrc = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
-  [selectAfter, eq, update, from, useSlideImages].forEach((m) => m.mockClear());
+  [selectAfter, eq, update, from].forEach((m) => m.mockClear());
   selectAfter.mockResolvedValue({ data: [{ id: "tap-1" }], error: null });
 });
 
@@ -114,7 +112,7 @@ describe("SpotDetail: the page itself", () => {
 
   it("shows the number red for a lost spot and ink for a saved one", () => {
     const { unmount } = show();
-    const number = () => screen.getByRole("heading", { level: 1 }).parentElement!.previousElementSibling!;
+    const number = () => document.querySelector("[data-spot-number]")!;
     expect(number()).toHaveTextContent("7");
     expect(number()).toHaveClass("text-lost");
     unmount();
@@ -220,7 +218,25 @@ describe("SpotDetail: previous and next slide", () => {
     expect(next()).toBeDisabled();
     fireEvent.click(next());
     expect(shownSrc()).toBe("https://signed/8.webp");
-    expect(useSlideImages).not.toHaveBeenCalledWith(LECTURE, 9);
+  });
+
+  it("a later live slide opens the next arrow again, up to the new live slide", () => {
+    const props = show({ liveSlide: 7, slideCount: null });
+    const next = () => screen.getByRole("button", { name: "Next slide" });
+    expect(next()).toBeDisabled();
+    props.rerender(<SpotDetail {...props} liveSlide={9} />);
+    fireEvent.click(next());
+    fireEvent.click(next());
+    expect(shownSrc()).toBe("https://signed/9.webp");
+    expect(next()).toBeDisabled();
+  });
+
+  it("when the teacher goes back below the slide on screen, the view stays and next stays off", () => {
+    const props = show({ liveSlide: 9, slideCount: null });
+    fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
+    props.rerender(<SpotDetail {...props} liveSlide={6} />);
+    expect(shownSrc()).toBe("https://signed/8.webp");
+    expect(screen.getByRole("button", { name: "Next slide" })).toBeDisabled();
   });
 
   it("on the live slide itself, next is disabled at once", () => {
@@ -237,10 +253,11 @@ describe("SpotDetail: previous and next slide", () => {
     expect(next()).toBeDisabled();
   });
 
-  it("preloads from the slide on screen", () => {
-    show();
+  it("tells the page the slide on screen, so the page preloads the next one", () => {
+    const { onViewingChange } = show();
+    expect(onViewingChange).toHaveBeenLastCalledWith(7);
     fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
-    expect(useSlideImages).toHaveBeenLastCalledWith(LECTURE, 8);
+    expect(onViewingChange).toHaveBeenLastCalledWith(8);
   });
 
   it("can come back to the marked slide after browsing away", () => {
@@ -353,6 +370,45 @@ describe("SpotDetail: remove", () => {
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not remove the spot");
     expect(onRemoved).not.toHaveBeenCalled();
+  });
+});
+
+describe("SpotDetail: keyboard focus", () => {
+  it("lands on the spot arrow that was used, or the heading when that arrow is at its end", () => {
+    const { unmount } = show({ focusOnOpen: "next", onNextSpot: vi.fn() });
+    expect(screen.getByRole("button", { name: "Next spot" })).toHaveFocus();
+    unmount();
+    show({ focusOnOpen: "next" });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("lands on the heading when the spot was opened from the list", () => {
+    show({ focusOnOpen: "heading" });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("goes to Keep it when Remove asks, and back to Remove on Keep it", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByRole("button", { name: "Keep it" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+    expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus();
+  });
+
+  it("goes to the highlight action when the Keep highlight menu closes", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, width: 1000, height: 500, toJSON: () => ({}),
+    });
+    show();
+    const layer = document.querySelector("[data-highlight-layer]") as HTMLElement;
+    const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
+    fireEvent.pointerDown(layer, { ...mouse, clientX: 500, clientY: 250 });
+    fireEvent.pointerUp(layer, { ...mouse, clientX: 900, clientY: 450 });
+    const keep = screen.getByRole("button", { name: "Keep highlight" });
+    keep.focus();
+    fireEvent.click(keep);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change highlight" })).toHaveFocus());
+    vi.restoreAllMocks();
   });
 });
 
