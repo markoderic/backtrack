@@ -45,7 +45,7 @@ const tables: Record<string, Result> = {};
 const rpc = vi.fn();
 const selectAfter = vi.fn();
 const eqId = vi.fn(() => ({ select: selectAfter }));
-const update = vi.fn(() => ({ eq: eqId }));
+const update = vi.fn(() => ({ in: eqId }));
 const from = vi.fn((table: string) => ({
   ...(chain(table, () => tables[table]) as object),
   update,
@@ -180,15 +180,39 @@ describe("SpotsView: the list", () => {
     expect(items[2]).toHaveTextContent("Only you got lost here");
   });
 
-  it("two spots on one slide stay in the order they were made", async () => {
+  it("several taps on one slide show once, with the latest note (Marko: 4 spots, all on one slide)", async () => {
     tables.lost_taps = {
-      data: [tap("late", 5, "2026-10-26T14:40:00Z", { note: "second" }), tap("early", 5, "2026-10-26T14:10:00Z", { note: "first" })],
+      data: [
+        tap("t1", 5, "2026-10-26T14:10:00Z", { note: "first" }),
+        tap("t2", 5, "2026-10-26T14:20:00Z"),
+        tap("t3", 5, "2026-10-26T14:30:00Z", { note: "second" }),
+        tap("t4", 5, "2026-10-26T14:40:00Z"),
+      ],
       error: null,
     };
     show();
     const items = await ready();
-    expect(items[0]).toHaveTextContent("first");
-    expect(items[1]).toHaveTextContent("second");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent("second");
+    expect(items[0]).not.toHaveTextContent("first");
+  });
+
+  it("a slide with a save and a lost tap shows once, as lost", async () => {
+    tables.lost_taps = {
+      data: [tap("s", 5, "2026-10-26T14:10:00Z", { kind: "save" }), tap("l", 5, "2026-10-26T14:20:00Z")],
+      error: null,
+    };
+    show();
+    const items = await ready();
+    expect(items).toHaveLength(1);
+    expect(items[0].querySelector("[data-spot-number]")).toHaveClass("text-lost");
+  });
+
+  it("notes in the list are Geist, not italic Newsreader", async () => {
+    show();
+    const items = await ready();
+    expect(within(items[2]).getByText("the proof")).toHaveClass("type-body");
+    expect(document.querySelector(".type-note")).toBeNull();
   });
 
   it("shows the number red for a lost spot and ink for a saved one", async () => {
@@ -209,11 +233,19 @@ describe("SpotsView: the list", () => {
     expect(item.querySelectorAll("[data-highlight-box]")).toHaveLength(1);
   });
 
-  it("during a live lecture the top left goes back to the lecture", async () => {
+  it("during a live lecture a white Back to lecture button goes back into class", async () => {
     show({ liveSlide: 6 });
     await ready();
-    expect(screen.getByRole("link", { name: "Back to lecture" })).toHaveAttribute("href", `/l/${LECTURE}`);
-    expect(screen.queryByText("CSE 274")).not.toBeInTheDocument();
+    const back = screen.getByRole("link", { name: "Back to lecture" });
+    expect(back).toHaveAttribute("href", `/l/${LECTURE}`);
+    expect(back.className).toContain("bg-surface");
+  });
+
+  it("after the lecture there is no Back to lecture", async () => {
+    show({ endedAt: "2026-10-26T15:00:00Z" });
+    await ready();
+    expect(screen.queryByRole("link", { name: "Back to lecture" })).not.toBeInTheDocument();
+    expect(screen.getByText("CSE 274")).toBeInTheDocument();
   });
 
   it("asks only for the student's own rows that are not undone", async () => {
@@ -249,10 +281,14 @@ describe("SpotsView: the list", () => {
     expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
   });
 
-  it("links to all lectures", async () => {
+  it("has a 44 px back arrow at the top left up to all lectures, and no All lectures text link", async () => {
     show();
     await ready();
-    expect(screen.getByRole("link", { name: "All lectures" })).toHaveAttribute("href", "/spots");
+    const back = screen.getByRole("link", { name: "Back to My spots" });
+    expect(back).toHaveAttribute("href", "/spots");
+    expect(back).toHaveClass("size-11");
+    expect(back.parentElement?.firstElementChild).toBe(back);
+    expect(screen.queryByRole("link", { name: "All lectures" })).not.toBeInTheDocument();
   });
 });
 
@@ -354,7 +390,7 @@ describe("SpotsView: opening a spot", () => {
 
   it("goes back to the list", async () => {
     await open("3");
-    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     expect(await ready()).toHaveLength(3);
   });
 
@@ -365,9 +401,9 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Move to slide 8" }));
     expect(await screen.findByText("3 people got lost here")).toBeInTheDocument();
     expect(update).toHaveBeenCalledWith({ slide_number: 8 });
-    expect(eqId).toHaveBeenCalledWith("id", "b");
+    expect(eqId).toHaveBeenCalledWith("id", ["b"]);
     expect(rpc).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     const items = await screen.findAllByRole("listitem");
     expect(items[2]).toHaveTextContent("Slide 8");
     expect(items[2]).toHaveTextContent("Base case");
@@ -378,9 +414,9 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
     fireEvent.change(screen.getByLabelText("Your note"), { target: { value: "ask Dr. Lee" } });
     selectAfter.mockResolvedValue({ data: [{ id: "a" }], error: null });
-    fireEvent.submit((screen.getByLabelText("Your note") as HTMLInputElement).form!);
-    await screen.findByRole("status");
-    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    fireEvent.submit((screen.getByLabelText("Your note") as HTMLTextAreaElement).form!);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Note saved."));
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     const items = await screen.findAllByRole("listitem");
     expect(within(items[0]).getByText("ask Dr. Lee")).toBeInTheDocument();
   });
@@ -459,7 +495,7 @@ describe("SpotsView: opening a spot", () => {
     // At the last spot the arrow is off, so focus goes to the heading.
     fireEvent.click(screen.getByRole("button", { name: "Next spot" }));
     expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     await ready();
     expect(screen.getByRole("button", { name: /Slide 9/ })).toHaveFocus();
   });
@@ -495,7 +531,7 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
     expect(update).toHaveBeenCalledWith({ undone: true });
-    expect(eqId).toHaveBeenCalledWith("id", "b");
+    expect(eqId).toHaveBeenCalledWith("id", ["b"]);
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Induction")).not.toBeInTheDocument();
   });
@@ -524,7 +560,7 @@ describe("SpotsView: highlights", () => {
     expect(boxes()).toHaveLength(1);
     expect(boxes()[0].style.left).toBe("10%");
     expect(boxes()[0].style.height).toBe("40%");
-    expect(screen.getByRole("button", { name: "Change highlight" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear mark" })).toBeInTheDocument();
   });
 
   it("draws nothing for a spot with no highlight, or a half filled one", async () => {
@@ -534,8 +570,8 @@ describe("SpotsView: highlights", () => {
     };
     await open("3");
     expect(boxes()).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Highlight" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    expect(screen.getByRole("button", { name: "Mark the spot" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     fireEvent.click(await screen.findByRole("button", { name: /Slide 5/ }));
     expect(boxes()).toHaveLength(0);
   });
@@ -546,15 +582,15 @@ describe("SpotsView: highlights", () => {
     });
     tables.lost_taps = { data: [tap("b", 9, "2026-10-26T14:20:00Z")], error: null };
     await open("9");
+    fireEvent.click(screen.getByRole("button", { name: "Mark the spot" }));
     const layer = document.querySelector("[data-highlight-layer]") as HTMLElement;
     const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
     fireEvent.pointerDown(layer, { ...mouse, clientX: 500, clientY: 250 });
     fireEvent.pointerUp(layer, { ...mouse, clientX: 900, clientY: 450 });
-    fireEvent.click(screen.getByRole("button", { name: "Keep highlight" }));
-    await screen.findByText("Highlight saved");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Spot marked."));
     expect(update).toHaveBeenCalledWith({ hl_x: 0.5, hl_y: 0.5, hl_w: 0.4, hl_h: 0.4 });
-    expect(eqId).toHaveBeenCalledWith("id", "b");
-    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    expect(eqId).toHaveBeenCalledWith("id", ["b"]);
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     fireEvent.click(await screen.findByRole("button", { name: /Slide 9/ }));
     expect(boxes()).toHaveLength(1);
     expect(boxes()[0].style.left).toBe("50%");
@@ -569,6 +605,56 @@ describe("SpotsView: highlights", () => {
     await screen.findByText("3 people got lost here");
     expect(update).toHaveBeenCalledWith({ slide_number: 8, hl_x: null, hl_y: null, hl_w: null, hl_h: null });
     expect(boxes()).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Highlight" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark the spot" })).toBeInTheDocument();
+  });
+});
+
+describe("SpotsView: after the course's time to see slides is over", () => {
+  beforeEach(() => {
+    // The database gives this student no slide rows any more (0017).
+    tables.slides = { data: [], error: null };
+  });
+
+  it("lists the spots with their notes, says the slides are no longer available, and shows no thumbnails", async () => {
+    show({ endedAt: "2026-10-26T15:00:00Z" });
+    const items = await ready();
+    expect(items).toHaveLength(3);
+    expect(screen.getByText("These slides are no longer available.")).toBeInTheDocument();
+    expect(items[2]).toHaveTextContent("the proof");
+    expect(document.querySelectorAll("li img")).toHaveLength(0);
+    expect(items[0].querySelector("[data-slide-gone]")).not.toBeNull();
+  });
+
+  it("a spot opens with the note and This slide is no longer available.", async () => {
+    show({ endedAt: "2026-10-26T15:00:00Z" });
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: /Slide 9/ }));
+    expect(screen.getByText("This slide is no longer available.")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("the proof")).toBeInTheDocument();
+  });
+
+  it("a live lecture never shows it, even before its slide rows arrive", async () => {
+    show({ liveSlide: 6 });
+    await ready();
+    expect(screen.queryByText(/no longer available/)).not.toBeInTheDocument();
+  });
+});
+
+describe("SpotsView: moving onto a slide that has a spot", () => {
+  it("the two become one spot, and it stays open", async () => {
+    tables.lost_taps = {
+      data: [tap("on8", 8, "2026-10-26T14:10:00Z", { note: "eight" }), tap("on9", 9, "2026-10-26T14:20:00Z")],
+      error: null,
+    };
+    show();
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: /Slide 9/ }));
+    rpc.mockResolvedValue({ data: allStats({ 8: 1 }), error: null });
+    fireEvent.click(screen.getByRole("button", { name: "Move to slide 8" }));
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Base case"));
+    expect(screen.getByText("eight")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
+    expect(await screen.findAllByRole("listitem")).toHaveLength(1);
   });
 });

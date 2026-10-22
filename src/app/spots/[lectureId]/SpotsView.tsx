@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
@@ -14,7 +14,9 @@ import { flushLeftoverTaps, rejectedKey } from "@/lib/tapSync";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { formatClock } from "../time";
-import { SpotDetail, countLine, highlightClass, whenLine, type Spot } from "./SpotDetail";
+import { groupBySlide, type Spot, type SpotRow } from "../group";
+import { buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { SpotDetail, backButtonClass, countLine, highlightClass, whenLine } from "./SpotDetail";
 
 type Props = {
   lectureId: string;
@@ -34,7 +36,10 @@ type Props = {
 };
 
 type Loaded = {
-  spots: Spot[];
+  /** Every row that is not undone; the page shows them one spot per slide. */
+  rows: SpotRow[];
+  /** False once the course's time for students to see the slides is over (no slide rows come back). */
+  slidesShown: boolean;
   firstLines: Record<number, string>;
   /** Different students lost on each slide, by slide number. */
   students: Record<number, number>;
@@ -70,21 +75,20 @@ async function loadAll(lectureId: string, userId: string): Promise<Loaded> {
   if (taps.error) throw new Error(taps.error.message);
   if (slides.error) throw new Error(slides.error.message);
 
-  const spots: Spot[] = ((taps.data ?? []) as Record<string, unknown>[])
-    .map((r) => ({
-      id: r.id as string,
-      kind: r.kind as Spot["kind"],
-      slideNumber: r.slide_number as number,
-      note: (r.note as string | null) ?? null,
-      tappedAt: r.tapped_at as string,
-      rect: rectOf(r),
-    }))
-    // One list in slide order (design); two spots on one slide in the order they were made.
-    .sort((a, b) => a.slideNumber - b.slideNumber || a.tappedAt.localeCompare(b.tappedAt));
+  const rows: SpotRow[] = ((taps.data ?? []) as Record<string, unknown>[]).map((r) => ({
+    id: r.id as string,
+    kind: r.kind as SpotRow["kind"],
+    slideNumber: r.slide_number as number,
+    note: (r.note as string | null) ?? null,
+    tappedAt: r.tapped_at as string,
+    rect: rectOf(r),
+  }));
 
+  const slideRows = (slides.data ?? []) as { number: number; first_line: string }[];
   const firstLines: Record<number, string> = {};
-  for (const s of (slides.data ?? []) as { number: number; first_line: string }[]) firstLines[s.number] = s.first_line;
-  return { spots, firstLines, students };
+  for (const s of slideRows) firstLines[s.number] = s.first_line;
+  // Every lecture has slides; none back means the database stopped giving them to this student.
+  return { rows, slidesShown: slideRows.length > 0, firstLines, students };
 }
 
 /** True when a tap of this lecture was refused. Reads the key; clearing it is the caller's job. */
@@ -104,21 +108,20 @@ function clearRejected(lectureId: string): void {
   }
 }
 
-/** Slide order, then the order they were made; a moved marker moves its spot in the list. */
-function bySlide(spots: Spot[]): Spot[] {
-  return [...spots].sort((a, b) => a.slideNumber - b.slideNumber || a.tappedAt.localeCompare(b.tappedAt));
-}
-
 /** List items rise in, 30 ms apart; past the 8th they come in together (no delay with reduced motion). */
 function stagger(i: number): CSSProperties {
   return { "--stagger": `${Math.min(i, 8) * 30}ms` } as CSSProperties;
 }
 
 /** The small slide on a row: the slide's own shape, 176 wide (96 on a phone), with the spot's highlight. */
-function Thumb({ url, spot }: { url: string | undefined; spot: Spot }) {
+function Thumb({ url, spot, gone }: { url: string | undefined; spot: Spot; gone?: boolean }) {
   return (
     <div className="relative w-24 shrink-0 overflow-hidden rounded-sm bg-surface shadow-slide sm:w-44">
-      {url ? (
+      {gone ? (
+        <div data-slide-gone="" className="flex aspect-video w-full items-center justify-center p-2 text-center">
+          <span className="type-caption text-secondary">No longer available</span>
+        </div>
+      ) : url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt="" draggable={false} className="block h-auto w-full" />
       ) : (
@@ -202,15 +205,17 @@ export function SpotsView({
     };
   }, [lectureId, userId]);
 
-  async function onMoved(id: string, newSlide: number) {
+  async function onMoved(spot: Spot, newSlide: number) {
+    const ids = new Set(spot.ids);
+    // The spot keeps its place as the one open: after the move its main row is still spot.id.
     try {
       const students = await loadStudents(lectureId);
       setLoaded((l) =>
         l && {
           ...l,
           students,
-          // The highlight stays behind: it was drawn on the slide the marker left.
-          spots: bySlide(l.spots.map((s) => (s.id === id ? { ...s, slideNumber: newSlide, rect: null } : s))),
+          // Every row of the spot moves; the mark stays behind (it was drawn on the slide the marker left).
+          rows: l.rows.map((r) => (ids.has(r.id) ? { ...r, slideNumber: newSlide, rect: null } : r)),
         },
       );
     } catch (e) {
@@ -218,17 +223,34 @@ export function SpotsView({
     }
   }
 
-  function onNoteSaved(id: string, note: string | null) {
-    setLoaded((l) => l && { ...l, spots: l.spots.map((s) => (s.id === id ? { ...s, note } : s)) });
+  // A note or a mark goes on the main row; clearing one clears it on every row of the slide.
+  function onNoteSaved(spot: Spot, note: string | null) {
+    const ids = new Set(spot.ids);
+    setLoaded(
+      (l) =>
+        l && {
+          ...l,
+          rows: l.rows.map((r) => (r.id === spot.id ? { ...r, note } : note === null && ids.has(r.id) ? { ...r, note: null } : r)),
+        },
+    );
   }
 
-  function onHighlightSaved(id: string, rect: Rect) {
-    setLoaded((l) => l && { ...l, spots: l.spots.map((s) => (s.id === id ? { ...s, rect } : s)) });
+  function onHighlightSaved(spot: Spot, rect: Rect | null) {
+    const ids = new Set(spot.ids);
+    setLoaded(
+      (l) =>
+        l && {
+          ...l,
+          rows: l.rows.map((r) => (r.id === spot.id ? { ...r, rect } : rect === null && ids.has(r.id) ? { ...r, rect: null } : r)),
+        },
+    );
   }
 
-  async function onRemoved(id: string) {
+  async function onRemoved(spot: Spot) {
+    const ids = new Set(spot.ids);
+    const id = spot.id;
     // The spot leaves the list in the same step as the detail closes, so it never flashes back.
-    setLoaded((l) => l && { ...l, spots: l.spots.filter((s) => s.id !== id) });
+    setLoaded((l) => l && { ...l, rows: l.rows.filter((r) => !ids.has(r.id)) });
     returnFocus.current = id;
     setOpenId(null);
     try {
@@ -260,8 +282,11 @@ export function SpotsView({
   }, [openId, loaded]);
 
   const live = liveSlide !== null;
-  const spots = loaded?.spots ?? [];
-  const openIndex = spots.findIndex((s) => s.id === openId);
+  // One spot per slide (an older lecture may hold several rows on one slide).
+  const spots = useMemo(() => groupBySlide(loaded?.rows ?? []), [loaded]);
+  const expired = !!loaded && !live && !loaded.slidesShown;
+  // By any of its rows: a marker moved onto a slide that had a spot joins that spot.
+  const openIndex = openId === null ? -1 : spots.findIndex((s) => s.ids.includes(openId));
   const current = openIndex >= 0 ? spots[openIndex] : undefined;
   const follow = live && <LiveFollow lectureId={lectureId} initialLive={liveSlide} onLive={setFollowedLive} />;
 
@@ -273,7 +298,8 @@ export function SpotsView({
       <>
         {follow}
         <SpotDetail
-          key={openSpot.id}
+          // A new key when another spot joins this one (its marker moved onto it), so the note and mark are read again.
+          key={`${openSpot.id}:${openSpot.ids.length}`}
           lectureId={lectureId}
           spot={openSpot}
           firstLine={loaded.firstLines[openSpot.slideNumber]}
@@ -281,12 +307,13 @@ export function SpotsView({
           slideCount={slideCount}
           liveSlide={liveCap}
           urlFor={urlFor}
+          expired={expired}
           onViewingChange={setDetailSlide}
           focusOnOpen={openedBy}
-          onNoteSaved={(note) => onNoteSaved(openSpot.id, note)}
-          onHighlightSaved={(rect) => onHighlightSaved(openSpot.id, rect)}
-          onMoved={(n) => onMoved(openSpot.id, n)}
-          onRemoved={() => void onRemoved(openSpot.id)}
+          onNoteSaved={(note) => onNoteSaved(openSpot, note)}
+          onHighlightSaved={(rect) => onHighlightSaved(openSpot, rect)}
+          onMoved={(n) => onMoved(openSpot, n)}
+          onRemoved={() => void onRemoved(openSpot)}
           onBack={() => back(openSpot.id)}
           onPrevSpot={prev ? () => open(prev.id, "prev") : undefined}
           onNextSpot={next ? () => open(next.id, "next") : undefined}
@@ -308,29 +335,22 @@ export function SpotsView({
       {/* At the same place as in the detail, so following the lecture carries on across the swap. */}
       {follow}
       <div className="flex min-h-dvh flex-col bg-bg text-ink">
-        <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
-          {live ? (
-            // Opened from the top bar during the lecture: the way back is top left.
-            <Link
-              href={`/l/${lectureId}`}
-              className="press touch-target relative -ml-2 flex min-w-0 items-center gap-1 rounded-md p-2 type-small-strong text-ink hover:bg-surface focus-ring"
-            >
-              <Icon name="back" />
-              <span className="truncate">Back to lecture</span>
-            </Link>
-          ) : (
-            <div className="flex min-w-0 items-center gap-2">
-              <LogoMark size={22} />
-              <p className="min-w-0 truncate type-small-strong text-ink">{courseName}</p>
-            </div>
-          )}
-          <div className="min-w-0 flex-1" />
-          <Link
-            href="/spots"
-            className="press touch-target relative shrink-0 rounded-md p-2 type-small whitespace-nowrap text-secondary hover:bg-surface hover:text-ink focus-ring"
-          >
-            All lectures
+        <header className="flex h-16 shrink-0 items-center gap-2 pl-4 pr-2">
+          {/* Up one level: all the lectures on this browser. */}
+          <Link href="/spots" aria-label="Back to My spots" className={backButtonClass}>
+            <Icon name="back" />
           </Link>
+          <div className="flex min-w-0 items-center gap-2 pl-1">
+            <LogoMark size={22} />
+            <p className="min-w-0 truncate type-small-strong text-ink">{courseName}</p>
+          </div>
+          <div className="min-w-0 flex-1" />
+          {live && (
+            // Opened from the lecture while it is live: the way back into class.
+            <Link href={`/l/${lectureId}`} className={`${buttonSecondaryClass} shrink-0`}>
+              Back to lecture
+            </Link>
+          )}
           <InfoButton panelClassName="-right-11" />
           {/* Room for the theme button, which comes with dark mode (not built yet). */}
           <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
@@ -355,6 +375,7 @@ export function SpotsView({
                 <span className="min-w-0 break-words type-lecture text-ink">{lectureName}</span>
                 <span className="type-small text-secondary">{when}</span>
               </p>
+              {expired && <p className="pt-2 type-small text-secondary">These slides are no longer available.</p>}
               <ul className="flex flex-col pt-6">
                 {spots.map((s, i) => {
                   const people = s.kind === "lost" ? countLine(s.kind, loaded.students[s.slideNumber] ?? 0) : null;
@@ -383,9 +404,9 @@ export function SpotsView({
                           <span className="break-words type-body-strong text-ink">{first || `Slide ${s.slideNumber}`}</span>
                           <span className="type-small text-secondary">{whenLine(s)}</span>
                           {people && <span className="type-small text-ink">{people}</span>}
-                          {s.note && <span className="break-words type-note text-ink">{s.note}</span>}
+                          {s.note && <span className="break-words type-body text-ink">{s.note}</span>}
                         </span>
-                        <Thumb url={urlFor(s.slideNumber)} spot={s} />
+                        <Thumb url={urlFor(s.slideNumber)} spot={s} gone={expired} />
                       </button>
                     </li>
                   );

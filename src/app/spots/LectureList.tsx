@@ -3,18 +3,50 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { backButtonClass } from "./[lectureId]/SpotDetail";
 import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
 import { formatLectureDate } from "@/lib/lectureDate";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 
-type Item = { id: string; name: string; date: string; joinedAt: string };
+type Item = {
+  id: string;
+  name: string;
+  date: string;
+  joinedAt: string;
+  /** How many slides have a spot (one per slide, as on the lecture's page), or null when unknown. */
+  spots: number | null;
+};
 
 type JoinedRow = {
   joined_at: string;
   lectures: { id: string; name: string; lecture_date: string } | { id: string; name: string; lecture_date: string }[] | null;
 };
+
+/**
+ * The slides with a spot, per lecture: the student's own rows that are not undone, one per
+ * slide (two taps on one slide are one spot). Only a label: null when the read fails.
+ */
+async function spotCounts(userId: string): Promise<Map<string, Set<number>> | null> {
+  try {
+    const { data, error } = await createBrowserSupabase()
+      .from("lost_taps")
+      .select("lecture_id, slide_number")
+      .eq("anon_id", userId)
+      .eq("undone", false);
+    if (error) return null;
+    const out = new Map<string, Set<number>>();
+    for (const r of (data ?? []) as { lecture_id: string; slide_number: number }[]) {
+      const set = out.get(r.lecture_id) ?? new Set<number>();
+      set.add(r.slide_number);
+      out.set(r.lecture_id, set);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
 
 /** Every lecture this browser joined, newest first. */
 async function loadJoined(): Promise<Item[]> {
@@ -34,10 +66,18 @@ async function loadJoined(): Promise<Item[]> {
     .eq("anon_id", session.user.id);
   if (error) throw new Error(error.message);
 
+  const counts = await spotCounts(session.user.id);
   const items: Item[] = [];
   for (const row of (data ?? []) as unknown as JoinedRow[]) {
     const l = Array.isArray(row.lectures) ? row.lectures[0] : row.lectures;
-    if (l) items.push({ id: l.id, name: l.name, date: l.lecture_date, joinedAt: row.joined_at });
+    if (l)
+      items.push({
+        id: l.id,
+        name: l.name,
+        date: l.lecture_date,
+        joinedAt: row.joined_at,
+        spots: counts ? (counts.get(l.id)?.size ?? 0) : null,
+      });
   }
   return items.sort((a, b) => b.date.localeCompare(a.date) || b.joinedAt.localeCompare(a.joinedAt));
 }
@@ -65,10 +105,14 @@ export function LectureList() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
-        <Link href="/" aria-label="Home" className="press touch-target relative -m-1 rounded-md p-1 focus-ring">
-          <LogoMark size={22} />
+      <header className="flex h-16 shrink-0 items-center gap-2 pl-4 pr-2">
+        {/* Up one level: Home. */}
+        <Link href="/" aria-label="Back to Home" className={backButtonClass}>
+          <Icon name="back" />
         </Link>
+        <span className="pl-1">
+          <LogoMark size={22} />
+        </span>
         <div className="min-w-0 flex-1" />
         <InfoButton panelClassName="-right-11" />
         {/* Room for the theme button, which comes with dark mode (not built yet). */}
@@ -93,6 +137,11 @@ export function LectureList() {
                     className="press -mx-2 flex items-center gap-4 rounded-md px-2 py-4 hover:bg-surface/60 focus-ring"
                   >
                     <span className="min-w-0 flex-1 break-words type-lecture text-ink">{l.name}</span>
+                    {l.spots !== null && l.spots > 0 && (
+                      <span data-spot-count="" className="shrink-0 type-small text-ink">
+                        {l.spots === 1 ? "1 spot" : `${l.spots} spots`}
+                      </span>
+                    )}
                     <span className="shrink-0 type-small text-secondary">{formatLectureDate(l.date)}</span>
                     <Icon name="forward" className="text-secondary" />
                   </Link>

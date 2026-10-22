@@ -5,7 +5,17 @@ const getSession = vi.fn();
 const result = vi.fn();
 const eq = vi.fn(() => result());
 const select = vi.fn(() => ({ eq }));
-const from = vi.fn(() => ({ select }));
+// lost_taps.select(...).eq(anon_id).eq(undone): the student's own rows, for the spot counts.
+const tapRows = vi.fn();
+const tapEqs: [string, unknown][] = [];
+const tapChain = {
+  eq: (c: string, v: unknown) => {
+    tapEqs.push([c, v]);
+    return tapChain;
+  },
+  then: (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => Promise.resolve(tapRows()).then(ok, bad),
+};
+const from = vi.fn((table: string) => (table === "lost_taps" ? { select: () => tapChain } : { select }));
 vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ auth: { getSession }, from }) }));
 
 import { LectureList } from "./LectureList";
@@ -17,6 +27,8 @@ const joined = (id: string, name: string, date: string, joinedAt: string) => ({
 
 beforeEach(() => {
   [getSession, result, eq, select, from].forEach((m) => m.mockClear());
+  tapEqs.length = 0;
+  tapRows.mockReset().mockResolvedValue({ data: [], error: null });
   getSession.mockResolvedValue({ data: { session: { user: { id: "s1" } } }, error: null });
   result.mockResolvedValue({
     data: [
@@ -118,11 +130,45 @@ describe("LectureList", () => {
     spy.mockRestore();
   });
 
-  it("heads the page My spots and links the mark home", async () => {
+  it("counts spots per lecture by slide, not by row (two taps on one slide are one spot)", async () => {
+    tapRows.mockResolvedValue({
+      data: [
+        { lecture_id: "l3", slide_number: 4 },
+        { lecture_id: "l3", slide_number: 4 },
+        { lecture_id: "l3", slide_number: 4 },
+        { lecture_id: "l3", slide_number: 4 },
+        { lecture_id: "l2", slide_number: 1 },
+        { lecture_id: "l2", slide_number: 7 },
+      ],
+      error: null,
+    });
+    render(<LectureList />);
+    const items = await screen.findAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("1 spot");
+    expect(items[0]).not.toHaveTextContent("4 spots");
+    expect(items[1]).toHaveTextContent("2 spots");
+    expect(items[2].querySelector("[data-spot-count]")).toBeNull();
+    expect(tapEqs).toEqual([
+      ["anon_id", "s1"],
+      ["undone", false],
+    ]);
+  });
+
+  it("leaves the counts out when they can not be read, and still lists the lectures", async () => {
+    tapRows.mockResolvedValue({ data: null, error: { message: "nope" } });
+    render(<LectureList />);
+    const items = await screen.findAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(document.querySelector("[data-spot-count]")).toBeNull();
+  });
+
+  it("heads the page My spots and has a back arrow to Home", async () => {
     render(<LectureList />);
     await screen.findAllByRole("listitem");
     expect(screen.getByRole("heading", { level: 1, name: "My spots" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
+    const back = screen.getByRole("link", { name: "Back to Home" });
+    expect(back).toHaveAttribute("href", "/");
+    expect(back).toHaveClass("size-11");
     expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
   });
 
