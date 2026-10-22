@@ -123,7 +123,6 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
         lectureId={lecture.id}
         mode="past"
         lectureName={lecture.name}
-        lectureDate={lecture.lecture_date}
         slides={slides}
         courseId={lecture.course_id}
       >

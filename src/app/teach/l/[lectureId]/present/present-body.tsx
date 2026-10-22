@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { siteAddress } from "@/lib/siteAddress";
+import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 import { Projector } from "./Projector";
 
 export async function PresentBody({ params }: { params: Promise<{ lectureId: string }> }) {
@@ -27,11 +27,9 @@ export async function PresentBody({ params }: { params: Promise<{ lectureId: str
 
   if (lecture.status === "ended") {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-6 p-4">
-        <p className="text-2xl">This lecture has ended.</p>
-        <Link href={`/teach/c/${lecture.course_id}`} className="self-start border border-current px-6 py-3">
-          Back to the course
-        </Link>
+      <main className="flex min-h-screen w-full animate-rise-in flex-col items-center justify-center gap-6 bg-bg p-4 text-center">
+        <p className="type-title text-ink">This lecture has ended.</p>
+        <ButtonPrimaryLink href={`/teach/c/${lecture.course_id}`}>Back to the course</ButtonPrimaryLink>
       </main>
     );
   }

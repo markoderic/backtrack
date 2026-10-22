@@ -107,6 +107,10 @@ const counts = (n: number) => within(slideRow(n)).getByTestId("counts").textCont
 const insert = (r: Record<string, unknown>) => act(() => h.handlers["lost_taps:INSERT"]({ new: r }));
 const update = (r: Record<string, unknown>) => act(() => h.handlers["lost_taps:UPDATE"]({ new: r }));
 const key = (k: string, target: Element | Window = window) => fireEvent.keyDown(target, { key: k });
+/** Clicks a slide's bar, which shows that slide in the panel on the right. */
+const select = (n: number) => fireEvent.click(within(slideRow(n)).getByRole("button"));
+const panel = () => screen.getByTestId("slide-panel");
+const barScale = (n: number) => Number(/scaleY\(([\d.]+)\)/.exec(within(slideRow(n)).getByTestId("bar").style.transform)![1]);
 
 beforeEach(() => {
   h.handlers = {};
@@ -132,17 +136,90 @@ describe("LectureData live", () => {
     expect(counts(4)).toBe("1 person, 1 tap");
     expect(within(slideRow(2)).getByText("Heading 2")).toBeInTheDocument();
     expect(screen.getByText("7 joined")).toBeInTheDocument();
-    expect(screen.getByText("Lecture 1, Oct 26")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Lecture 1, Oct 26" })).toBeInTheDocument();
     expect(within(slideRow(3)).getByText("Current slide")).toBeInTheDocument();
+    expect(within(slideRow(3)).getByText(/3 now/)).toBeInTheDocument();
     expect(within(slideRow(2)).queryByText("Current slide")).not.toBeInTheDocument();
+    expect(screen.getByText("Live, on slide 3")).toBeInTheDocument();
   });
 
-  it("sizes each bar against the slide with the most people", async () => {
+  it("shows the join code in the heading as two groups of three", async () => {
+    renderLive({ code: "482916" });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(screen.getByText("Code 482 916")).toBeInTheDocument();
+  });
+
+  it("sizes each bar against the slide with the most people, with transform only, and a 2 px bar for nobody", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    expect(within(slideRow(2)).getByTestId("bar")).toHaveStyle({ width: "100%" });
-    expect(within(slideRow(4)).getByTestId("bar")).toHaveStyle({ width: "50%" });
-    expect(within(slideRow(1)).getByTestId("bar")).toHaveStyle({ width: "0%" });
+    expect(barScale(2)).toBe(1);
+    expect(barScale(4)).toBe(0.5);
+    // 2 px of the 260 px bar.
+    expect(barScale(1)).toBeCloseTo(2 / 260, 3);
+    expect(within(slideRow(1)).getByTestId("bar").style.height).toBe("");
+  });
+
+  it("draws the top 3 bars red and the others in the strip gray", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(within(slideRow(2)).getByTestId("bar").className).toContain("bg-lost");
+    expect(within(slideRow(4)).getByTestId("bar").className).toContain("bg-lost");
+    expect(within(slideRow(1)).getByTestId("bar").className).toContain("bg-strip");
+  });
+
+  it("grays out a slide the lecture has not reached when nobody is lost on it", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(within(slideRow(5)).getByTestId("bar").className).toContain("opacity-40");
+    // Slide 4 is ahead too, but someone is lost on it, so it shows normally.
+    expect(within(slideRow(4)).getByTestId("bar").className).not.toContain("opacity-40");
+    expect(within(slideRow(1)).getByTestId("bar").className).not.toContain("opacity-40");
+  });
+
+  it("shows the slide most people are lost on in the panel, and a clicked bar's slide after that", async () => {
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 2, tapped_at: "2026-10-26T14:41:00Z" }),
+        row("b", { slide_number: 2, anon_id: "s2" }),
+        row("c", { slide_number: 4 }),
+      ],
+      error: null,
+    });
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(within(panel()).getByText("Slide 2")).toBeInTheDocument();
+    expect(within(panel()).getByRole("heading", { name: "Heading 2" })).toBeInTheDocument();
+    expect(within(panel()).getByText("people got lost")).toBeInTheDocument();
+    expect(within(panel()).getByText("2 taps")).toBeInTheDocument();
+    expect(within(slideRow(2)).getByRole("button")).toHaveAttribute("aria-pressed", "true");
+    select(4);
+    expect(within(panel()).getByText("Slide 4")).toBeInTheDocument();
+    expect(within(panel()).getByText("person got lost")).toBeInTheDocument();
+    expect(within(panel()).getByText("1 tap")).toBeInTheDocument();
+    expect(within(slideRow(4)).getByRole("button")).toHaveAttribute("aria-pressed", "true");
+    expect(within(slideRow(2)).getByRole("button")).toHaveAttribute("aria-pressed", "false");
+    // A new tap elsewhere does not move the panel away from the clicked slide.
+    insert(row("n", { slide_number: 1, anon_id: "s5" }));
+    insert(row("m", { slide_number: 1, anon_id: "s6" }));
+    insert(row("o", { slide_number: 1, anon_id: "s7" }));
+    expect(within(panel()).getByText("Slide 4")).toBeInTheDocument();
+  });
+
+  it("shows the live slide in the panel while nobody is lost", async () => {
+    h.tapsQuery.mockResolvedValue({ data: [], error: null });
+    renderLive();
+    await waitFor(() => expect(counts(1)).toBe("0 people, 0 taps"));
+    expect(within(panel()).getByText("Slide 3")).toBeInTheDocument();
+    expect(within(panel()).getByText("0")).toBeInTheDocument();
+  });
+
+  it("names each bar for a screen reader: slide, first line, people and taps", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(within(slideRow(2)).getByRole("button")).toHaveAccessibleName("Slide 2, Heading 2: 2 people, 2 taps, Top 3");
+    expect(within(slideRow(3)).getByRole("button")).toHaveAccessibleName(
+      "Slide 3, Heading 3: 0 people, 0 taps, Current slide",
+    );
   });
 
   it("marks the top slides with Top 3 and nobody else", async () => {
@@ -159,7 +236,7 @@ describe("LectureData live", () => {
     });
     renderLive();
     await waitFor(() => expect(counts(4)).toBe("3 people, 3 taps"));
-    expect(screen.getAllByText("Top 3")).toHaveLength(3);
+    expect(within(screen.getByTestId("bars")).getAllByText("Top 3")).toHaveLength(3);
     expect(within(slideRow(4)).getByText("Top 3")).toBeInTheDocument();
     expect(within(slideRow(2)).getByText("Top 3")).toBeInTheDocument();
     expect(within(slideRow(1)).getByText("Top 3")).toBeInTheDocument();
@@ -231,7 +308,7 @@ describe("LectureData live", () => {
     expect(counts(4)).toBe("2 people, 2 taps");
     insert(row("new2", { slide_number: 4, anon_id: "s9" }));
     expect(counts(4)).toBe("2 people, 3 taps");
-    expect(within(slideRow(4)).getByTestId("bar")).toHaveStyle({ width: "100%" });
+    expect(barScale(4)).toBe(1);
     expect(h.tapsQuery.mock.calls.length).toBe(reads);
   });
 
@@ -267,23 +344,30 @@ describe("LectureData live", () => {
     expect(counts(1)).toBe("1 person, 1 tap");
   });
 
-  it("lists notes under the slide with no names, and drops the note of an undone tap", async () => {
+  it("lists the notes of the shown slide with their time and no names, and drops the note of an undone tap", async () => {
     h.tapsQuery.mockResolvedValue({
       data: [
         row("a", { slide_number: 2, note: "what is a join?", anon_id: "student-secret-id" }),
-        row("b", { slide_number: 2, note: "too fast", tapped_at: "2026-10-26T10:05:00Z" }),
+        row("b", { slide_number: 2, note: "too fast", tapped_at: "2026-10-26T14:42:00Z" }),
         row("c", { slide_number: 4, note: "gone", undone: true }),
       ],
       error: null,
     });
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    const items = within(slideRow(2)).getAllByRole("listitem");
-    expect(items.map((li) => li.textContent)).toEqual(["what is a join?", "too fast"]);
-    expect(within(slideRow(4)).queryByRole("list")).not.toBeInTheDocument();
+    select(2);
+    const notes = () => within(panel()).getAllByTestId("note").map((n) => n.textContent);
+    expect(within(panel()).getByText("Notes")).toBeInTheDocument();
+    expect(notes()).toEqual(["what is a join?", "too fast"]);
+    // 14:42 UTC is 10:42 in Oxford, Ohio (EDT), shown without AM or PM.
+    expect(within(panel()).getByText("10:42")).toBeInTheDocument();
+    select(4);
+    expect(within(panel()).queryByTestId("notes")).not.toBeInTheDocument();
+    expect(within(panel()).queryByText("Notes")).not.toBeInTheDocument();
     expect(screen.queryByText(/student-secret-id/)).not.toBeInTheDocument();
+    select(2);
     update(row("b", { slide_number: 2, note: "too fast", undone: true }));
-    expect(within(slideRow(2)).getAllByRole("listitem")).toHaveLength(1);
+    expect(notes()).toEqual(["what is a join?"]);
   });
 
   it("adds one to the joined count for every participant insert", async () => {
@@ -443,37 +527,58 @@ describe("LectureData live", () => {
   });
 });
 
-describe("End lecture", () => {
-  const DIALOG_TEXT = "End lecture? The code stops working and students go to My spots.";
+const TITLE = "End the lecture?";
+const DIALOG_TEXT = "The code stops working and students land on My spots.";
+/** The End lecture button in the heading (not the one inside the confirm). */
+const endButton = () => screen.getAllByRole("button", { name: "End lecture" })[0];
+/** The End lecture button inside the confirm. */
+const confirmEnd = () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "End lecture" }));
+const keepGoing = () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep going" }));
 
+describe("End lecture", () => {
   async function open() {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    fireEvent.click(screen.getByRole("button", { name: "End lecture" }));
+    fireEvent.click(endButton());
   }
 
-  it("shows no dialog until End lecture is pressed, then asks with the exact words", async () => {
+  it("shows no confirm until End lecture is pressed, then asks with the exact words", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "End lecture" }));
-    const dialog = screen.getByRole("dialog");
+    expect(endButton()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(endButton());
+    const dialog = screen.getByRole("dialog", { name: TITLE });
     expect(within(dialog).getByText(DIALOG_TEXT)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "End" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Keep going" })).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "End lecture" })).toBeInTheDocument();
+    expect(endButton()).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("Cancel closes the dialog and ends nothing", async () => {
+  it("Keep going closes the confirm, ends nothing and gives focus back to End lecture", async () => {
     await open();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    keepGoing();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.rpc).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "End lecture" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "End lecture" })).toHaveFocus();
   });
 
-  it("End calls end_lecture, then switches to past mode in place and says Lecture ended.", async () => {
+  it("a press outside the confirm closes it and ends nothing", async () => {
     await open();
-    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    fireEvent.pointerDown(within(slideRow(1)).getByRole("button"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("a press inside the confirm keeps it open", async () => {
+    await open();
+    fireEvent.pointerDown(screen.getByText(DIALOG_TEXT));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("End lecture in the confirm calls end_lecture, then switches to past mode in place and says Lecture ended.", async () => {
+    await open();
+    confirmEnd();
     await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
     expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -482,19 +587,23 @@ describe("End lecture", () => {
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     expect(screen.getByText("7 joined")).toBeInTheDocument();
     expect(screen.queryByText("Current slide")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Live, on slide/)).not.toBeInTheDocument();
+    // The name stays, once, and there is a way back to the course.
+    expect(screen.getAllByText("Lecture 1, Oct 26")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Back to the course" })).toHaveAttribute("href", "/teach/c/c1");
   });
 
   it("shows a plain error and stays live when ending fails", async () => {
     h.rpc.mockResolvedValue({ data: null, error: { message: "Not allowed." } });
     await open();
-    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    confirmEnd();
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the lecture."));
     expect(screen.queryByText("Lecture ended.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "End lecture" })).toBeInTheDocument();
     expect(h.removeChannel).not.toHaveBeenCalled();
     h.rpc.mockResolvedValue({ data: null, error: null });
-    fireEvent.click(screen.getByRole("button", { name: "End lecture" }));
-    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    fireEvent.click(endButton());
+    confirmEnd();
     await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -502,7 +611,7 @@ describe("End lecture", () => {
   it("shows the same error when the request itself throws", async () => {
     h.rpc.mockRejectedValue(new TypeError("Failed to fetch"));
     await open();
-    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    confirmEnd();
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not end the lecture."));
     expect(screen.getByRole("button", { name: "End lecture" })).toBeInTheDocument();
   });
@@ -518,8 +627,6 @@ describe("End lecture", () => {
 });
 
 describe("End lecture from ?end=1", () => {
-  const DIALOG_TEXT = "End lecture? The code stops working and students go to My spots.";
-
   it("opens the confirm on load for a live lecture", async () => {
     renderLive({ confirmEndOnLoad: true });
     const dialog = screen.getByRole("dialog");
@@ -540,9 +647,9 @@ describe("End lecture from ?end=1", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("Cancel closes it, ends nothing and removes ?end=1 from the url", async () => {
+  it("Keep going closes it, ends nothing and removes ?end=1 from the url", async () => {
     renderLive({ confirmEndOnLoad: true });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    keepGoing();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.replace).toHaveBeenCalledWith(`/teach/l/${LECTURE}/live`);
     expect(h.rpc).not.toHaveBeenCalled();
@@ -558,18 +665,18 @@ describe("End lecture from ?end=1", () => {
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
   });
 
-  it("End ends the lecture", async () => {
+  it("End lecture in it ends the lecture", async () => {
     renderLive({ confirmEndOnLoad: true });
-    fireEvent.click(screen.getByRole("button", { name: "End" }));
+    confirmEnd();
     await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
     expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
   });
 
-  it("a Cancel on a dialog opened by the button leaves the url alone", async () => {
+  it("a Keep going on a confirm opened by the button leaves the url alone", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    fireEvent.click(screen.getByRole("button", { name: "End lecture" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(endButton());
+    keepGoing();
     expect(h.replace).not.toHaveBeenCalled();
   });
 });
@@ -595,7 +702,7 @@ describe("Escape", () => {
   it("closes the confirm instead of leaving when it is open", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    fireEvent.click(screen.getByRole("button", { name: "End lecture" }));
+    fireEvent.click(endButton());
     key("Escape");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.push).not.toHaveBeenCalled();
@@ -636,38 +743,35 @@ describe("LectureData past", () => {
     expect(h.tapsQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the bars, Top 3, notes and joined count, with no current slide marker", async () => {
+  it("shows the bars, Top 3 and notes, with no current slide marker and nothing grayed out", async () => {
     h.tapsQuery.mockResolvedValue({ data: [row("a", { slide_number: 4, note: "ask again" })], error: null });
     renderLive({ mode: "past" });
     await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
     expect(within(slideRow(4)).getByText("Top 3")).toBeInTheDocument();
-    expect(within(slideRow(4)).getByText("ask again")).toBeInTheDocument();
-    expect(screen.getByText("7 joined")).toBeInTheDocument();
+    expect(within(panel()).getByText("Slide 4")).toBeInTheDocument();
+    expect(within(panel()).getByText("ask again")).toBeInTheDocument();
     expect(screen.queryByText("Current slide")).not.toBeInTheDocument();
+    expect(screen.queryByText(/now$/)).not.toBeInTheDocument();
+    expect(within(slideRow(5)).getByTestId("bar").className).not.toContain("opacity-40");
   });
 
-  it("links back to the course", async () => {
+  it("has no heading of its own: the page's heading (children) shows the name once, above the chart", async () => {
+    renderLive({ mode: "past", children: <h1>Lecture 1, Oct 26</h1> });
+    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    expect(screen.getAllByText("Lecture 1, Oct 26")).toHaveLength(1);
+    const heading = screen.getByRole("heading", { level: 1, name: "Lecture 1, Oct 26" });
+    const chart = screen.getByTestId("bars");
+    expect(heading.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The page heading has when, joined and lost taps; this view adds no second set.
+    expect(screen.queryByText("7 joined")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Back to the course" })).not.toBeInTheDocument();
+  });
+
+  it("shows no heading at all in past mode without children", async () => {
     renderLive({ mode: "past" });
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    expect(screen.getByRole("link", { name: "Back to the course" })).toHaveAttribute("href", "/teach/c/c1");
-  });
-
-  it("shows the lecture date like Oct 21 when it is given, and nothing when it is not", async () => {
-    const { unmount } = renderLive({ mode: "past", lectureDate: "2026-10-21" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    expect(screen.getByText("Oct 21")).toBeInTheDocument();
-    unmount();
-    renderLive({ mode: "past" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    expect(screen.queryByText("Oct 21")).not.toBeInTheDocument();
-  });
-
-  it("shows what the page passes in as children (the rename field) under the heading", async () => {
-    renderLive({ mode: "past", children: <p>rename here</p> });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    const heading = screen.getByRole("heading", { name: "Lecture 1, Oct 26" });
-    const child = screen.getByText("rename here");
-    expect(heading.compareDocumentPosition(child) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByText("Lecture 1, Oct 26")).not.toBeInTheDocument();
   });
 
   it("does not need slide images: it reads taps and the joined count only, so a missing image object can not break it", async () => {
@@ -694,7 +798,11 @@ describe("LectureData past", () => {
 
 describe("LectureData highlights", () => {
   const HL = (x: number, y = 0.2) => ({ hl_x: x, hl_y: y, hl_w: 0.3, hl_h: 0.4 });
-  const boxesOn = (n: number) => Array.from(slideRow(n).querySelectorAll<HTMLElement>("[data-highlight-box]"));
+  /** The boxes drawn for slide n, after clicking its bar to show it in the panel. */
+  const boxesOn = (n: number) => {
+    select(n);
+    return Array.from(panel().querySelectorAll<HTMLElement>("[data-highlight-box]"));
+  };
   const withBoxes = () =>
     h.tapsQuery.mockResolvedValue({
       data: [
@@ -712,27 +820,30 @@ describe("LectureData highlights", () => {
     expect((h.tapsQuery.mock.calls[0][0] as Query).cols).toMatch(/hl_x, hl_y, hl_w, hl_h/);
   });
 
-  it("draws every highlight of a slide as a translucent box over a small copy of the slide", async () => {
+  it("draws every highlight of the shown slide as a translucent box over a copy of the slide", async () => {
     withBoxes();
     h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp", 5: "https://signed/5.webp" });
     renderLive();
     await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
-    const copy = within(slideRow(2)).getByRole("img");
+    expect(within(panel()).getByText("Where they highlighted")).toBeInTheDocument();
+    const copy = within(panel()).getByRole("img");
     expect(copy).toHaveAttribute("src", "https://signed/2.webp");
     expect(copy.parentElement?.contains(boxesOn(2)[0])).toBe(true);
     expect(boxesOn(2)[0].style.left).toBe("10%");
     expect(boxesOn(2)[1].style.left).toBe("20%");
     expect(boxesOn(2)[0].className).toMatch(/\/\d+/);
+    expect(boxesOn(2)[0].className).toContain("bg-lost");
     expect(boxesOn(5)).toHaveLength(1);
-    expect(within(slideRow(5)).getByRole("img")).toHaveAttribute("src", "https://signed/5.webp");
+    expect(within(panel()).getByRole("img")).toHaveAttribute("src", "https://signed/5.webp");
   });
 
   it("shows nothing extra on a slide with taps but no highlight, and asks for images of highlighted slides only", async () => {
     withBoxes();
     renderLive();
     await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
-    expect(within(slideRow(4)).queryByRole("img")).not.toBeInTheDocument();
     expect(boxesOn(4)).toHaveLength(0);
+    expect(within(panel()).queryByRole("img")).not.toBeInTheDocument();
+    expect(within(panel()).queryByText("Where they highlighted")).not.toBeInTheDocument();
     expect(boxesOn(1)).toHaveLength(0);
     expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 5]);
   });
@@ -748,7 +859,7 @@ describe("LectureData highlights", () => {
     withBoxes();
     renderLive();
     await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
-    expect(within(slideRow(2)).queryByRole("img")).not.toBeInTheDocument();
+    expect(within(panel()).queryByRole("img")).not.toBeInTheDocument();
   });
 
   it("adds a box from a Realtime insert and asks for that slide's image", async () => {

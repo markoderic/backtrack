@@ -82,6 +82,32 @@ describe("Projector", () => {
     expect(useSlideImages).toHaveBeenLastCalledWith(LECTURE, 4);
   });
 
+  it("the join card says where to go, the code and how to start", () => {
+    show();
+    const card = screen.getByTestId("join-card");
+    expect(card).toHaveTextContent("Go to");
+    expect(card).toHaveTextContent("Enter");
+    expect(card).toHaveTextContent("Press → to start");
+    expect(card).toHaveTextContent("backtrack");
+  });
+
+  it("the join card fades out over the slide after the first arrow: a copy hidden from screen readers, then gone", async () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = show();
+      press("ArrowRight");
+      expect(screen.queryByTestId("join-card")).not.toBeInTheDocument();
+      const ghost = container.querySelector('[aria-hidden="true"].pointer-events-none');
+      expect(ghost).not.toBeNull();
+      expect(ghost).toHaveTextContent("482916");
+      await act(async () => vi.advanceTimersByTimeAsync(400));
+      expect(container.querySelector('[aria-hidden="true"].pointer-events-none')).toBeNull();
+      expect(screen.getByTestId("corner-card")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("first ArrowRight hides the join card and does not change the slide", () => {
     show();
     press("ArrowRight");

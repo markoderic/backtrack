@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, within } from "@testing-library/react";
 
 const maybeSingle = vi.fn();
 const slidesQuery = vi.fn();
 const getUser = vi.fn();
+const teacherRow = vi.fn();
 const selects: [string, string][] = [];
 const eqCalls: [string, string, unknown][] = [];
 vi.mock("@/lib/supabase/server", () => ({
@@ -11,7 +12,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser },
     from: (table: string) => {
       const chain = {
-        maybeSingle,
+        maybeSingle: table === "teachers" ? teacherRow : maybeSingle,
         order: slidesQuery,
         eq: (column: string, value: unknown) => {
           eqCalls.push([table, column, value]);
@@ -47,12 +48,15 @@ const lecture = {
   id: "l1",
   course_id: "c1",
   name: "Lecture 1, Oct 26",
+  code: "482916",
+  courses: { teacher_id: "u1", name: "ACC 221 Intro to Financial Accounting" },
   status: "live",
   current_slide: 2,
   slide_count: 3,
 };
 
 beforeEach(() => {
+  cleanup();
   selects.length = 0;
   eqCalls.length = 0;
   maybeSingle.mockReset();
@@ -66,6 +70,8 @@ beforeEach(() => {
   });
   getUser.mockReset();
   getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+  teacherRow.mockReset();
+  teacherRow.mockResolvedValue({ data: { display_name: "Linda Carter" }, error: null });
 });
 
 describe("LiveBody", () => {
@@ -82,7 +88,7 @@ describe("LiveBody", () => {
   it("asks only for a lecture of the signed in teacher's own courses, so a joined student gets a 404", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
     await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("NOT_FOUND");
-    expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id)")]);
+    expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id, name)")]);
     expect(eqCalls).toContainEqual(["lectures", "id", "l1"]);
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
     expect(slidesQuery).not.toHaveBeenCalled();
@@ -104,7 +110,7 @@ describe("LiveBody", () => {
     await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("slides broke");
   });
 
-  it("gives the live data view the lecture name, every slide with its first line and the current slide", async () => {
+  it("gives the live data view the lecture name, code, every slide with its first line and the current slide", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
     render(await LiveBody({ params, searchParams: noSearch }));
     expect(eqCalls).toContainEqual(["slides", "lecture_id", "l1"]);
@@ -119,8 +125,27 @@ describe("LiveBody", () => {
       ],
       initialCurrentSlide: 2,
       courseId: "c1",
+      code: "482916",
       confirmEndOnLoad: false,
     });
+  });
+
+  it("puts the teacher top bar above it: Courses / course code / lecture name, and the teacher's name", async () => {
+    maybeSingle.mockResolvedValue({ data: lecture, error: null });
+    render(await LiveBody({ params, searchParams: noSearch }));
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(crumbs).toHaveTextContent("Courses/ACC 221/Lecture 1, Oct 26");
+    expect(within(crumbs).getByRole("link", { name: "ACC 221" })).toHaveAttribute("href", "/teach/c/c1");
+    expect(screen.getByText("Linda Carter")).toBeInTheDocument();
+    expect(selects).toContainEqual(["lectures", expect.stringContaining("courses!inner(teacher_id, name)")]);
+  });
+
+  it("still shows the data when the teacher's name can not be read", async () => {
+    maybeSingle.mockResolvedValue({ data: lecture, error: null });
+    teacherRow.mockRejectedValue(new Error("nope"));
+    render(await LiveBody({ params, searchParams: noSearch }));
+    expect(screen.getByTestId("data")).toBeInTheDocument();
+    expect(screen.queryByText("Linda Carter")).not.toBeInTheDocument();
   });
 
   const shown = async (status: string, search: Promise<{ end?: string | string[] }>) => {
@@ -133,19 +158,18 @@ describe("LiveBody", () => {
     expect((await shown("live", Promise.resolve({ end: "1" }))).confirmEndOnLoad).toBe(true);
   });
 
-  it("does not for other values, or for an ended lecture", async () => {
+  it("does not for other values", async () => {
     expect((await shown("live", Promise.resolve({ end: "0" }))).confirmEndOnLoad).toBe(false);
     cleanup();
     expect((await shown("live", Promise.resolve({ end: ["1", "2"] }))).confirmEndOnLoad).toBe(false);
-    cleanup();
-    const ended = await shown("ended", Promise.resolve({ end: "1" }));
-    expect(ended.mode).toBe("past");
-    expect(ended.confirmEndOnLoad).toBe(false);
   });
 
-  it("shows an ended lecture in past mode", async () => {
+  it("sends an ended lecture to its past lecture page, which has its own heading, also with ?end=1", async () => {
     maybeSingle.mockResolvedValue({ data: { ...lecture, status: "ended" }, error: null });
-    render(await LiveBody({ params, searchParams: noSearch }));
-    expect(JSON.parse(screen.getByTestId("data").textContent!).mode).toBe("past");
+    await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("REDIRECT:/teach/l/l1");
+    await expect(LiveBody({ params, searchParams: Promise.resolve({ end: "1" }) })).rejects.toThrow(
+      "REDIRECT:/teach/l/l1",
+    );
+    expect(slidesQuery).not.toHaveBeenCalled();
   });
 });

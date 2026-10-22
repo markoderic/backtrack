@@ -1,6 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { LectureData } from "./LectureData";
+import { readTeacherName } from "../../../teacher";
+import { TeacherTopBar, splitCourseName } from "../../../ui";
 
 export type LiveSearchParams = Promise<{ end?: string | string[] }>;
 
@@ -24,13 +26,17 @@ export async function LiveBody({
   // explicitly: only a lecture of one of this teacher's own courses comes back.
   const { data: lecture, error } = await supabase
     .from("lectures")
-    .select("id, course_id, name, status, current_slide, slide_count, courses!inner(teacher_id)")
+    .select("id, course_id, name, code, status, current_slide, slide_count, courses!inner(teacher_id, name)")
     .eq("id", lectureId)
     .eq("courses.teacher_id", user.id)
     .maybeSingle();
   // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing lecture.
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!lecture) notFound();
+
+  // A lecture that already ended has its own page, with its heading, rename and export.
+  // ?end=1 is dropped there: an ended lecture has nothing to end.
+  if (lecture.status === "ended") redirect(`/teach/l/${lecture.id}`);
 
   const { data: slideRows, error: slidesError } = await supabase
     .from("slides")
@@ -45,17 +51,32 @@ export async function LiveBody({
     first_line: firstLines.get(i + 1) ?? "",
   }));
 
-  // A lecture that already ended only shows its numbers.
+  const teacherName = await readTeacherName(supabase, user.id);
+  const courseRel = (lecture as { courses?: { name?: string } | { name?: string }[] }).courses;
+  const courseName = (Array.isArray(courseRel) ? courseRel[0]?.name : courseRel?.name) ?? "";
+  const { code: courseCode } = splitCourseName(courseName);
+
   return (
-    <LectureData
-      lectureId={lecture.id}
-      mode={lecture.status === "ended" ? "past" : "live"}
-      lectureName={lecture.name}
-      slides={slides}
-      initialCurrentSlide={lecture.current_slide}
-      courseId={lecture.course_id}
-      // ?end=1 comes from the End lecture links. A lecture that already ended ignores it.
-      confirmEndOnLoad={end === "1" && lecture.status !== "ended"}
-    />
+    <div className="flex min-h-screen flex-col">
+      <TeacherTopBar
+        crumbs={[
+          { label: "Courses", href: "/teach" },
+          ...(courseCode ? [{ label: courseCode, href: `/teach/c/${lecture.course_id}` }] : []),
+          { label: lecture.name },
+        ]}
+        teacherName={teacherName}
+      />
+      <LectureData
+        lectureId={lecture.id}
+        mode="live"
+        lectureName={lecture.name}
+        slides={slides}
+        initialCurrentSlide={lecture.current_slide}
+        courseId={lecture.course_id}
+        code={lecture.code}
+        // ?end=1 comes from the End lecture links.
+        confirmEndOnLoad={end === "1"}
+      />
+    </div>
   );
 }

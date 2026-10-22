@@ -136,7 +136,7 @@ describe("PastBody", () => {
     await expect(PastBody({ params })).rejects.toThrow("slides broke");
   });
 
-  it("shows the data view in past mode with every slide, the date and the course to go back to", async () => {
+  it("shows the data view in past mode with every slide and the course (the date is in the page heading)", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
     render(await PastBody({ params }));
     expect(eqCalls).toContainEqual(["slides", "lecture_id", "l1"]);
@@ -144,7 +144,6 @@ describe("PastBody", () => {
       lectureId: "l1",
       mode: "past",
       lectureName: "Lecture 1, Oct 19",
-      lectureDate: "2026-10-19",
       slides: [
         { number: 1, first_line: "Intro" },
         { number: 2, first_line: "" },
