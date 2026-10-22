@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { Activity } from "react";
 import { act, render, screen } from "@testing-library/react";
 import { NowNext, TICK_MS, type ScheduledCourse } from "./NowNext";
 
@@ -39,10 +40,12 @@ describe("NowNext", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "next");
-    expect(screen.getByTestId("now-next")).toHaveTextContent("Wed 10:05 AM");
+    expect(screen.getByTestId("now-next")).toHaveTextContent("Next Wed, Oct 28 10:05 AM");
   });
 
   it("a course that is live is never Now; its next meeting shows as Next", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(wed("10:10"));
     const { container } = render(
       <NowNext
         courses={[{ ...ims, details: { ...ims.details, meetDays: [3] } }]}
@@ -51,6 +54,50 @@ describe("NowNext", () => {
       />,
     );
     // Live now: not Now; its next meeting is next Wednesday, so Next shows that.
-    expect(container.querySelector('[data-state="next"]')).toHaveTextContent("Wed 10:05 AM");
+    expect(container.querySelector('[data-state="next"]')).toHaveTextContent("Next Wed, Oct 28 10:05 AM");
+  });
+
+  it("takes a newer server time at once when the page is refreshed (no 30 s wait)", () => {
+    vi.useFakeTimers();
+    // The browser clock is still where the page was left; only the new server render knows better.
+    vi.setSystemTime(wed("08:00"));
+    const view = render(<NowNext courses={[ims]} liveCourseIds={[]} initialNow={wed("08:00")} />);
+    expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "next");
+    view.rerender(<NowNext courses={[ims]} liveCourseIds={[]} initialNow={wed("09:55")} />);
+    expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "now");
+  });
+
+  it("looks at the clock right after mount", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(wed("09:55"));
+    // A server render from 8:00 handed over late (a cached page): the browser's clock wins at once.
+    render(<NowNext courses={[ims]} liveCourseIds={[]} initialNow={wed("08:00")} />);
+    expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "next");
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "now");
+  });
+
+  it("looks at the clock again when Next shows the kept-alive dashboard again", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(wed("08:00"));
+    const at = (mode: "visible" | "hidden") => (
+      <Activity mode={mode}>
+        <NowNext courses={[ims]} liveCourseIds={[]} initialNow={wed("08:00")} />
+      </Activity>
+    );
+    const view = render(at("visible"));
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    view.rerender(at("hidden"));
+    act(() => {
+      vi.advanceTimersByTime(5);
+    });
+    // The teacher comes back at 9:55, well inside one 30 s tick.
+    vi.setSystemTime(wed("09:55"));
+    view.rerender(at("visible"));
+    expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "now");
   });
 });

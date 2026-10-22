@@ -1,3 +1,5 @@
+import { formatLectureDate } from "./lectureDate";
+
 /**
  * A course's color, section and meeting days and time (migration 0018), and the "Now" / "Next"
  * meeting on the courses dashboard. Times are minutes after midnight in Oxford, Ohio
@@ -167,7 +169,23 @@ export type Meeting<C> = {
   /** 0 today, 1 tomorrow ... 7 the same day next week. */
   daysAhead: number;
   day: number;
+  /** The meeting's day in Oxford, YYYY-MM-DD. */
+  date: string;
 };
+
+/** The calendar day in Oxford, Ohio, `ahead` days after `now`'s, as YYYY-MM-DD. */
+export function oxfordDate(now: Date, ahead = 0): string {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  // Calendar arithmetic on the date alone (noon UTC), so no time zone or clock change moves it.
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + ahead);
+  return d.toISOString().slice(0, 10);
+}
 
 /**
  * The course meeting right now (from 15 minutes before it starts to 15 minutes after it ends),
@@ -194,7 +212,7 @@ export function nowAndNext<C extends { details: CourseDetails }>(
       if (!d.meetDays.includes(day)) continue;
       const at = ahead * 1440 + start;
       const until = ahead * 1440 + end;
-      const meeting = { course, start, end, daysAhead: ahead, day };
+      const meeting = { course, start, end, daysAhead: ahead, day, date: oxfordDate(now, ahead) };
       if (minute >= at - NOW_MARGIN && minute <= until + NOW_MARGIN) {
         if (!skipNow(course) && (!current || at < current.at)) current = { m: meeting, at };
       } else if (at - NOW_MARGIN > minute && ahead >= 0) {
@@ -205,8 +223,19 @@ export function nowAndNext<C extends { details: CourseDetails }>(
   return { now: current?.m ?? null, next: current ? null : (next?.m ?? null) };
 }
 
-/** "Today 2:50 PM", "Tomorrow 10:05 AM", "Wed 10:05 AM". */
-export function whenLabel(m: { daysAhead: number; day: number; start: number }): string {
-  const day = m.daysAhead === 0 ? "Today" : m.daysAhead === 1 ? "Tomorrow" : DAYS[m.day - 1].short;
+/**
+ * "Today 2:50 PM", "Tomorrow 10:05 AM", "Wed 10:05 AM" (later this week), and a week out, on
+ * today's own weekday, with its date so it never reads as today: "Next Wed, Oct 28 10:05 AM".
+ */
+export function whenLabel(m: { daysAhead: number; day: number; start: number; date?: string }): string {
+  const short = DAYS[m.day - 1].short;
+  const day =
+    m.daysAhead === 0
+      ? "Today"
+      : m.daysAhead === 1
+        ? "Tomorrow"
+        : m.daysAhead >= 7
+          ? `Next ${short}${m.date ? `, ${formatLectureDate(m.date)}` : ""}`
+          : short;
   return `${day} ${formatTime(m.start)}`;
 }

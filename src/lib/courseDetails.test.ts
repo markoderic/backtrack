@@ -8,6 +8,7 @@ import {
   formatTimeRange,
   nowAndNext,
   oxfordClock,
+  oxfordDate,
   parseTime,
   readDetails,
   scheduleLabel,
@@ -95,6 +96,15 @@ describe("labels", () => {
     expect(whenLabel({ daysAhead: 0, day: 3, start: 890 })).toBe("Today 2:50 PM");
     expect(whenLabel({ daysAhead: 1, day: 4, start: 605 })).toBe("Tomorrow 10:05 AM");
     expect(whenLabel({ daysAhead: 4, day: 1, start: 605 })).toBe("Mon 10:05 AM");
+    expect(whenLabel({ daysAhead: 7, day: 3, start: 605, date: "2026-10-28" })).toBe("Next Wed, Oct 28 10:05 AM");
+  });
+});
+
+describe("oxfordDate", () => {
+  it("the Oxford calendar day, moved by whole days, across the end of the month and the clock change", () => {
+    expect(oxfordDate(new Date("2026-10-22T01:30:00Z"))).toBe("2026-10-21");
+    expect(oxfordDate(wed("10:05"), 7)).toBe("2026-10-28");
+    expect(oxfordDate(new Date("2026-10-29T12:00:00-04:00"), 4)).toBe("2026-11-02");
   });
 });
 
@@ -140,14 +150,15 @@ describe("nowAndNext", () => {
 
     // Friday evening: Monday's IMS 452 is next.
     const friday = nowAndNext([ims, bio], new Date("2026-10-23T18:00:00-04:00"));
-    expect(friday.next).toMatchObject({ course: { id: "ims" }, daysAhead: 3, day: 1 });
+    expect(friday.next).toMatchObject({ course: { id: "ims" }, daysAhead: 3, day: 1, date: "2026-10-26" });
     expect(whenLabel(friday.next!)).toBe("Mon 10:05 AM");
   });
 
   it("a class that met earlier today and meets on no other day is next on the same day next week", () => {
     const r = nowAndNext([acc], wed("17:00"));
-    expect(r.next).toMatchObject({ daysAhead: 7, day: 3 });
-    expect(whenLabel(r.next!)).toBe("Wed 2:50 PM");
+    expect(r.next).toMatchObject({ daysAhead: 7, day: 3, date: "2026-10-28" });
+    // Never just "Wed" on a Wednesday: that would read as today.
+    expect(whenLabel(r.next!)).toBe("Next Wed, Oct 28 2:50 PM");
   });
 
   it("a course with a lecture already live is not Now (its Live now row says it); the next one shows", () => {

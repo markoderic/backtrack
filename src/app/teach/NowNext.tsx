@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { useShownAgain } from "@/lib/useShownAgain";
 import {
   colorClass,
   formatDays,
@@ -23,8 +24,9 @@ export const TICK_MS = 30_000;
  * side of its time) with a big Start lecture, or else the next meeting this week. Hidden when no
  * course has days and a time. A course that already has a live lecture is never Now (its Live
  * now row above says it).
- * `initialNow` is the server's clock, so the first render here matches the server's; after that
- * the browser's clock moves it on every 30 s and whenever the tab comes back.
+ * `initialNow` is the server's clock, so the first render here matches the server's (and a newer
+ * one from a refresh is taken at once); after that the browser's clock moves it on right after
+ * mount, every 30 s, whenever the tab comes back and whenever Next shows the kept page again.
  */
 export function NowNext({
   courses,
@@ -36,19 +38,32 @@ export function NowNext({
   initialNow: number;
 }) {
   const [now, setNow] = useState(initialNow);
+  // A newer server time (router.refresh, or the page rendered again) replaces the clock at once.
+  const [seenInitial, setSeenInitial] = useState(initialNow);
+  if (initialNow !== seenInitial) {
+    setSeenInitial(initialNow);
+    setNow(initialNow);
+  }
 
   useEffect(() => {
     const tick = () => setNow(Date.now());
+    // Right after mount too (just after hydration, so the first render still matches the server's).
+    const first = setTimeout(tick, 0);
     const t = setInterval(tick, TICK_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") tick();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      clearTimeout(first);
       clearInterval(t);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+
+  // Next keeps the dashboard alive while the teacher is on another page: look at the clock again
+  // the moment it is shown, not up to 30 s later.
+  useShownAgain(() => setNow(Date.now()));
 
   const live = new Set(liveCourseIds);
   const { now: current, next } = nowAndNext(courses, new Date(now), (c) => live.has(c.id));
