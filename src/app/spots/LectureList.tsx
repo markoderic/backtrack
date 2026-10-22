@@ -24,7 +24,11 @@ async function loadJoined(): Promise<Item[]> {
   // Never joined anything on this browser.
   if (!session) return [];
 
-  const { data, error } = await supabase.from("participants").select("joined_at, lectures(id, name, lecture_date)");
+  // Own rows only: a teacher can read every participant of their lectures, which would list each lecture once per student.
+  const { data, error } = await supabase
+    .from("participants")
+    .select("joined_at, lectures(id, name, lecture_date)")
+    .eq("anon_id", session.user.id);
   if (error) throw new Error(error.message);
 
   const items: Item[] = [];

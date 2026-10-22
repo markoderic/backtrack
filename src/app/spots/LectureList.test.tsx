@@ -3,7 +3,8 @@ import { render, screen, within } from "@testing-library/react";
 
 const getSession = vi.fn();
 const result = vi.fn();
-const select = vi.fn(() => result());
+const eq = vi.fn(() => result());
+const select = vi.fn(() => ({ eq }));
 const from = vi.fn(() => ({ select }));
 vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ auth: { getSession }, from }) }));
 
@@ -15,7 +16,7 @@ const joined = (id: string, name: string, date: string, joinedAt: string) => ({
 });
 
 beforeEach(() => {
-  [getSession, result, select, from].forEach((m) => m.mockClear());
+  [getSession, result, eq, select, from].forEach((m) => m.mockClear());
   getSession.mockResolvedValue({ data: { session: { user: { id: "s1" } } }, error: null });
   result.mockResolvedValue({
     data: [
@@ -40,6 +41,13 @@ describe("LectureList", () => {
     expect(within(items[0]).getByRole("link")).toHaveAttribute("href", "/spots/l3");
     expect(within(items[0]).getByText("Oct 26")).toBeInTheDocument();
     expect(from).toHaveBeenCalledWith("participants");
+  });
+
+  it("asks only for the signed in user's own participant rows", async () => {
+    render(<LectureList />);
+    await screen.findAllByRole("listitem");
+    expect(eq).toHaveBeenCalledTimes(1);
+    expect(eq).toHaveBeenCalledWith("anon_id", "s1");
   });
 
   it("puts two lectures on the same day in the order they were joined, newest first", async () => {
