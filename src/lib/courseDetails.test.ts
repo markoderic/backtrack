@@ -96,7 +96,7 @@ describe("labels", () => {
     expect(whenLabel({ daysAhead: 0, day: 3, start: 890 })).toBe("Today 2:50 PM");
     expect(whenLabel({ daysAhead: 1, day: 4, start: 605 })).toBe("Tomorrow 10:05 AM");
     expect(whenLabel({ daysAhead: 4, day: 1, start: 605 })).toBe("Mon 10:05 AM");
-    expect(whenLabel({ daysAhead: 7, day: 3, start: 605, date: "2026-10-28" })).toBe("Next Wed, Oct 28 10:05 AM");
+    expect(whenLabel({ daysAhead: 7, day: 3, start: 605, date: "2026-10-28" })).toBe("Wed, Oct 28 10:05 AM");
   });
 });
 
@@ -158,7 +158,7 @@ describe("nowAndNext", () => {
     const r = nowAndNext([acc], wed("17:00"));
     expect(r.next).toMatchObject({ daysAhead: 7, day: 3, date: "2026-10-28" });
     // Never just "Wed" on a Wednesday: that would read as today.
-    expect(whenLabel(r.next!)).toBe("Next Wed, Oct 28 2:50 PM");
+    expect(whenLabel(r.next!)).toBe("Wed, Oct 28 2:50 PM");
   });
 
   it("a course with a lecture already live is not Now (its Live now row says it); the next one shows", () => {

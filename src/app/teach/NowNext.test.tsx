@@ -40,7 +40,9 @@ describe("NowNext", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "next");
-    expect(screen.getByTestId("now-next")).toHaveTextContent("Next Wed, Oct 28 10:05 AM");
+    expect(screen.getByTestId("now-next")).toHaveTextContent("Wed, Oct 28 10:05 AM");
+    // "Next" is said once, by the label, not again in the when text.
+    expect(screen.getByTestId("now-next").textContent?.match(/Next/g)).toHaveLength(1);
   });
 
   it("a course that is live is never Now; its next meeting shows as Next", () => {
@@ -54,7 +56,7 @@ describe("NowNext", () => {
       />,
     );
     // Live now: not Now; its next meeting is next Wednesday, so Next shows that.
-    expect(container.querySelector('[data-state="next"]')).toHaveTextContent("Next Wed, Oct 28 10:05 AM");
+    expect(container.querySelector('[data-state="next"]')).toHaveTextContent("Wed, Oct 28 10:05 AM");
   });
 
   it("takes a newer server time at once when the page is refreshed (no 30 s wait)", () => {

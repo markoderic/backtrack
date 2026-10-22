@@ -225,7 +225,7 @@ export function nowAndNext<C extends { details: CourseDetails }>(
 
 /**
  * "Today 2:50 PM", "Tomorrow 10:05 AM", "Wed 10:05 AM" (later this week), and a week out, on
- * today's own weekday, with its date so it never reads as today: "Next Wed, Oct 28 10:05 AM".
+ * today's own weekday, with its date so it never reads as today: "Wed, Oct 28 10:05 AM".
  */
 export function whenLabel(m: { daysAhead: number; day: number; start: number; date?: string }): string {
   const short = DAYS[m.day - 1].short;
@@ -235,7 +235,7 @@ export function whenLabel(m: { daysAhead: number; day: number; start: number; da
       : m.daysAhead === 1
         ? "Tomorrow"
         : m.daysAhead >= 7
-          ? `Next ${short}${m.date ? `, ${formatLectureDate(m.date)}` : ""}`
+          ? `${short}${m.date ? `, ${formatLectureDate(m.date)}` : ""}`
           : short;
   return `${day} ${formatTime(m.start)}`;
 }
