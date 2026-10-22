@@ -14,7 +14,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 import JoinPage from "./page";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
-const input = () => screen.getByLabelText("Class code") as HTMLInputElement;
+const input = () => screen.getByLabelText("Enter the code on the screen") as HTMLInputElement;
 const joinButton = () => screen.getByRole("button", { name: /^Join/ });
 const type = (value: string) => fireEvent.change(input(), { target: { value } });
 
@@ -29,13 +29,27 @@ describe("Join page", () => {
   it("is a numeric box for 6 digits", () => {
     render(<JoinPage />);
     expect(input()).toHaveAttribute("inputmode", "numeric");
-    expect(input()).toHaveAttribute("maxlength", "6");
+    // 6 digits plus the space shown after the third one.
+    expect(input()).toHaveAttribute("maxlength", "7");
+    expect(input()).toHaveAttribute("placeholder", "6 digits");
+  });
+
+  it("shows a space after 3 digits, for reading only", async () => {
+    render(<JoinPage />);
+    type("482");
+    expect(input().value).toBe("482");
+    type("4829");
+    expect(input().value).toBe("482 9");
+    type("482 913");
+    expect(input().value).toBe("482 913");
+    fireEvent.click(joinButton());
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("join_lecture", { p_code: "482913" }));
   });
 
   it("lets no letters or symbols be typed", () => {
     render(<JoinPage />);
     type("12ab-3 4");
-    expect(input().value).toBe("1234");
+    expect(input().value).toBe("123 4");
     type("abc");
     expect(input().value).toBe("");
   });
@@ -43,7 +57,7 @@ describe("Join page", () => {
   it("cuts a pasted code to 6 digits", () => {
     render(<JoinPage />);
     type("482 916 77");
-    expect(input().value).toBe("48291677".slice(0, 6));
+    expect(input().value).toBe("482 916");
   });
 
   it("keeps Join disabled under 6 digits", () => {
@@ -81,13 +95,13 @@ describe("Join page", () => {
     expect(signInAnonymously).not.toHaveBeenCalled();
   });
 
-  it("says Joining... while it works and cannot be pressed twice", async () => {
+  it("says Joining… while it works and cannot be pressed twice", async () => {
     let finish!: (v: unknown) => void;
     rpc.mockImplementation(() => new Promise((r) => (finish = r)));
     render(<JoinPage />);
     type("482916");
     fireEvent.click(joinButton());
-    expect(await screen.findByRole("button", { name: "Joining..." })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Joining…" })).toBeDisabled();
     fireEvent.submit(input().closest("form")!);
     await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
     finish({ data: LECTURE, error: null });
@@ -99,10 +113,45 @@ describe("Join page", () => {
     render(<JoinPage />);
     type("999999");
     fireEvent.click(joinButton());
-    expect(await screen.findByRole("alert")).toHaveTextContent("That code isn't live. Check the number with your professor.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No live lecture has that code.");
     expect(push).not.toHaveBeenCalled();
     expect(joinButton()).toBeEnabled();
-    expect(input().value).toBe("999999");
+    expect(input().value).toBe("999 999");
+  });
+
+  it("shows the message with an alert icon and puts the cursor back in the field", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    render(<JoinPage />);
+    type("999999");
+    fireEvent.click(joinButton());
+    const alert = await screen.findByRole("alert");
+    expect(alert.querySelector('[data-icon="alert"]')).not.toBeNull();
+    await waitFor(() => expect(input()).toHaveFocus());
+  });
+
+  it("shakes the field on each wrong code, but not for other errors", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    const { container } = render(<JoinPage />);
+    const field = () => container.querySelector("[data-shake]");
+    type("999999");
+    fireEvent.click(joinButton());
+    await screen.findByRole("alert");
+    expect(field()).toHaveAttribute("data-shake", "animate-shake");
+    await waitFor(() => expect(joinButton()).toBeEnabled());
+    fireEvent.click(joinButton());
+    await waitFor(() => expect(field()).toHaveAttribute("data-shake", "animate-shake-again"));
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    fireEvent.click(joinButton());
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not join. Try again."));
+    expect(field()).toBeNull();
+  });
+
+  it("draws each typed digit in its own span so it can pop in", () => {
+    const { container } = render(<JoinPage />);
+    type("4829");
+    const display = container.querySelector("[data-code-display]")!;
+    expect(display).toHaveAttribute("aria-hidden", "true");
+    expect(Array.from(display.querySelectorAll("span"), (s) => s.textContent)).toEqual(["4", "8", "2", " ", "9"]);
   });
 
   it("explains a code that is not live when the database returns null with no error", async () => {
@@ -110,7 +159,7 @@ describe("Join page", () => {
     render(<JoinPage />);
     type("999999");
     fireEvent.click(joinButton());
-    expect(await screen.findByRole("alert")).toHaveTextContent("That code isn't live. Check the number with your professor.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No live lecture has that code.");
     expect(push).not.toHaveBeenCalled();
     expect(joinButton()).toBeEnabled();
   });

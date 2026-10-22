@@ -5,7 +5,7 @@ import Home from "./page";
 describe("Home", () => {
   it("shows the name and exactly two links", () => {
     render(<Home />);
-    expect(screen.getByRole("heading", { name: "Backtrack" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "backtrack" })).toBeInTheDocument();
     const links = screen.getAllByRole("link");
     expect(links).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Join a class" })).toHaveAttribute("href", "/join");

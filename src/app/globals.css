@@ -1,8 +1,296 @@
 @import "tailwindcss";
 
-body {
-  margin: 0;
-  background: #ffffff;
-  color: #171717;
-  font-family: Arial, Helvetica, sans-serif;
+/*
+ * Backtrack design tokens, light theme (Figma "Final" style sheet, frame 35:877).
+ * Every color in the app comes from one of these variables. Dark mode will be a
+ * second set of values for the same names (e.g. under [data-theme="dark"]).
+ * Tailwind 4 turns each one into utilities: bg-bg, bg-surface, text-ink,
+ * text-secondary, border-hairline, bg-strip, bg-lost, bg-lost-hover, bg-lost-tint ...
+ */
+@theme static {
+  --color-bg: #f4f2ee;
+  --color-surface: #ffffff;
+  --color-ink: #1b1a18;
+  --color-ink-hover: #33312d;
+  --color-secondary: #66635c;
+  --color-hairline: #ddd9d1;
+  --color-strip: #b9b4aa;
+  --color-lost: #c8371f;
+  --color-lost-hover: #a92d18;
+  --color-lost-tint: #f6dad4;
+
+  /* Radius: sm for slides and thumbnails, md for buttons, fields, popovers. Highlight boxes use rounded-xs (2px). */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+
+  --shadow-slide: 0 1px 2px rgb(27 26 24 / 0.06), 0 8px 24px rgb(27 26 24 / 0.08);
+  --shadow-popover: 0 1px 3px rgb(27 26 24 / 0.06), 0 12px 32px rgb(27 26 24 / 0.12);
+
+  /*
+   * Motion (design brief, "Motion"): CSS only, transform and opacity, light on any laptop.
+   * ease-out / ease-in-out / ease-spring become Tailwind utilities; use durations as duration-(--dur-fast).
+   * The spring has a small overshoot and is for presses and pops only.
+   */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.3, 1.4, 0.5, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  /* Shared animations (keyframes below). animate-fade-in, animate-rise-in, animate-pop-in ... */
+  --animate-fade-in: fade-in var(--dur-base) var(--ease-out) both;
+  --animate-rise-in: rise-in var(--dur-base) var(--ease-out) both;
+  --animate-pop-in: pop-in 160ms var(--ease-spring) both;
+  --animate-dot-drop: dot-drop var(--dur-base) var(--ease-out) both;
+  --animate-digit-pop: digit-pop 160ms var(--ease-spring) both;
+  /* Two names for the same shake, so a second wrong code shakes again (switch between them). */
+  --animate-shake: shake 240ms var(--ease-in-out) both;
+  --animate-shake-again: shake-again 240ms var(--ease-in-out) both;
+}
+
+@theme inline {
+  /* Geist comes from the geist package (next/font/local); Newsreader from @fontsource. */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+}
+
+/* Type styles, one utility per Figma "Final/" text style. Color is set separately (text-ink, text-secondary ...). */
+@utility type-wordmark-l {
+  font-family: var(--font-sans);
+  font-size: 52px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+}
+@utility type-wordmark-s {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+@utility type-display {
+  font-family: var(--font-sans);
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+@utility type-title {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+@utility type-body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+@utility type-body-strong {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+@utility type-small {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+@utility type-small-strong {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+@utility type-caption {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+@utility type-button {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+@utility type-number-s {
+  font-family: var(--font-sans);
+  font-size: 30px;
+  line-height: 32px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+@utility type-number-m {
+  font-family: var(--font-sans);
+  font-size: 44px;
+  line-height: 48px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+@utility type-number-l {
+  font-family: var(--font-sans);
+  font-size: 72px;
+  line-height: 76px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+}
+@utility type-number-xl {
+  font-family: var(--font-sans);
+  font-size: 160px;
+  line-height: 160px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+}
+@utility type-lecture {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0;
+}
+@utility type-lecture-l {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0;
+}
+@utility type-note {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  font-style: italic;
+  letter-spacing: 0;
+}
+@utility type-projector-l {
+  font-family: var(--font-sans);
+  font-size: 64px;
+  line-height: 72px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+@utility type-projector-s {
+  font-family: var(--font-sans);
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* The focus ring from Parts: 2px ink, set off from the control (4px for buttons, 5px for I'm lost). */
+@utility focus-ring {
+  outline: none;
+  &:focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 4px;
+  }
+}
+
+@layer base {
+  html {
+    background: var(--color-bg);
+    color: var(--color-ink);
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Every focusable thing shows a visible ring, even when a component sets none. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+}
+
+/*
+ * Keyframes. They move with the individual translate / scale properties (compositor only,
+ * and they never fight a Tailwind scale-* class on the same element).
+ */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes rise-in {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes pop-in {
+  from { opacity: 0; scale: 0.96; }
+  to { opacity: 1; scale: 1; }
+}
+/* The new strip dot drops in behind the playhead. */
+@keyframes dot-drop {
+  from { opacity: 0; translate: 0 -10px; scale: 0.6; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+/* A typed code digit. */
+@keyframes digit-pop {
+  from { opacity: 0.4; scale: 0.8; translate: 0 4px; }
+  to { opacity: 1; scale: 1; translate: 0 0; }
+}
+@keyframes shake {
+  0%, 100% { translate: 0 0; }
+  20% { translate: -6px 0; }
+  40% { translate: 5px 0; }
+  60% { translate: -3px 0; }
+  80% { translate: 2px 0; }
+}
+@keyframes shake-again {
+  0%, 100% { translate: 0 0; }
+  20% { translate: -6px 0; }
+  40% { translate: 5px 0; }
+  60% { translate: -3px 0; }
+  80% { translate: 2px 0; }
+}
+
+/*
+ * Reduced motion: no scale, drop, shake, stagger or rise. Opacity stays, so state changes
+ * still show. Components also put press scales behind motion-safe:.
+ */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes rise-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes dot-drop {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes digit-pop {
+    from { opacity: 1; }
+    to { opacity: 1; }
+  }
+  @keyframes shake {
+    from { translate: 0 0; }
+    to { translate: 0 0; }
+  }
+  @keyframes shake-again {
+    from { translate: 0 0; }
+    to { translate: 0 0; }
+  }
 }
