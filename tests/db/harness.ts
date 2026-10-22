@@ -85,9 +85,9 @@ export async function as<T>(
   const jwt = claims
     ? { role: "authenticated", is_anonymous: false, ...claims }
     : { role: "anon" };
-  await db.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify(jwt)]);
-  await db.exec(`set role ${claims ? "authenticated" : "anon"}`);
   try {
+    await db.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify(jwt)]);
+    await db.exec(`set role ${claims ? "authenticated" : "anon"}`);
     return await fn(db);
   } finally {
     await db.exec("reset role");
