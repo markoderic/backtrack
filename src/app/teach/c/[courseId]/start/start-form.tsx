@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { defaultLectureName } from "@/lib/lectureName";
@@ -68,6 +68,10 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const fileInput = useRef<HTMLInputElement>(null);
   // Each picked file gets a new run; a cancelled or replaced run is ignored and stopped at its next page.
   const run = useRef(0);
+  // A start went through and the projector opened. Next keeps this page alive (hidden) after
+  // it, with its state; shown again (Back, or Start lecture for the next class) it must be a
+  // fresh form, not the last start's file and its finished upload with Start lecture disabled.
+  const started = useRef(false);
 
   // Filled in after mount so the date is the teacher's own, not the server's.
   useEffect(() => {
@@ -86,6 +90,23 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   useEffect(() => {
     void cleanupOrphanUploads().catch(() => {});
   }, []);
+
+  // Shown again after a start: a fresh form (before paint, so the old upload never flashes),
+  // and the page's data read again so the name counts the lecture just started.
+  useLayoutEffect(() => {
+    if (!started.current) return;
+    started.current = false;
+    run.current++;
+    touchedName.current = false;
+    setFile(null);
+    setPrep({ status: "idle" });
+    setStarting(false);
+    setUpload(null);
+    setError(null);
+    setDragging(false);
+    setName(defaultLectureName(existingCount, new Date()));
+    router.refresh();
+  }, [existingCount, router]);
 
   // Stop a run that is still going when the page goes away.
   useEffect(
@@ -181,7 +202,10 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       });
       if (rpcError) throw new StartError(rpcError.message);
 
-      router.push(`/teach/l/${lectureId}/present`);
+      // Replace, not push: Back from the projector goes to the course (with the live lecture
+      // and its Resume and End class), never to this form for a second start of the same class.
+      started.current = true;
+      router.replace(`/teach/l/${lectureId}/present`);
     } catch (e) {
       // No lecture uses these images (start_lecture never made one), so they go back out. Best
       // effort: anything left is removed by the cleanup a day later. Workers still uploading stop

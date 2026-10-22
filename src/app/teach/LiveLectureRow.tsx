@@ -1,23 +1,29 @@
 import Link from "next/link";
-import { secondaryButtonClass } from "./ui";
+import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 
-/** A lecture that is running now: its name, and where the teacher can go from here. */
+/**
+ * A class that is running now: its name, and where the teacher can go from here. Resume is the
+ * main way back to the projector (black); Data and End class are white secondary buttons.
+ */
 export function LiveLectureRow({ id, name }: { id: string; name: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-y border-hairline py-4">
       <div className="flex min-w-0 flex-1 basis-60 flex-col">
-        <span className="type-small-strong text-ink">Live now</span>
+        <span className="flex items-center gap-1.5 type-small-strong text-ink">
+          <span aria-hidden className="size-2 shrink-0 rounded-full bg-ink" />
+          Live now
+        </span>
         <span className="truncate type-lecture text-secondary">{name}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Link href={`/teach/l/${id}/present`} className={secondaryButtonClass}>
+        <Link href={`/teach/l/${id}/present`} className={buttonPrimarySmallClass}>
           Resume
         </Link>
-        <Link href={`/teach/l/${id}/live`} className={secondaryButtonClass}>
+        <Link href={`/teach/l/${id}/live`} className={buttonSecondaryClass}>
           Data
         </Link>
-        <Link href={`/teach/l/${id}/live?end=1`} className={secondaryButtonClass}>
-          End lecture
+        <Link href={`/teach/l/${id}/live?end=1`} className={buttonSecondaryClass}>
+          End class
         </Link>
       </div>
     </div>

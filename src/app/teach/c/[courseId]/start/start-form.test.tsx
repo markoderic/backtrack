@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { Activity } from "react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 const renderPdf = vi.fn();
 vi.mock("@/lib/pdf/renderPdf", async (importOriginal) => ({
@@ -15,8 +16,11 @@ vi.mock("@/lib/supabase/browser", () => ({
   createBrowserSupabase: () => ({ storage: { from }, rpc }),
 }));
 
-const push = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+// The projector opens with replace (Back goes to the course, not to this form).
+const replace = vi.fn();
+const refresh = vi.fn();
+const router = { replace, refresh };
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 const cleanupOrphanUploads = vi.fn();
 vi.mock("../../../lecture-actions", () => ({ cleanupOrphanUploads: () => cleanupOrphanUploads() }));
@@ -47,7 +51,8 @@ beforeEach(() => {
   cleanupOrphanUploads.mockReset().mockResolvedValue(0);
   rpc.mockReset();
   from.mockClear();
-  push.mockReset();
+  replace.mockReset();
+  refresh.mockReset();
   upload.mockResolvedValue({ data: {}, error: null });
   rpc.mockResolvedValue({ data: [{ lecture_id: "x", code: "123456" }], error: null });
 });
@@ -83,7 +88,7 @@ describe("StartForm", () => {
     expect(await screen.findByText("That file isn't a PDF.")).toBeInTheDocument();
     expect(upload).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
-    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
     // Back to the drop area, ready for another file.
     expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
@@ -173,7 +178,7 @@ describe("StartForm", () => {
     fireEvent.click(startButton());
     expect(await screen.findByText("Could not upload your slides. Try again.")).toBeInTheDocument();
     expect(rpc).not.toHaveBeenCalled();
-    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
     expect(startButton()).toBeEnabled();
     expect(renderPdf).toHaveBeenCalledTimes(1);
   });
@@ -199,7 +204,7 @@ describe("StartForm", () => {
     fireEvent.change(nameField(), { target: { value: " Week 3 " } });
     fireEvent.click(startButton());
 
-    await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
     expect(from).toHaveBeenCalledWith("slides");
     expect(upload).toHaveBeenCalledTimes(3);
 
@@ -219,7 +224,7 @@ describe("StartForm", () => {
     expect(uploaded).toEqual([`${lectureId}/1.webp`, `${lectureId}/2.webp`, `${lectureId}/3.webp`]);
     for (const call of upload.mock.calls) expect(call[2]).toEqual({ contentType: "image/webp", upsert: false });
 
-    expect(push).toHaveBeenCalledWith(`/teach/l/${lectureId}/present`);
+    expect(replace).toHaveBeenCalledWith(`/teach/l/${lectureId}/present`);
   });
 
   it("uses the .jpg extension when the browser fell back to JPEG", async () => {
@@ -227,7 +232,7 @@ describe("StartForm", () => {
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady();
     fireEvent.click(startButton());
-    await waitFor(() => expect(push).toHaveBeenCalled());
+    await waitFor(() => expect(replace).toHaveBeenCalled());
     const slides = rpc.mock.calls[0][1].p_slides;
     expect(slides[0].image_path).toMatch(/\/1\.jpg$/);
     expect(upload.mock.calls[0][2]).toEqual({ contentType: "image/jpeg", upsert: false });
@@ -240,7 +245,7 @@ describe("StartForm", () => {
     await chooseReady();
     fireEvent.click(startButton());
     expect(await screen.findByText("Could not start the lecture. Try again.")).toBeInTheDocument();
-    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("clears the teacher's old leftover uploads in the background when the page opens", async () => {
@@ -293,7 +298,70 @@ describe("StartForm", () => {
 
     upload.mockResolvedValue({ data: {}, error: null });
     fireEvent.click(startButton());
-    await waitFor(() => expect(push).toHaveBeenCalled());
+    await waitFor(() => expect(replace).toHaveBeenCalled());
     expect(remove).not.toHaveBeenCalled();
+  });
+});
+
+// Next keeps a visited page alive but hidden (React Activity) and shows it again with its
+// state, on Back or on the next Start lecture. Marko: "when I go back the lecture ... loads
+// forever and I can't start it" and "it had my old file". The form must come back fresh.
+describe("StartForm shown again after a start", () => {
+  const at = (mode: "visible" | "hidden", existingCount = 2) => (
+    <Activity mode={mode}>
+      <StartForm courseId={COURSE} existingCount={existingCount} />
+    </Activity>
+  );
+
+  it("is a fresh form: no old file, no finished upload, Start lecture waiting for a new PDF", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["", ""] });
+    const view = render(at("visible"));
+    await chooseReady("week3.pdf");
+    fireEvent.change(nameField(), { target: { value: "Week 3" } });
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    // Left as it was when the projector opened: the upload done, Start lecture disabled.
+    expect(screen.getByTestId("start-status")).toHaveTextContent("Uploading slide 2 of 2");
+    expect(startButton()).toBeDisabled();
+
+    view.rerender(at("hidden"));
+    await act(async () => {});
+    view.rerender(at("visible"));
+
+    expect(screen.queryByText("week3.pdf")).toBeNull();
+    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(screen.getByTestId("start-status")).toHaveTextContent("");
+    expect(nameField()).toBeEnabled();
+    expect(nameField().value).toMatch(/^Lecture 3, /);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // And it starts again with a new PDF.
+    await chooseReady("week4.pdf");
+    expect(startButton()).toBeEnabled();
+  });
+
+  it("the refreshed count names the next lecture after the one just started", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    const view = render(at("visible", 2));
+    await chooseReady();
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    view.rerender(at("hidden", 2));
+    await act(async () => {});
+    view.rerender(at("visible", 2));
+    // The server's count arrives after the refresh.
+    view.rerender(at("visible", 3));
+    await waitFor(() => expect(nameField().value).toMatch(/^Lecture 4, /));
+  });
+
+  it("is left alone when it is shown again without a start (the teacher went to look at something)", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    const view = render(at("visible"));
+    await chooseReady("keep.pdf");
+    view.rerender(at("hidden"));
+    await act(async () => {});
+    view.rerender(at("visible"));
+    expect(screen.getByText("keep.pdf")).toBeInTheDocument();
+    expect(startButton()).toBeEnabled();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

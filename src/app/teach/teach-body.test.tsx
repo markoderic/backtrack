@@ -36,7 +36,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT:${to}`);
-  },
+  },  useRouter: () => ({ refresh: () => {} }),
 }));
 vi.mock("./sign-in-button", () => ({ SignInButton: () => <button>Sign in</button> }));
 vi.mock("./add-course-form", () => ({
@@ -75,7 +75,7 @@ describe("TeachBody", () => {
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
   });
 
-  it("shows Live now with the name and Resume, Data and End lecture links for each live lecture", async () => {
+  it("shows Live now with the name and Resume, Data and End class links for each live lecture", async () => {
     live.mockResolvedValue({
       data: [{ id: "l2", name: "Lecture 2, Oct 26", courses: { teacher_id: "u1" } }],
       error: null,
@@ -87,7 +87,7 @@ describe("TeachBody", () => {
     expect(links(html)).toEqual([
       ["Resume", "/teach/l/l2/present"],
       ["Data", "/teach/l/l2/live"],
-      ["End lecture", "/teach/l/l2/live?end=1"],
+      ["End class", "/teach/l/l2/live?end=1"],
     ]);
   });
 

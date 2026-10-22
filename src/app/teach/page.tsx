@@ -7,6 +7,7 @@ import { formatLectureDate } from "@/lib/lectureDate";
 import { Icon } from "@/components/Icon";
 import { AddCourseForm } from "./add-course-form";
 import { LiveLectureRow } from "./LiveLectureRow";
+import { RefreshOnReturn } from "./RefreshOnReturn";
 import { SignInView } from "./sign-in-view";
 import { TeacherPage, rowLinkClass, staggerClass, staggerStyle } from "./ui";
 
@@ -85,6 +86,7 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
       const list = courses ?? [];
       return (
         <TeacherPage crumbs={[{ label: "Courses" }]} teacherName={teacher.display_name}>
+          <RefreshOnReturn />
           <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
             {(live ?? []).length > 0 && (
               <div className="mb-8 flex flex-col">

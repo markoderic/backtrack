@@ -5,6 +5,7 @@ import { topThree } from "@/lib/stats";
 import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { LiveLectureRow } from "../../LiveLectureRow";
+import { RefreshOnReturn } from "../../RefreshOnReturn";
 import { readTeacherName } from "../../teacher";
 import { TeacherPage, splitCourseName, textLinkClass } from "../../ui";
 import { LECTURE_DELETED } from "../../delete-lecture-copy";
@@ -173,6 +174,7 @@ export async function CourseBody({
 
   return (
     <TeacherPage crumbs={[{ label: "Courses", href: "/teach" }, { label: code }]} teacherName={teacherName}>
+      <RefreshOnReturn />
       <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -205,7 +207,7 @@ export async function CourseBody({
             {live.map((lecture) => (
               <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
             ))}
-            <p className="pt-2 type-caption text-secondary">A live lecture can be deleted after it ends.</p>
+            <p className="pt-2 type-caption text-secondary">End the class first to delete it.</p>
           </div>
         )}
 

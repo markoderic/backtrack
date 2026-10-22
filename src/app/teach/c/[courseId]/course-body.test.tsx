@@ -46,7 +46,7 @@ vi.mock("next/navigation", () => ({
   },
   redirect: (to: string) => {
     throw new Error(`REDIRECT:${to}`);
-  },
+  },  useRouter: () => ({ refresh: () => {} }),
 }));
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -99,7 +99,7 @@ describe("CourseBody", () => {
     await expect(CourseBody({ params })).rejects.toThrow("lectures broke");
   });
 
-  it("shows Live now with Resume, Data and End lecture for a live lecture and lists ended ones as past", async () => {
+  it("shows Live now with Resume, Data and End class for a live lecture and lists ended ones as past", async () => {
     maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
     lectures.mockResolvedValue({
       data: [
@@ -114,7 +114,7 @@ describe("CourseBody", () => {
     expect(links(html).filter(([, href]) => href.startsWith("/teach/l/l2"))).toEqual([
       ["Resume", "/teach/l/l2/present"],
       ["Data", "/teach/l/l2/live"],
-      ["End lecture", "/teach/l/l2/live?end=1"],
+      ["End class", "/teach/l/l2/live?end=1"],
     ]);
     expect(html).toContain("Lecture 1, Oct 19");
     expect(html).not.toContain("No lectures yet");
@@ -351,6 +351,6 @@ describe("CourseBody, Delete lecture", () => {
     const html = renderToStaticMarkup(await CourseBody({ params }));
     expect(html).toContain('aria-label="Delete System check, Oct 22"');
     expect(html).not.toContain('aria-label="Delete Live one"');
-    expect(html).toContain("A live lecture can be deleted after it ends.");
+    expect(html).toContain("End the class first to delete it.");
   });
 });
