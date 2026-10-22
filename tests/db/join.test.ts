@@ -53,7 +53,7 @@ beforeEach(async () => {
 });
 
 const join = (claims: Claims | null, code: string | null) =>
-  as(db, claims, async () => (await db.query<{ join_lecture: string }>("select public.join_lecture($1) as join_lecture", [code])).rows[0].join_lecture);
+  as(db, claims, async () => (await db.query<{ join_lecture: string | null }>("select public.join_lecture($1) as join_lecture", [code])).rows[0].join_lecture);
 
 const rows = <T extends object>(claims: Claims | null, sql: string, params: unknown[] = []) =>
   as(db, claims, async () => (await db.query<T>(sql, params)).rows);
@@ -74,23 +74,23 @@ describe("join_lecture", () => {
     expect(await join(s1, `  ${CODE_A} \n`)).toBe(LECTURE_A);
   });
 
-  it("raises not_found for a code that no lecture has", async () => {
-    await expect(join(s1, "999999")).rejects.toThrow("not_found");
+  it("returns null for a code that no lecture has", async () => {
+    expect(await join(s1, "999999")).toBeNull();
     expect(await participantCount()).toBe(0);
   });
 
-  it("raises not_found for blank, short, long and null codes", async () => {
+  it("returns null for blank, short, long and null codes", async () => {
     for (const bad of ["", "   ", "48291", "4829160", "abcdef", null]) {
-      await expect(join(s1, bad)).rejects.toThrow("not_found");
+      expect(await join(s1, bad)).toBeNull();
     }
     expect(await participantCount()).toBe(0);
   });
 
-  it("raises the same not_found for the code of an ended lecture", async () => {
+  it("returns the same null for the code of an ended lecture", async () => {
     await as(db, marko, () =>
       db.query("update public.lectures set status = 'ended', ended_at = now() where id = $1", [LECTURE_A]),
     );
-    await expect(join(s1, CODE_A)).rejects.toThrow("not_found");
+    expect(await join(s1, CODE_A)).toBeNull();
     expect(await participantCount()).toBe(0);
   });
 
@@ -114,6 +114,122 @@ describe("join_lecture", () => {
   it("needs a user id even for an authenticated role", async () => {
     await expect(join({ sub: "" }, CODE_A)).rejects.toThrow();
     expect(await participantCount()).toBe(0);
+  });
+});
+
+describe("join attempt limit", () => {
+  const attemptCount = async (userId?: string) =>
+    Number(
+      (
+        await db.query<{ n: string }>(
+          "select count(*) as n from public.join_attempts where $1::uuid is null or user_id = $1::uuid",
+          [userId ?? null],
+        )
+      ).rows[0].n,
+    );
+  const missTimes = async (claims: Claims | null, times: number) => {
+    for (let i = 0; i < times; i++) await join(claims, "999999");
+  };
+  const backdate = (userId: string, interval: string, n: number) =>
+    db.query(
+      `insert into public.join_attempts (user_id, attempted_at)
+       select $1, now() - $2::interval from generate_series(1, $3)`,
+      [userId, interval, n],
+    );
+
+  it("records one attempt per wrong code", async () => {
+    await missTimes(s1, 3);
+    expect(await attemptCount(s1.sub)).toBe(3);
+  });
+
+  it("lets the 10th wrong code through as null, then blocks the 11th call even with the right code", async () => {
+    await missTimes(s1, 10);
+    expect(await attemptCount(s1.sub)).toBe(10);
+    await expect(join(s1, CODE_A)).rejects.toThrow("too_many_attempts");
+    await expect(join(s1, "999999")).rejects.toThrow("too_many_attempts");
+    expect(await participantCount()).toBe(0);
+    expect(await attemptCount(s1.sub)).toBe(10);
+  });
+
+  it("does not block a different user", async () => {
+    await missTimes(s1, 10);
+    await expect(join(s1, CODE_A)).rejects.toThrow("too_many_attempts");
+    expect(await join(s2, CODE_A)).toBe(LECTURE_A);
+  });
+
+  it("does not count attempts older than 10 minutes", async () => {
+    await backdate(s1.sub, "11 minutes", 10);
+    expect(await join(s1, CODE_A)).toBe(LECTURE_A);
+  });
+
+  it("counts attempts just inside the 10 minute window", async () => {
+    await backdate(s1.sub, "9 minutes", 10);
+    await expect(join(s1, CODE_A)).rejects.toThrow("too_many_attempts");
+  });
+
+  it("only the recent attempts count when old and new are mixed", async () => {
+    await backdate(s1.sub, "11 minutes", 8);
+    await backdate(s1.sub, "1 minute", 9);
+    expect(await join(s1, CODE_A)).toBe(LECTURE_A);
+  });
+
+  it("lets the user try again once their attempts age out", async () => {
+    await missTimes(s1, 10);
+    await expect(join(s1, CODE_A)).rejects.toThrow("too_many_attempts");
+    await db.query("update public.join_attempts set attempted_at = now() - interval '11 minutes'");
+    expect(await join(s1, CODE_A)).toBe(LECTURE_A);
+  });
+
+  it("a successful join adds no attempt row", async () => {
+    await join(s1, CODE_A);
+    await join(s1, CODE_A);
+    await join(s2, CODE_B);
+    expect(await attemptCount()).toBe(0);
+  });
+
+  it("a wrong code adds a row for the caller only", async () => {
+    await join(s1, "999999");
+    expect(await attemptCount(s1.sub)).toBe(1);
+    expect(await attemptCount(s2.sub)).toBe(0);
+  });
+
+  it("deletes the caller's attempts older than a day on the next wrong code, and nobody else's", async () => {
+    await backdate(s1.sub, "2 days", 3);
+    await backdate(s2.sub, "2 days", 2);
+    await join(s1, "999999");
+    expect(await attemptCount(s1.sub)).toBe(1);
+    expect(await attemptCount(s2.sub)).toBe(2);
+  });
+
+  it("still raises for a signed out caller and records nothing", async () => {
+    await expect(join(null, "999999")).rejects.toThrow(/permission denied/i);
+    expect(await attemptCount()).toBe(0);
+  });
+
+  it("an authenticated user cannot select or insert join_attempts directly", async () => {
+    await join(s1, "999999");
+    await expect(rows(s1, "select * from public.join_attempts")).rejects.toThrow(/permission denied/i);
+    await expect(
+      as(db, s1, () => db.query("insert into public.join_attempts (user_id) values ($1)", [s1.sub])),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      as(db, s1, () => db.query("delete from public.join_attempts")),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(rows(marko, "select * from public.join_attempts")).rejects.toThrow(/permission denied/i);
+    expect(await attemptCount()).toBe(1);
+  });
+
+  it("anon cannot touch join_attempts either", async () => {
+    await expect(rows(null, "select * from public.join_attempts")).rejects.toThrow(/permission denied/i);
+  });
+
+  it("has row level security on with no policies", async () => {
+    const t = await db.query<{ relrowsecurity: boolean }>(
+      "select relrowsecurity from pg_class where oid = 'public.join_attempts'::regclass",
+    );
+    expect(t.rows[0].relrowsecurity).toBe(true);
+    const p = await db.query("select 1 from pg_policies where tablename = 'join_attempts'");
+    expect(p.rows).toHaveLength(0);
   });
 });
 

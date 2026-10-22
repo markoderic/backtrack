@@ -111,6 +111,19 @@ describe("LoadTest", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("not_found");
   });
 
+  it("counts a join that returns no lecture (null, no error) as not joined", async () => {
+    let n = 0;
+    rpcImpl.mockImplementation(async () => {
+      n++;
+      return n <= 3 ? { data: null, error: null } : { data: "lecture-id", error: null };
+    });
+    render(<LoadTest />);
+    fireEvent.change(code(), { target: { value: "482916" } });
+    fireEvent.click(run());
+    await screen.findByText("37 of 40 joined");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
   it("disables Run while it is running", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));

@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 
 const NOT_LIVE = "That code isn't live. Check the number with your professor.";
+const TOO_MANY = "Too many tries. Wait a few minutes and try again.";
 const FAILED = "Could not join. Try again.";
 
 class NotLiveError extends Error {}
+class TooManyTriesError extends Error {}
 
 export default function JoinPage() {
   const router = useRouter();
@@ -33,12 +35,16 @@ export default function JoinPage() {
 
       const { data: lectureId, error: joinError } = await supabase.rpc("join_lecture", { p_code: code });
       if (joinError) {
+        // not_found is what a database from before 0009 raises for a wrong code.
         if (joinError.message === "not_found") throw new NotLiveError();
+        if (joinError.message === "too_many_attempts") throw new TooManyTriesError();
         throw new Error(joinError.message);
       }
+      // join_lecture returns null, not an error, for a code that is not live.
+      if (!lectureId) throw new NotLiveError();
       router.push(`/l/${lectureId}`);
     } catch (e) {
-      setError(e instanceof NotLiveError ? NOT_LIVE : FAILED);
+      setError(e instanceof NotLiveError ? NOT_LIVE : e instanceof TooManyTriesError ? TOO_MANY : FAILED);
       setJoining(false);
     }
   }

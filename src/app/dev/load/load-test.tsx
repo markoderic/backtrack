@@ -34,8 +34,10 @@ async function joinAsNewStudent(index: number, code: string): Promise<string | n
     });
     const { error: signInError } = await client.auth.signInAnonymously();
     if (signInError) return signInError.message;
-    const { error: joinError } = await client.rpc("join_lecture", { p_code: code });
-    return joinError ? joinError.message : null;
+    const { data: lectureId, error: joinError } = await client.rpc("join_lecture", { p_code: code });
+    if (joinError) return joinError.message;
+    // A null lecture id with no error means the code is not live.
+    return lectureId ? null : "code is not live (join_lecture returned null)";
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }

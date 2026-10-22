@@ -105,6 +105,26 @@ describe("Join page", () => {
     expect(input().value).toBe("999999");
   });
 
+  it("explains a code that is not live when the database returns null with no error", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    render(<JoinPage />);
+    type("999999");
+    fireEvent.click(joinButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("That code isn't live. Check the number with your professor.");
+    expect(push).not.toHaveBeenCalled();
+    expect(joinButton()).toBeEnabled();
+  });
+
+  it("tells the student to wait when there have been too many tries", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "too_many_attempts" } });
+    render(<JoinPage />);
+    type("482916");
+    fireEvent.click(joinButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many tries. Wait a few minutes and try again.");
+    expect(push).not.toHaveBeenCalled();
+    expect(joinButton()).toBeEnabled();
+  });
+
   it("clears the message when the code is edited", async () => {
     rpc.mockResolvedValue({ data: null, error: { message: "not_found" } });
     render(<JoinPage />);

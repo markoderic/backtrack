@@ -187,9 +187,10 @@ describe("end_lecture", () => {
     expect(second.ended_at).toEqual(first);
   });
 
-  it("makes join_lecture with the old code raise not_found", async () => {
+  it("makes join_lecture with the old code return null", async () => {
     await end(marko);
-    await expect(join(stranger, CODE_A)).rejects.toThrow(/not_found/);
+    const res = await join(stranger, CODE_A);
+    expect(res.rows).toEqual([{ join_lecture: null }]);
   });
 
   it("frees the code for the next live lecture", async () => {
