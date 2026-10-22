@@ -69,6 +69,17 @@ export function LectureMenu({ lectureId, lectureName, live }: { lectureId: strin
     if (open) measure();
   }, [open]);
 
+  // Back or Forward (batch A review M2): Next keeps a visited page alive but hidden, and a hidden
+  // page's effects are cleaned up, so the menu closes then; going Forward again shows it closed,
+  // and nothing pulls focus into it.
+  useEffect(
+    () => () => {
+      setOpen(false);
+      setPlace(null);
+    },
+    [],
+  );
+
   // The keyboard goes into the menu once it is placed.
   useEffect(() => {
     if (!open || !place) return;
@@ -86,13 +97,19 @@ export function LectureMenu({ lectureId, lectureName, live }: { lectureId: strin
       if (menu.current?.contains(t) || trigger.current?.contains(t)) return;
       close(false);
     };
+    // Leaving the page by history (Back, Forward, a swipe) or by hiding it closes it too.
+    const gone = () => close(false);
     document.addEventListener("mousedown", outside);
     document.addEventListener("touchstart", outside);
+    window.addEventListener("popstate", gone);
+    window.addEventListener("pagehide", gone);
     window.addEventListener("scroll", measure, true);
     window.addEventListener("resize", measure);
     return () => {
       document.removeEventListener("mousedown", outside);
       document.removeEventListener("touchstart", outside);
+      window.removeEventListener("popstate", gone);
+      window.removeEventListener("pagehide", gone);
       window.removeEventListener("scroll", measure, true);
       window.removeEventListener("resize", measure);
     };

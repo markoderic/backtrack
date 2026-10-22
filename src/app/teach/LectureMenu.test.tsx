@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Activity } from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({ deleteLecture: vi.fn() }));
@@ -144,4 +145,40 @@ describe("LectureMenu (the ⋯ on a lecture row)", () => {
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete lecture" }));
     await waitFor(() => expect(h.deleteLecture).toHaveBeenCalledWith(ID));
   });
+
+  it("closes on Back or Forward (popstate) and when the page is hidden (batch A review M2)", () => {
+    render(<LectureMenu lectureId={ID} lectureName={NAME} live={false} />);
+    fireEvent.click(trigger());
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent(window, new PopStateEvent("popstate"));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger());
+    fireEvent(window, new Event("pagehide"));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("is closed when its page comes back after being kept hidden (Activity), and takes no focus", async () => {
+    const { rerender } = render(
+      <Activity mode="visible">
+        <LectureMenu lectureId={ID} lectureName={NAME} live={false} />
+      </Activity>,
+    );
+    fireEvent.click(trigger());
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    rerender(
+      <Activity mode="hidden">
+        <LectureMenu lectureId={ID} lectureName={NAME} live={false} />
+      </Activity>,
+    );
+    rerender(
+      <Activity mode="visible">
+        <LectureMenu lectureId={ID} lectureName={NAME} live={false} />
+      </Activity>,
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    expect(document.activeElement).not.toBe(document.querySelector('[role="menuitem"]'));
+  });
 });
+
