@@ -5,15 +5,18 @@ import { LectureMenu } from "./LectureMenu";
 /**
  * A class that is running now: its name, and where the teacher can go from here. Resume is the
  * main way back to the projector (black); Data and End class are white secondary buttons; the ⋯
- * menu is the same as on every past lecture row (Delete is off until the class ends).
+ * menu is the same as on every past lecture row (Delete is off until the class ends). On the
+ * dashboard `course` names the course next to Live now.
  */
-export function LiveLectureRow({ id, name }: { id: string; name: string }) {
+export function LiveLectureRow({ id, name, course }: { id: string; name: string; course?: string | null }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-y border-hairline py-4">
       <div className="flex min-w-0 flex-1 basis-60 flex-col">
         <span className="flex items-center gap-1.5 type-small-strong text-ink">
           <span aria-hidden className="size-2 shrink-0 rounded-full bg-ink" />
           Live now
+          {/* On the dashboard, which course it is (the course page needs no reminder). */}
+          {course && <span className="font-normal text-secondary">· {course}</span>}
         </span>
         <span className="truncate type-lecture text-secondary">{name}</span>
       </div>

@@ -97,6 +97,19 @@ describe("teacher loading skeletons (Marko: no blank page after a click)", () =>
     }
   });
 
+  it("Courses: three card shaped blocks in the dashboard's grid, each with the bar where the color goes", () => {
+    render(<CoursesSkeleton />);
+    const cards = screen.getByTestId("teacher-skeleton").querySelectorAll("[data-skeleton-card]");
+    expect(cards).toHaveLength(3);
+    expect(cards[0].parentElement!.className).toContain("grid-cols-1");
+    expect(cards[0].parentElement!.className).toContain("lg:grid-cols-3");
+    for (const card of cards) {
+      expect(card.className).toContain("border-hairline");
+      expect(card.firstElementChild!.className).toContain("w-1.5");
+      expect(card.querySelectorAll("[data-bone]").length).toBeGreaterThanOrEqual(5);
+    }
+  });
+
   it("the projector's is the room's view: no top bar, a slide shaped block and the slim bar, busy and quiet", () => {
     render(<ProjectorSkeleton />);
     const page = screen.getByTestId("teacher-skeleton");

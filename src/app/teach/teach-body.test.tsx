@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const getUser = vi.fn();
@@ -71,14 +71,14 @@ describe("TeachBody", () => {
 
   it("asks for live lectures of the signed in teacher's own courses only", async () => {
     await TeachBody({ searchParams: search });
-    expect(selects).toContainEqual(["lectures", "id, name, courses!inner(teacher_id)"]);
+    expect(selects).toContainEqual(["lectures", "id, name, course_id, courses!inner(teacher_id)"]);
     expect(eqCalls).toContainEqual(["lectures", "status", "live"]);
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
   });
 
   it("shows Live now with the name and Resume, Data and End class links for each live lecture", async () => {
     live.mockResolvedValue({
-      data: [{ id: "l2", name: "Lecture 2, Oct 26", courses: { teacher_id: "u1" } }],
+      data: [{ id: "l2", name: "Lecture 2, Oct 26", course_id: "c1", courses: { teacher_id: "u1" } }],
       error: null,
     });
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
@@ -89,7 +89,14 @@ describe("TeachBody", () => {
       ["Resume", "/teach/l/l2/present"],
       ["Data", "/teach/l/l2/live"],
       ["End class", "/teach/l/l2/live?end=1"],
+      // The course's card offers Resume instead of a second Start lecture.
+      ["Resume", "/teach/l/l2/present"],
     ]);
+    // Live now names the course on the dashboard.
+    expect(html).toMatch(/Live now<span[^>]*>· IMS 452<\/span>/);
+    // The Live now row stays at the very top, above the course cards.
+    expect(html.indexOf("Lecture 2, Oct 26")).toBeLessThan(html.indexOf('data-testid="course-card"'));
+    expect(html).not.toContain('href="/teach/c/c1/start"');
   });
 
   it("throws when the live lectures query fails", async () => {
@@ -160,5 +167,116 @@ describe("TeachBody", () => {
     expect(html).toContain("Teacher sign in");
     expect(html).toMatch(/role="alert"[^>]*>.*That isn&#x27;t a Miami account. Use your @miamioh.edu account./);
     expect(html).toContain("Sign in");
+  });
+});
+
+describe("TeachBody course cards and Now / Next (batch D)", () => {
+  const ims = {
+    id: "c1",
+    name: "IMS 452 Senior Design",
+    color: "teal",
+    section: "Section B",
+    meet_days: [1, 3, 5],
+    start_minute: 605,
+    end_minute: 660,
+  };
+  const acc = { id: "c2", name: "ACC 221", color: null, section: null, meet_days: [3], start_minute: 890, end_minute: 965 };
+  const plain = { id: "c3", name: "BIO 121", color: null, section: null, meet_days: null, start_minute: null, end_minute: null };
+  const at = (iso: string) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(iso));
+  };
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const cards = (html: string) => html.split('data-testid="course-card"').slice(1);
+
+  it("reads the color, section and schedule with the courses", async () => {
+    await TeachBody({ searchParams: search });
+    expect(selects).toContainEqual(["courses", "id, name, color, section, meet_days, start_minute, end_minute"]);
+  });
+
+  it("each course is a card: color bar, code, section, when it meets, lectures, and Start lecture", async () => {
+    courses.mockResolvedValue({ data: [ims, plain], error: null });
+    held.mockResolvedValue({ data: [{ course_id: "c1", lecture_date: "2026-10-21" }], error: null });
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    const [first, second] = cards(html);
+    expect(first).toContain('data-course-color="teal"');
+    expect(first).toContain("bg-course-teal");
+    expect(first).toContain(">IMS 452<");
+    expect(first).toContain("Senior Design");
+    expect(first).toContain("Section B");
+    expect(first).toContain("Mon Wed Fri · 10:05–11:00 AM");
+    expect(first).toContain("1 lecture, last on Oct 21");
+    expect(first).toContain('href="/teach/c/c1"');
+    expect(first).toMatch(/href="\/teach\/c\/c1\/start"[^>]*>Start lecture</);
+    // No color, section or schedule: a quiet hairline bar and just the name.
+    expect(second).toContain('data-course-color="none"');
+    expect(second).toContain("bg-hairline");
+    expect(second).toContain("No lectures yet");
+    expect(second).not.toContain(" · ");
+  });
+
+  it("before migration 0018 it reads the courses without the new columns and leaves them out", async () => {
+    courses
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.color does not exist" } })
+      .mockResolvedValueOnce({ data: [{ id: "c1", name: "IMS 452" }], error: null });
+    at("2026-10-21T10:10:00-04:00");
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(selects.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, color, section, meet_days, start_minute, end_minute",
+      "id, name",
+    ]);
+    expect(cards(html)).toHaveLength(1);
+    expect(html).toContain('href="/teach/c/c1/start"');
+    expect(html).not.toContain('data-testid="now-next"');
+  });
+
+  it("still throws when the courses can not be read at all", async () => {
+    courses.mockResolvedValue({ data: null, error: { message: "courses broke" } });
+    await expect(TeachBody({ searchParams: search })).rejects.toThrow("courses broke");
+  });
+
+  it("Now: the course meeting right now, at the top, with the big Start lecture", async () => {
+    courses.mockResolvedValue({ data: [ims, acc, plain], error: null });
+    at("2026-10-21T10:10:00-04:00"); // Wednesday 10:10 AM in Oxford
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    const block = html.match(/<section[^>]*data-testid="now-next"[\s\S]*?<\/section>/)?.[0] ?? "";
+    expect(block).toContain('data-state="now"');
+    expect(block).toContain(">Now<");
+    expect(block).toContain("IMS 452");
+    expect(block).toContain("Section B");
+    expect(block).toContain("Mon Wed Fri · 10:05–11:00 AM");
+    expect(block).toMatch(/href="\/teach\/c\/c1\/start"[^>]*>Start lecture</);
+    expect(html.indexOf('data-testid="now-next"')).toBeLessThan(html.indexOf(">Courses</h1>"));
+  });
+
+  it("Next: the next meeting today or this week when nothing meets now", async () => {
+    courses.mockResolvedValue({ data: [ims, acc], error: null });
+    at("2026-10-21T12:00:00-04:00");
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    const block = html.match(/<section[^>]*data-testid="now-next"[\s\S]*?<\/section>/)?.[0] ?? "";
+    expect(block).toContain('data-state="next"');
+    expect(block).toContain(">Next<");
+    expect(block).toContain("ACC 221");
+    expect(block).toContain("Today 2:50 PM");
+    expect(block).not.toContain("Start lecture");
+  });
+
+  it("a course already live is not Now: the Live now row is on top and Next follows", async () => {
+    courses.mockResolvedValue({ data: [ims, acc], error: null });
+    live.mockResolvedValue({ data: [{ id: "l9", name: "Lecture 9", course_id: "c1" }], error: null });
+    at("2026-10-21T10:10:00-04:00");
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(html).toContain('data-state="next"');
+    expect(html.indexOf("Live now")).toBeLessThan(html.indexOf('data-testid="now-next"'));
+  });
+
+  it("no block at all when no course has days and a time", async () => {
+    courses.mockResolvedValue({ data: [plain, { ...plain, id: "c4", meet_days: [1] }], error: null });
+    at("2026-10-21T10:10:00-04:00");
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(html).not.toContain('data-testid="now-next"');
+    expect(cards(html)[1]).toContain(">Mon<");
   });
 });

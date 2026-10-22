@@ -1,16 +1,17 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { isMiamiEmail } from "@/lib/email";
 import { formatLectureDate } from "@/lib/lectureDate";
-import { Icon } from "@/components/Icon";
+import { DETAIL_COLUMNS, hasSchedule, readDetails, type CourseDetails } from "@/lib/courseDetails";
 import { AddCourseForm } from "./add-course-form";
+import { CourseCard } from "./CourseCard";
 import { LiveLectureRow } from "./LiveLectureRow";
+import { NowNext, type ScheduledCourse } from "./NowNext";
 import { RefreshOnReturn } from "./RefreshOnReturn";
 import { SignInView } from "./sign-in-view";
 import { CoursesSkeleton } from "./skeletons";
-import { TeacherPage, rowLinkClass, staggerClass, staggerStyle } from "./ui";
+import { TeacherPage, splitCourseName } from "./ui";
 
 type LectureMeta = { course_id: string; lecture_date: string };
 
@@ -23,6 +24,38 @@ function courseMeta(list: LectureMeta[] | undefined): string {
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabase>>;
 const PAGE = 1000;
+
+/** The server's clock for the first render of Now / Next (the browser keeps it moving after that). */
+function serverNow(): number {
+  return Date.now();
+}
+
+type DashCourse = { id: string; name: string; details: CourseDetails | null };
+
+/**
+ * The teacher's courses in use, with their color, section and schedule (migration 0018). Before
+ * 0018 those columns are not there: the read is made again without them, and the cards and the
+ * Now / Next block leave them out (details null).
+ */
+async function readCourses(supabase: Supabase): Promise<DashCourse[]> {
+  const read = (columns: string) =>
+    supabase.from("courses").select(columns).eq("archived", false).order("created_at");
+  const full = await read(`id, name, ${DETAIL_COLUMNS}`);
+  if (!full.error) {
+    return ((full.data ?? []) as unknown as Record<string, unknown>[]).map((c) => ({
+      id: String(c.id),
+      name: String(c.name),
+      details: readDetails(c),
+    }));
+  }
+  const plain = await read("id, name");
+  if (plain.error) throw new Error(plain.error.message);
+  return ((plain.data ?? []) as unknown as { id: string; name: string }[]).map((c) => ({
+    id: c.id,
+    name: c.name,
+    details: null,
+  }));
+}
 
 /**
  * Every lecture's course and date, for the line under each course name. Read in pages (the API
@@ -63,17 +96,12 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
       .maybeSingle();
     if (teacher && !teacher.display_name) redirect("/teach/setup");
     if (teacher) {
-      const { data: courses, error: coursesError } = await supabase
-        .from("courses")
-        .select("id, name")
-        .eq("archived", false)
-        .order("created_at");
-      if (coursesError) throw new Error(coursesError.message);
+      const list = await readCourses(supabase);
       // Joined students can read the lectures they joined, so ask for the
       // teacher's own courses explicitly instead of relying on row level security.
       const { data: live, error: liveError } = await supabase
         .from("lectures")
-        .select("id, name, courses!inner(teacher_id)")
+        .select("id, name, course_id, courses!inner(teacher_id)")
         .eq("status", "live")
         .eq("courses.teacher_id", user.id)
         .order("started_at", { ascending: false });
@@ -84,43 +112,47 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
         byCourse.set(l.course_id, [...(byCourse.get(l.course_id) ?? []), l]);
       }
 
-      const list = courses ?? [];
+      const liveLectures = (live ?? []) as { id: string; name: string; course_id: string }[];
+      // The newest live lecture of each course (the list is newest first).
+      const liveByCourse = new Map<string, string>();
+      for (const l of liveLectures) if (!liveByCourse.has(l.course_id)) liveByCourse.set(l.course_id, l.id);
+      const courseCode = new Map(list.map((c) => [c.id, splitCourseName(c.name).code]));
+      const scheduled = list.filter(
+        (c): c is ScheduledCourse => c.details !== null && hasSchedule(c.details),
+      );
+      const now = serverNow();
       return (
         <TeacherPage crumbs={[{ label: "Courses" }]} teacherName={teacher.display_name}>
           <RefreshOnReturn />
           <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
-            {(live ?? []).length > 0 && (
+            {liveLectures.length > 0 && (
               <div className="mb-8 flex flex-col">
-                {(live ?? []).map((lecture) => (
-                  <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
+                {liveLectures.map((lecture) => (
+                  <LiveLectureRow
+                    key={lecture.id}
+                    id={lecture.id}
+                    name={lecture.name}
+                    course={courseCode.get(lecture.course_id) ?? null}
+                  />
                 ))}
               </div>
             )}
+            {scheduled.length > 0 && (
+              <NowNext courses={scheduled} liveCourseIds={[...liveByCourse.keys()]} initialNow={now} />
+            )}
             <h1 className="type-display text-ink">Courses</h1>
             {list.length > 0 && (
-              <ul className="flex flex-col pt-6">
+              <ul className="grid grid-cols-1 gap-4 pt-6 pb-4 sm:grid-cols-2 lg:grid-cols-3">
                 {list.map((course, i) => (
-                  <li key={course.id} className={`border-t border-hairline ${staggerClass}`} style={staggerStyle(i)}>
-                    <Link
-                      href={`/teach/c/${course.id}`}
-                      className={`${rowLinkClass} flex items-center gap-4 py-6`}
-                    >
-                      <span className="flex min-w-0 flex-col gap-1">
-                        <span className="truncate type-title text-ink transition-colors duration-(--dur-fast) ease-out group-hover:text-ink-hover">
-                          {course.name}
-                        </span>
-                        {held && (
-                          <span className="type-small text-secondary">{courseMeta(byCourse.get(course.id))}</span>
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1" />
-                      <Icon
-                        name="forward"
-                        size={20}
-                        className="transition-[translate] duration-(--dur-fast) ease-out motion-safe:group-hover:translate-x-0.5"
-                      />
-                    </Link>
-                  </li>
+                  <CourseCard
+                    key={course.id}
+                    id={course.id}
+                    name={course.name}
+                    details={course.details}
+                    meta={held ? courseMeta(byCourse.get(course.id)) : null}
+                    liveLectureId={liveByCourse.get(course.id) ?? null}
+                    index={i}
+                  />
                 ))}
               </ul>
             )}

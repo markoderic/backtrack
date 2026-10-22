@@ -53,18 +53,29 @@ const Slash = () => (
   </span>
 );
 
-/** Courses (the dashboard, /teach): the heading, three course rows, Add a course. */
+/**
+ * Courses (the dashboard, /teach): the heading, three course cards in the same grid as the page
+ * (outline, a bar down the left side where the color goes, name, a line under it, the schedule
+ * and lectures lines, and the button), then Add a course. The Now / Next block is left out: it
+ * only shows when a course has a schedule, so the skeleton can not know it is there.
+ */
 export function CoursesSkeleton() {
   return (
     <SkeletonShell crumbs={<span className="type-small-strong text-ink">Courses</span>}>
       <main className="mx-auto flex w-full max-w-[1104px] flex-col gap-2 px-4 py-12 sm:px-8">
         <h1 className="type-display text-ink">Courses</h1>
-        <ul aria-hidden className="flex flex-col pt-6">
-          {/* Different widths, so the rows read as names and not as a grid. */}
-          {["w-[min(400px,80%)]", "w-[min(320px,70%)]", "w-[min(360px,75%)]"].map((w, i) => (
-            <li key={i} className="flex flex-col gap-2 border-t border-hairline py-6">
-              <Bone className={`h-6 ${w}`} />
-              <Bone className="h-4 w-[min(220px,60%)]" />
+        <ul aria-hidden className="grid grid-cols-1 gap-4 pt-6 pb-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Different widths, so the cards read as names and not as a grid of copies. */}
+          {["w-[min(120px,60%)]", "w-[min(96px,50%)]", "w-[min(110px,55%)]"].map((w, i) => (
+            <li key={i} data-skeleton-card className="flex overflow-hidden rounded-md border border-hairline">
+              <Bone className="h-auto w-1.5 rounded-none" />
+              <div className="flex min-w-0 flex-1 flex-col gap-2 py-5 pr-5 pl-4">
+                <Bone className={`h-6 ${w}`} />
+                <Bone className="h-5 w-[min(220px,80%)]" />
+                <Bone className="mt-2 h-4 w-[min(200px,75%)]" />
+                <Bone className="h-4 w-[min(170px,65%)]" />
+                <Bone className="mt-4 h-11 w-32" />
+              </div>
             </li>
           ))}
         </ul>
