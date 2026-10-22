@@ -47,7 +47,7 @@ vi.mock("@/lib/supabase/browser", () => ({
   }),
 }));
 
-import { useHereCount, useTrackHere, hereChannel, TRACK_SPREAD_MS } from "./useHere";
+import { useHereCount, useTrackHere, hereChannel, reopenDelay, TRACK_SPREAD_MS } from "./useHere";
 import { useLiveLecture } from "./useLiveLecture";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
@@ -211,4 +211,83 @@ describe("useHereCount (the projector and the data view)", () => {
     here().handlers.presence(undefined);
     expect(result.current).toBeNull();
   });
+
+  it("opens a new channel with a growing wait after the server closes it, and counts again", async () => {
+    const { result } = renderHook(() => useHereCount(LECTURE, true));
+    await flush();
+    const first = here();
+    first.presence = { a: [{}], b: [{}] };
+    act(() => first.handlers.presence(undefined));
+    expect(result.current).toBe(2);
+    // One moment over a presence limit: the server closes the channel.
+    act(() => first.status!("CLOSED"));
+    expect(result.current).toBeNull();
+    expect(h.removeChannel).toHaveBeenCalledWith(first);
+    // 2 s times 0.75 (Math.random is 0.5 here).
+    await act(async () => vi.advanceTimersByTime(1499));
+    expect(h.makeChannel).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTime(1));
+    await flush();
+    expect(h.makeChannel).toHaveBeenCalledTimes(2);
+    const second = h.channels[1] as Fake;
+    expect(second.topic).toBe(`realtime:here-${LECTURE}`);
+    second.presence = { a: [{}], b: [{}], c: [{}] };
+    act(() => second.handlers.presence(undefined));
+    expect(result.current).toBe(3);
+    // The old channel's late callbacks change nothing.
+    first.presence = {};
+    act(() => first.handlers.presence(undefined));
+    expect(result.current).toBe(3);
+  });
+
+  it("waits longer after each close in a row, at most a minute, and starts over after a count", async () => {
+    renderHook(() => useHereCount(LECTURE, true));
+    await flush();
+    const closeLatest = () => act(() => (h.channels[h.channels.length - 1] as Fake).status!("CLOSED"));
+    const waitFor = async (ms: number) => {
+      const before = h.makeChannel.mock.calls.length;
+      await act(async () => vi.advanceTimersByTime(ms - 1));
+      expect(h.makeChannel.mock.calls.length).toBe(before);
+      await act(async () => vi.advanceTimersByTime(1));
+      await flush();
+      expect(h.makeChannel.mock.calls.length).toBe(before + 1);
+    };
+    closeLatest();
+    await waitFor(1500);
+    closeLatest();
+    await waitFor(3000);
+    closeLatest();
+    await waitFor(6000);
+    // A sync: the next close waits 2 s (times 0.75) again.
+    const latest = h.channels[h.channels.length - 1] as Fake;
+    act(() => latest.handlers.presence(undefined));
+    closeLatest();
+    await waitFor(1500);
+  });
+
+  it("the wait never goes past a minute", () => {
+    expect(reopenDelay(0, 1)).toBe(2000);
+    expect(reopenDelay(3, 1)).toBe(16000);
+    expect(reopenDelay(10, 1)).toBe(60000);
+    expect(reopenDelay(10, 0)).toBe(30000);
+  });
+
+  it("does not open again after it unmounts during the wait", async () => {
+    const { unmount } = renderHook(() => useHereCount(LECTURE, true));
+    await flush();
+    act(() => here().status!("CLOSED"));
+    unmount();
+    await act(async () => vi.advanceTimersByTime(120000));
+    expect(h.makeChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("a channel error or timeout is left to realtime-js to rejoin (no second channel)", async () => {
+    renderHook(() => useHereCount(LECTURE, true));
+    await flush();
+    act(() => here().status!("CHANNEL_ERROR"));
+    act(() => here().status!("TIMED_OUT"));
+    await act(async () => vi.advanceTimersByTime(120000));
+    expect(h.makeChannel).toHaveBeenCalledTimes(1);
+  });
 });
+

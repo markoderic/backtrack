@@ -21,6 +21,17 @@ const FREE_WAIT_MS = 250;
 const FREE_TRIES = 20;
 
 /**
+ * After the server closes the count's channel (one moment over a presence limit, say), it opens
+ * again after 2 s, then 4, 8 ... up to a minute between tries, each wait 50 to 100% of that so
+ * two screens never retry in step. A count that comes back (a sync) starts the waits over.
+ */
+export const REOPEN_BASE_MS = 2000;
+export const REOPEN_MAX_MS = 60_000;
+export function reopenDelay(attempt: number, random: number = Math.random()): number {
+  return Math.min(REOPEN_MAX_MS, REOPEN_BASE_MS * 2 ** attempt) * (0.5 + random / 2);
+}
+
+/**
  * Counts this student's tab in the lecture's here count while `enabled` (the live lecture
  * page while the lecture is live; not My spots). It tracks an empty payload and the server
  * picks the key, so nothing identifies the tab: no name, no anonymous id, no device details.
@@ -70,7 +81,9 @@ export function useTrackHere(lectureId: string, enabled: boolean): void {
  * realtime-js hands back the channel it already has for a topic, so a projector still leaving
  * `here-<id>` (the teacher just pressed Data) would give this page a channel that is closing.
  * It waits for that one to go first (up to 5 seconds), then opens its own; if it never goes,
- * the count stays null.
+ * the count stays null. realtime-js joins again by itself after an error or a timeout, but not
+ * after the server closes the channel: then this opens a new one with a growing wait
+ * (reopenDelay), so one bad moment never leaves the projector without "here" for the class.
  */
 export function useHereCount(lectureId: string, enabled: boolean): number | null {
   const [here, setHere] = useState<number | null>(null);
@@ -91,29 +104,46 @@ export function useHereCount(lectureId: string, enabled: boolean): number | null
       }
     };
 
+    // Each opened channel gets a number; callbacks of a channel that was replaced are ignored.
+    let generation = 0;
+    let attempt = 0;
+
+    const reopenLater = () => {
+      generation++;
+      const dead = close;
+      close = undefined;
+      dead?.();
+      wait = setTimeout(() => {
+        if (!cancelled) tryOpen(0);
+      }, reopenDelay(attempt++));
+    };
+
     const open = () => {
+      const mine = ++generation;
       close = openChannel(supabase, () => {
         const channel: RealtimeChannel = supabase.channel(hereChannel(lectureId));
         channel.on("presence", { event: "sync" }, () => {
-          if (cancelled) return;
+          if (cancelled || mine !== generation) return;
+          attempt = 0;
           setHere(Object.keys(channel.presenceState()).length);
         });
         return channel.subscribe((status) => {
-          if (cancelled) return;
+          if (cancelled || mine !== generation) return;
           // The count is unknown until the channel is back and syncs again.
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setHere(null);
+          // Closed by the server: realtime-js will not join this one again, so a new one opens.
+          if (status === "CLOSED") reopenLater();
         });
       });
     };
 
-    let tries = 0;
-    const tryOpen = () => {
+    const tryOpen = (tries: number) => {
       if (cancelled) return;
       if (!taken()) return open();
-      if (++tries >= FREE_TRIES) return;
-      wait = setTimeout(tryOpen, FREE_WAIT_MS);
+      if (tries + 1 >= FREE_TRIES) return;
+      wait = setTimeout(() => tryOpen(tries + 1), FREE_WAIT_MS);
     };
-    tryOpen();
+    tryOpen(0);
 
     return () => {
       cancelled = true;
