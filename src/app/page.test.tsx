@@ -35,4 +35,16 @@ describe("Home", () => {
     expect(screen.getByRole("contentinfo")).toContainElement(privacy);
     expect(within(screen.getByRole("navigation")).queryByRole("link", { name: "Privacy" })).toBeNull();
   });
+
+  it("has a smaller white My spots button under the two choices, apart from them", () => {
+    render(<Home />);
+    const spots = screen.getByRole("link", { name: "My spots" });
+    expect(spots).toHaveAttribute("href", "/spots");
+    expect(within(screen.getByRole("navigation")).queryByRole("link", { name: "My spots" })).toBeNull();
+    expect(spots.className).toContain("bg-surface");
+    expect(spots.className).toContain("h-11");
+    expect(spots.className).not.toContain("w-75");
+    expect(spots.className).not.toContain("underline");
+    expect(spots.querySelector("span.hidden[aria-hidden]")).not.toBeNull();
+  });
 });
