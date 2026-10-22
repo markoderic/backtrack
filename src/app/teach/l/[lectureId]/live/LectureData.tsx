@@ -473,10 +473,9 @@ export function LectureData({
   const noteMap = useMemo(() => notesBySlide(rows), [rows]);
 
   const liveSlide = Math.min(Math.max(current, 1), Math.max(slides.length, 1));
-  // The panel opens on the most lost slide and then stays there: once someone is lost, that
-  // slide is pinned, so a later tap that changes the top slide never swaps the panel (or the
-  // big view) out from under the teacher. Clicking a bar picks another.
-  if (loaded && picked === null && ranked[0] !== undefined) setPicked(ranked[0]);
+  // The panel follows the most lost slide (or the live one before anyone is lost) until the
+  // teacher picks a slide: clicking a bar, or opening the big view, pins that slide, so a later
+  // tap that changes the top slide never swaps the big view (or a picked panel) out from under them.
   const selected =
     picked !== null && picked >= 1 && picked <= slides.length ? picked : (ranked[0] ?? (live ? liveSlide : 1));
   const selectedSlide = slides[selected - 1];

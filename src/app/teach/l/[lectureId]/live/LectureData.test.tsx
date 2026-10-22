@@ -1444,13 +1444,44 @@ describe("LectureData hover and focus card", () => {
 });
 
 describe("LectureData keeps the shown slide still", () => {
-  it("pins the most lost slide on load: a new top slide never swaps the panel or closes the big view", async () => {
+  const bar = (n: number) => within(screen.getByTestId(`slide-${n}`)).getByRole("button");
+
+  it("follows the most lost slide until the teacher picks one", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(within(panel()).getByText("Slide 2")).toBeInTheDocument();
+    // Slide 4 becomes the most lost: nothing was picked, so the panel moves with it.
+    for (const id of ["x", "y", "z"]) insert(row(id, { slide_number: 4, anon_id: id }));
+    expect(counts(4)).toBe("4 lost, 4 taps");
+    expect(within(panel()).getByText("Slide 4")).toBeInTheDocument();
+  });
+
+  it("a class that starts empty follows the first lost slide, then the next top one", async () => {
+    h.tapsQuery.mockResolvedValue({ data: [], error: null });
+    renderLive();
+    await waitFor(() => expect(within(panel()).getByText("Slide 3")).toBeInTheDocument());
+    insert(row("a", { slide_number: 1 }));
+    expect(within(panel()).getByText("Slide 1")).toBeInTheDocument();
+    insert(row("b", { slide_number: 2, anon_id: "b" }));
+    insert(row("c", { slide_number: 2, anon_id: "c" }));
+    expect(within(panel()).getByText("Slide 2")).toBeInTheDocument();
+  });
+
+  it("stays on a slide the teacher clicked when another becomes the most lost", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    fireEvent.click(bar(1));
+    expect(within(panel()).getByText("Slide 1")).toBeInTheDocument();
+    for (const id of ["x", "y", "z"]) insert(row(id, { slide_number: 4, anon_id: id }));
+    expect(counts(4)).toBe("4 lost, 4 taps");
+    expect(within(panel()).getByText("Slide 1")).toBeInTheDocument();
+  });
+
+  it("never swaps the big view: opening it pins the slide, also after it closes", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     fireEvent.click(within(panel()).getByRole("button", { name: "Enlarge slide 2" }));
     expect(screen.getByRole("dialog")).toHaveAccessibleName("Slide 2, Heading 2");
-    // Slide 4 becomes the most lost.
     for (const id of ["x", "y", "z"]) insert(row(id, { slide_number: 4, anon_id: id }));
     expect(counts(4)).toBe("4 lost, 4 taps");
     expect(screen.getByRole("dialog")).toHaveAccessibleName("Slide 2, Heading 2");
