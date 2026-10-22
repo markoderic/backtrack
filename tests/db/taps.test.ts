@@ -383,9 +383,9 @@ describe("updating a tap", () => {
   });
 
   it("nobody can delete a tap", async () => {
+    // 0014 takes the delete privilege away (there was never a delete policy, so no row matched before).
     for (const claims of [s1, s2, marko]) {
-      const deleted = await as(db, claims, async () => (await db.query("delete from public.lost_taps")).affectedRows);
-      expect(deleted).toBe(0);
+      await expect(as(db, claims, () => db.query("delete from public.lost_taps"))).rejects.toThrow(/permission denied/i);
     }
     expect(await count()).toBe(1);
   });
