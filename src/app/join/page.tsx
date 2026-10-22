@@ -199,7 +199,10 @@ export default function JoinPage() {
                   value={d}
                   aria-label={`Digit ${i + 1} of ${LENGTH}`}
                   inputMode="numeric"
-                  maxLength={1}
+                  // No maxLength on box 1: a browser cuts an autofilled or iOS one-time-code value to maxLength
+                  // before the input event, so "482913" would arrive as "4". onChange spreads a whole code; typed
+                  // digits still stay one per box (keydown replaces a filled box, onChange takes one new digit).
+                  maxLength={i === 0 ? undefined : 1}
                   autoComplete={i === 0 ? "one-time-code" : "off"}
                   autoFocus={i === 0}
                   disabled={joining}

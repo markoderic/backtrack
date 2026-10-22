@@ -45,7 +45,10 @@ describe("Join page", () => {
     inputs.forEach((el, i) => {
       expect(el).toHaveAccessibleName(`Digit ${i + 1} of 6`);
       expect(el).toHaveAttribute("inputmode", "numeric");
-      expect(el).toHaveAttribute("maxlength", "1");
+      // Box 1 has no maxlength: the browser would cut an autofilled / one-time-code "482913" to "4" before the
+      // input event. The other boxes take one digit each.
+      if (i === 0) expect(el).not.toHaveAttribute("maxlength");
+      else expect(el).toHaveAttribute("maxlength", "1");
       expect(el).toHaveAttribute("autocomplete", i === 0 ? "one-time-code" : "off");
     });
   });
@@ -84,6 +87,46 @@ describe("Join page", () => {
     key("7");
     expect(values()).toEqual(["4", "8", "7", "9", "1", "3"]);
     expect(box(4)).toHaveFocus();
+  });
+
+  it("takes the new digit when a box holding one gets a second next to it", () => {
+    render(<JoinPage />);
+    typeCode("48");
+    fireEvent.change(box(1), { target: { value: "47" } });
+    expect(values()).toEqual(["7", "8", "", "", "", ""]);
+    expect(box(2)).toHaveFocus();
+    fireEvent.change(box(2), { target: { value: "38" } });
+    expect(values()).toEqual(["7", "3", "", "", "", ""]);
+  });
+
+  it("takes one digit typed into box 1, which has no maxlength", () => {
+    render(<JoinPage />);
+    fireEvent.change(box(1), { target: { value: "4" } });
+    expect(values()).toEqual(["4", "", "", "", "", ""]);
+    expect(box(2)).toHaveFocus();
+    box(1).focus();
+    key("9");
+    expect(values()).toEqual(["9", "", "", "", "", ""]);
+  });
+
+  it("Delete clears the box it is on and stays there", () => {
+    render(<JoinPage />);
+    typeCode("482");
+    box(2).focus();
+    key("Delete");
+    expect(values()).toEqual(["4", "", "2", "", "", ""]);
+    expect(box(2)).toHaveFocus();
+    key("Delete");
+    expect(values()).toEqual(["4", "", "2", "", "", ""]);
+  });
+
+  it("takes the first 6 digits of a longer paste", () => {
+    render(<JoinPage />);
+    paste(box(3), "482 913 77");
+    expect(values()).toEqual(["4", "8", "2", "9", "1", "3"]);
+    expect(box(6)).toHaveFocus();
+    fireEvent.change(box(1), { target: { value: "1234567" } });
+    expect(values()).toEqual(["1", "2", "3", "4", "5", "6"]);
   });
 
   it("selects a box's digit when it is clicked, so typing replaces it", () => {
