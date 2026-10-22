@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { ButtonPrimaryLink, buttonSecondaryWideClass } from "@/components/ButtonPrimary";
+import { LinkPending, pendingPressClass } from "@/components/LinkPending";
 import { LogoLockup } from "@/components/Logo";
 import { PrivacyLink } from "@/components/PrivacyLink";
 
 /**
- * Home (Figma 31:74): the logo and two choices, Join a class (the one primary button) and I'm a teacher.
+ * Home (Figma 31:74): the logo and two choices, Join a class (the one primary button) and I'm a teacher
+ * (the white secondary button at the same size).
  * Both press in (scale .97), ease their hover color and fade their focus ring in (press utility).
  */
 export default function Home() {
@@ -14,11 +16,13 @@ export default function Home() {
         <h1>
           <LogoLockup size="L" />
         </h1>
-        <nav className="flex w-full flex-col items-center gap-5">
+        <nav className="flex w-full flex-col items-center gap-3">
           <ButtonPrimaryLink href="/join">Join a class</ButtonPrimaryLink>
-          {/* inline-block so the press scale applies (an inline link cannot be scaled). */}
-          <Link href="/teach" className="press focus-ring touch-target relative inline-block rounded-xs type-body text-ink underline hover:text-secondary">
+          {/* A white button the size of Join a class (not an underlined link). It stays pressed
+              until the teacher page or its skeleton shows, so a click never looks ignored. */}
+          <Link href="/teach" className={`${buttonSecondaryWideClass} ${pendingPressClass}`}>
             I&apos;m a teacher
+            <LinkPending />
           </Link>
         </nav>
       </div>

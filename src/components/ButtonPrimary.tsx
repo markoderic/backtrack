@@ -20,7 +20,23 @@ export const buttonPrimaryClass =
  */
 export const buttonSecondaryClass =
   "press focus-ring inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-hairline bg-surface px-3 " +
-  "type-button whitespace-nowrap text-ink hover:border-strip hover:bg-bg disabled:cursor-default disabled:text-secondary";
+  "type-button whitespace-nowrap text-ink hover:border-strip hover:bg-bg disabled:cursor-default disabled:text-secondary disabled:hover:border-hairline disabled:hover:bg-surface";
+
+/**
+ * The secondary look at the primary size (300x48), for a second choice that sits under or next to
+ * a primary button and should match it (Home's I'm a teacher under Join a class).
+ */
+export const buttonSecondaryWideClass =
+  "press focus-ring inline-flex h-12 w-75 max-w-full shrink-0 items-center justify-center gap-2 rounded-md border border-hairline bg-surface px-6 " +
+  "type-button whitespace-nowrap text-ink hover:border-strip hover:bg-bg disabled:cursor-default disabled:text-secondary disabled:hover:border-hairline disabled:hover:bg-surface";
+
+/**
+ * The primary button sized to its words (48 high like the primary, as wide as its text), for a
+ * main action in a row next to a 48 px field: Add course, Save, Rename.
+ */
+export const buttonPrimaryInlineClass =
+  "press focus-ring inline-flex h-12 shrink-0 items-center justify-center rounded-md bg-ink px-6 type-button whitespace-nowrap text-surface " +
+  "hover:bg-ink-hover disabled:cursor-default disabled:bg-strip disabled:hover:bg-strip";
 
 /** The primary look at the secondary size (44 px), for a main action inside a panel (Save note). */
 export const buttonPrimarySmallClass =
