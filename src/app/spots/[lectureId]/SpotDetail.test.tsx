@@ -21,22 +21,37 @@ import { SpotDetail, type Spot } from "./SpotDetail";
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const lostSpot: Spot = { id: "tap-1", kind: "lost", slideNumber: 7, note: null, tappedAt: "2026-10-26T14:00:00Z" };
 
-function show(o: { spot?: Spot; students?: number; slideCount?: number } = {}) {
+function show(
+  o: {
+    spot?: Spot;
+    students?: number;
+    slideCount?: number;
+    liveSlide?: number | null;
+    firstLine?: string;
+    onPrevSpot?: () => void;
+    onNextSpot?: () => void;
+  } = {},
+) {
   const props = {
     lectureId: LECTURE,
     spot: o.spot ?? lostSpot,
+    firstLine: o.firstLine,
     students: o.students ?? 6,
     slideCount: o.slideCount ?? 23,
+    liveSlide: o.liveSlide ?? null,
     onNoteSaved: vi.fn(),
     onHighlightSaved: vi.fn(),
     onMoved: vi.fn(async () => {}),
+    onRemoved: vi.fn(),
     onBack: vi.fn(),
+    onPrevSpot: o.onPrevSpot,
+    onNextSpot: o.onNextSpot,
   };
   const view = render(<SpotDetail {...props} />);
   return { ...props, ...view };
 }
 
-const move = () => screen.getByRole("button", { name: "Move marker one slide earlier" });
+const move = () => screen.getByRole("button", { name: "Move to slide 6" });
 const shownSrc = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
@@ -88,6 +103,31 @@ describe("SpotDetail: the page itself", () => {
     expect(screen.getByRole("img")).toHaveAttribute("alt", "Slide 7");
   });
 
+  it("heads the page with the slide number, the slide's first line and when it was marked", () => {
+    const at = new Date(2026, 9, 26, 10, 41).toISOString();
+    show({ spot: { ...lostSpot, tappedAt: at }, firstLine: "Accrual example: unpaid wages", students: 11 });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Slide 7: Accrual example: unpaid wages");
+    expect(screen.getByText("11 people got lost here").parentElement).toHaveTextContent(
+      "Lost at 10:41. 11 people got lost here.",
+    );
+  });
+
+  it("shows the number red for a lost spot and ink for a saved one", () => {
+    const { unmount } = show();
+    const number = () => screen.getByRole("heading", { level: 1 }).parentElement!.previousElementSibling!;
+    expect(number()).toHaveTextContent("7");
+    expect(number()).toHaveClass("text-lost");
+    unmount();
+    show({ spot: { ...lostSpot, kind: "save" }, students: 0 });
+    expect(number()).toHaveClass("text-ink");
+    expect(screen.getByText(/^Saved for later at \d+:\d\d\.$/)).toBeInTheDocument();
+  });
+
+  it("uses Slide n as the heading when the slide has no text", () => {
+    show();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Slide 7: Slide 7");
+  });
+
   it("has no coming soon text and does not show the slide count", () => {
     const { container } = show({ slideCount: 23 });
     expect(container.textContent).not.toMatch(/coming soon/i);
@@ -111,10 +151,9 @@ describe("SpotDetail: move the marker", () => {
     await waitFor(() => expect(shownSrc()).toBe("https://signed/6.webp"));
   });
 
-  it("is disabled on slide 1 and does nothing", () => {
+  it("is not offered on slide 1", () => {
     show({ spot: { ...lostSpot, slideNumber: 1 } });
-    expect(move()).toBeDisabled();
-    fireEvent.click(move());
+    expect(screen.queryByRole("button", { name: /Move to slide/ })).not.toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -172,6 +211,32 @@ describe("SpotDetail: previous and next slide", () => {
     expect(screen.getByRole("button", { name: "Previous slide" })).toBeEnabled();
   });
 
+  it("while the lecture is live, next stops at the live slide, never past it (D10)", () => {
+    show({ liveSlide: 8, slideCount: 23 });
+    const next = () => screen.getByRole("button", { name: "Next slide" });
+    expect(next()).toBeEnabled();
+    fireEvent.click(next());
+    expect(shownSrc()).toBe("https://signed/8.webp");
+    expect(next()).toBeDisabled();
+    fireEvent.click(next());
+    expect(shownSrc()).toBe("https://signed/8.webp");
+    expect(useSlideImages).not.toHaveBeenCalledWith(LECTURE, 9);
+  });
+
+  it("on the live slide itself, next is disabled at once", () => {
+    show({ liveSlide: 7, slideCount: 23 });
+    expect(screen.getByRole("button", { name: "Next slide" })).toBeDisabled();
+  });
+
+  it("after the lecture ended, next goes on to the last slide", () => {
+    show({ liveSlide: null, slideCount: 9 });
+    const next = () => screen.getByRole("button", { name: "Next slide" });
+    fireEvent.click(next());
+    fireEvent.click(next());
+    expect(shownSrc()).toBe("https://signed/9.webp");
+    expect(next()).toBeDisabled();
+  });
+
   it("preloads from the slide on screen", () => {
     show();
     fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
@@ -188,30 +253,62 @@ describe("SpotDetail: previous and next slide", () => {
 });
 
 describe("SpotDetail: the note", () => {
-  const input = () => screen.getByLabelText("Note") as HTMLInputElement;
-  const save = () => screen.getByRole("button", { name: "Save note" });
+  const input = () => screen.getByLabelText("Your note") as HTMLInputElement;
+  const send = () => fireEvent.submit(input().form!);
 
-  it("shows the note and limits it to 140 characters", () => {
+  it("shows the note, and its field limits it to 140 characters", () => {
     show({ spot: { ...lostSpot, note: "the proof step" } });
+    expect(screen.getByText("the proof step")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
     expect(input()).toHaveValue("the proof step");
     expect(input()).toHaveAttribute("maxlength", "140");
+    expect(input()).toHaveFocus();
   });
 
-  it("saves a changed note to the row and reports it", async () => {
+  it("offers Add a note when there is none", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+    expect(input()).toHaveValue("");
+  });
+
+  it("Enter saves a changed note to the row and reports it", async () => {
     const { onNoteSaved } = show();
-    expect(save()).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
     fireEvent.change(input(), { target: { value: "ask about step 2" } });
-    fireEvent.click(save());
+    send();
     await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("ask about step 2"));
     expect(update).toHaveBeenCalledWith({ note: "ask about step 2" });
     expect(eq).toHaveBeenCalledWith("id", "tap-1");
     expect(await screen.findByRole("status")).toHaveTextContent("Note saved");
+    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
+  });
+
+  it("Enter on an unchanged note sends nothing and closes the field", () => {
+    show({ spot: { ...lostSpot, note: "old" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
+    send();
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit note" })).toHaveFocus();
+  });
+
+  it("Esc drops what was typed", () => {
+    show({ spot: { ...lostSpot, note: "old" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
+    fireEvent.change(input(), { target: { value: "new words" } });
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByText("old")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
+    expect(input()).toHaveValue("old");
   });
 
   it("saves an emptied note as no note", async () => {
     const { onNoteSaved } = show({ spot: { ...lostSpot, note: "old" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
     fireEvent.change(input(), { target: { value: "   " } });
-    fireEvent.click(save());
+    send();
     await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith(null));
     expect(update).toHaveBeenCalledWith({ note: null });
   });
@@ -219,11 +316,53 @@ describe("SpotDetail: the note", () => {
   it("shows the error plainly and keeps what was typed", async () => {
     selectAfter.mockResolvedValue({ data: null, error: { message: "boom" } });
     const { onNoteSaved } = show();
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
     fireEvent.change(input(), { target: { value: "keep me" } });
-    fireEvent.click(save());
+    send();
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the note");
     expect(onNoteSaved).not.toHaveBeenCalled();
     expect(input()).toHaveValue("keep me");
+  });
+});
+
+describe("SpotDetail: remove", () => {
+  it("asks once, inline, then marks the row undone and reports it", async () => {
+    const { onRemoved } = show();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByText("Remove this spot?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(onRemoved).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith({ undone: true });
+    expect(eq).toHaveBeenCalledWith("id", "tap-1");
+  });
+
+  it("Keep it leaves the spot alone", () => {
+    const { onRemoved } = show();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+    expect(update).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("says plainly when the database refuses", async () => {
+    selectAfter.mockResolvedValue({ data: [], error: null });
+    const { onRemoved } = show();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not remove the spot");
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+});
+
+describe("SpotDetail: previous and next spot", () => {
+  it("are disabled at the ends and open the spot next to this one", () => {
+    const onNextSpot = vi.fn();
+    show({ onNextSpot });
+    expect(screen.getByRole("button", { name: "Previous spot" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next spot" }));
+    expect(onNextSpot).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -297,16 +436,46 @@ describe("SpotDetail: the highlight", () => {
     expect(drawButton("Change highlight")).toBeInTheDocument();
   });
 
-  it("a drag on the slide does nothing until Highlight is pressed", () => {
+  const keep = () => fireEvent.click(screen.getByRole("button", { name: "Keep highlight" }));
+
+  it("a mouse drag draws a box right away, as in class, and saves nothing until Keep highlight", () => {
+    const { container } = show();
+    expect(layer()).toBeInTheDocument();
+    drag();
+    expect(screen.getByRole("group", { name: "Highlight" })).toBeInTheDocument();
+    expect(boxes(container)).toHaveLength(1);
+    expect(update).not.toHaveBeenCalled();
+    // While the box waits, the Highlight action steps aside (design 31:1192).
+    expect(screen.queryByRole("button", { name: "Highlight" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Move to slide 6" })).toBeInTheDocument();
+  });
+
+  it("a touch drag needs Highlight pressed first, so the page still scrolls", () => {
     show();
-    expect(layer()).toBeNull();
+    const touch = { pointerType: "touch", pointerId: 2 };
+    fireEvent.pointerDown(layer(), { ...touch, clientX: 500, clientY: 250 });
+    fireEvent.pointerUp(layer(), { ...touch, clientX: 900, clientY: 450 });
+    expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument();
+    fireEvent.click(drawButton());
+    fireEvent.pointerDown(layer(), { ...touch, clientX: 500, clientY: 250 });
+    fireEvent.pointerUp(layer(), { ...touch, clientX: 900, clientY: 450 });
+    expect(screen.getByRole("group", { name: "Highlight" })).toBeInTheDocument();
+  });
+
+  it("Cancel drops the box without saving", () => {
+    const { container } = show();
+    drag();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument();
+    expect(drawButton()).toBeInTheDocument();
+    expect(boxes(container)).toHaveLength(0);
     expect(update).not.toHaveBeenCalled();
   });
 
   it("saves a dragged box as an update of the four hl_ columns of the row, then shows it", async () => {
     const { onHighlightSaved, container } = show({ spot: withRect });
-    fireEvent.click(drawButton("Change highlight"));
     drag();
+    keep();
     await waitFor(() => expect(onHighlightSaved).toHaveBeenCalledWith({ x: 0.5, y: 0.5, w: 0.4, h: 0.4 }));
     expect(from).toHaveBeenCalledWith("lost_taps");
     expect(update).toHaveBeenCalledWith({ hl_x: 0.5, hl_y: 0.5, hl_w: 0.4, hl_h: 0.4 });
@@ -317,32 +486,41 @@ describe("SpotDetail: the highlight", () => {
     expect(boxes(container)).toHaveLength(1);
     expect(box.style.left).toBe("50%");
     expect(box.style.width).toBe("40%");
-    // The drawing layer goes away when the highlight is saved.
-    expect(layer()).toBeNull();
+    // The menu goes away when the highlight is saved.
+    expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument();
   });
 
   it("adds a first highlight to a spot that had none", async () => {
     const { onHighlightSaved } = show();
-    fireEvent.click(drawButton());
     drag();
+    keep();
     await waitFor(() => expect(onHighlightSaved).toHaveBeenCalled());
     expect(drawButton("Change highlight")).toBeInTheDocument();
   });
 
   it("a click on the slide saves nothing", () => {
     show();
-    fireEvent.click(drawButton());
     drag([500, 250], [500, 250]);
     expect(update).not.toHaveBeenCalled();
+    expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument();
     expect(layer()).toBeInTheDocument();
   });
 
-  it("Escape stops drawing without saving", () => {
+  it("Escape drops the box and stops drawing without saving", () => {
     show({ spot: withRect });
     fireEvent.click(drawButton("Change highlight"));
+    drag();
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(layer()).toBeNull();
+    expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument();
+    expect(drawButton("Change highlight")).toHaveAttribute("aria-pressed", "false");
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("a press anywhere else drops the box", () => {
+    show();
+    drag();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("group", { name: "Highlight" })).not.toBeInTheDocument();
   });
 
   it("pressing the button again stops drawing", () => {
@@ -350,14 +528,14 @@ describe("SpotDetail: the highlight", () => {
     fireEvent.click(drawButton());
     expect(drawButton()).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(drawButton());
-    expect(layer()).toBeNull();
+    expect(drawButton()).toHaveAttribute("aria-pressed", "false");
   });
 
   it("says plainly when the database refuses, and keeps the old highlight", async () => {
     selectAfter.mockResolvedValue({ data: null, error: { message: "permission denied" } });
     const { onHighlightSaved, container } = show({ spot: withRect });
-    fireEvent.click(drawButton("Change highlight"));
     drag();
+    keep();
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the highlight");
     expect(onHighlightSaved).not.toHaveBeenCalled();
     expect(boxes(container)).toHaveLength(1);
@@ -367,8 +545,8 @@ describe("SpotDetail: the highlight", () => {
   it("treats an update that changed no row as a failure", async () => {
     selectAfter.mockResolvedValue({ data: [], error: null });
     const { onHighlightSaved } = show();
-    fireEvent.click(drawButton());
     drag();
+    keep();
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the highlight");
     expect(onHighlightSaved).not.toHaveBeenCalled();
   });

@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
+import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
+import { LogoMark } from "@/components/Logo";
 import { formatLectureDate } from "@/lib/lectureDate";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 
@@ -61,31 +64,48 @@ export function LectureList() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 p-4">
-      <header className="flex items-start justify-between gap-3">
-        <h1 className="text-2xl font-semibold">My spots</h1>
-        <InfoButton />
+    <div className="flex min-h-dvh flex-col bg-bg text-ink">
+      <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
+        <Link href="/" aria-label="Home" className="press -m-1 rounded-md p-1 focus-ring">
+          <LogoMark size={22} />
+        </Link>
+        <div className="min-w-0 flex-1" />
+        <InfoButton panelClassName="-right-11" />
+        {/* Room for the theme button, which comes with dark mode (not built yet). */}
+        <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
       </header>
 
-      {items &&
-        (items.length === 0 ? (
-          <p>No lectures yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {items.map((l) => (
-              <li key={l.id}>
-                <Link href={`/spots/${l.id}`} className="flex items-baseline justify-between gap-3 border border-current p-3">
-                  <span className="min-w-0 break-words">{l.name}</span>
-                  <span className="shrink-0">{formatLectureDate(l.date)}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ))}
-
-      <Link href="/join" className="self-start border border-current px-4 py-3">
-        Join a class
-      </Link>
-    </main>
+      <main className="mx-auto flex w-full max-w-180 animate-rise-in flex-col gap-1 px-4 pb-12 pt-6 sm:px-6">
+        <h1 className="type-display text-ink">My spots</h1>
+        {items &&
+          (items.length === 0 ? (
+            <p className="pt-2 type-body text-secondary">No lectures yet.</p>
+          ) : (
+            <ul className="flex flex-col pt-6">
+              {items.map((l, i) => (
+                <li
+                  key={l.id}
+                  style={{ "--stagger": `${Math.min(i, 8) * 30}ms` } as CSSProperties}
+                  className="animate-rise-in border-t border-hairline [animation-delay:var(--stagger)] last:border-b motion-reduce:[animation-delay:0ms]"
+                >
+                  <Link
+                    href={`/spots/${l.id}`}
+                    className="press -mx-2 flex items-center gap-4 rounded-md px-2 py-4 hover:bg-surface/60 focus-ring"
+                  >
+                    <span className="min-w-0 flex-1 break-words type-lecture text-ink">{l.name}</span>
+                    <span className="shrink-0 type-small text-secondary">{formatLectureDate(l.date)}</span>
+                    <Icon name="forward" className="text-secondary" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ))}
+        {items && (
+          <div className="pt-8">
+            <ButtonPrimaryLink href="/join">Join a class</ButtonPrimaryLink>
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

@@ -118,6 +118,14 @@ describe("LectureList", () => {
     spy.mockRestore();
   });
 
+  it("heads the page My spots and links the mark home", async () => {
+    render(<LectureList />);
+    await screen.findAllByRole("listitem");
+    expect(screen.getByRole("heading", { level: 1, name: "My spots" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
+  });
+
   it("has no coming soon text", async () => {
     const { container } = render(<LectureList />);
     await screen.findAllByRole("listitem");
