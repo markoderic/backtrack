@@ -36,7 +36,7 @@ export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark
     onCancelRef.current = onCancel;
   });
 
-  const { box, draft, handlers } = useDragRect({
+  const { box, draft, cancel, handlers } = useDragRect({
     layerRef,
     imageRef,
     touch: marking,
@@ -44,6 +44,12 @@ export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark
       if (marking) onMark(rect);
     },
   });
+
+  // Marking ended (Esc, Undo, another slide) maybe in the middle of a drag: drop it, so no
+  // dashed box is left on the slide and the next Mark the spot starts clean.
+  useEffect(() => {
+    if (!marking) cancel();
+  }, [marking, cancel]);
 
   useEffect(() => {
     if (!marking) return;
@@ -85,7 +91,7 @@ export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark
       {marking && !draft && (
         <p
           data-mark-hint=""
-          className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 animate-pop-in rounded-md bg-ink px-3 py-1.5 type-small-strong whitespace-nowrap text-surface shadow-popover"
+          className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 animate-pop-in rounded-md bg-ink px-3 py-1.5 type-small-strong whitespace-nowrap text-surface shadow-popover"
         >
           {markingKind === "lost" ? "Drag over the part you lost" : "Drag over the part to keep"}
         </p>

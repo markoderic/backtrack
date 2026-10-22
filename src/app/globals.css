@@ -58,16 +58,17 @@
 
 /*
  * The two layouts of the student live lecture screen (see "Student live lecture" below).
- * wide: a laptop, or a tablet or phone held sideways (900 px and up, or 700 px and up in landscape).
- * narrow: everything else (a phone, a portrait tablet, a half width laptop window).
+ * By shape, not width alone: wide is 700 px and up and at least as wide as tall (a laptop, a
+ * tablet or phone held sideways); narrow is everything else (a phone, any portrait tablet, a tall
+ * or half width window), where the slide gets the full width.
  */
 @custom-variant wide {
-  @media (min-width: 900px), (min-width: 700px) and (orientation: landscape) {
+  @media (min-width: 700px) and (min-aspect-ratio: 1/1) {
     @slot;
   }
 }
 @custom-variant narrow {
-  @media (max-width: 699.98px), (max-width: 899.98px) and (orientation: portrait) {
+  @media (max-width: 699.98px), (max-aspect-ratio: 9999/10000) {
     @slot;
   }
 }
@@ -282,8 +283,8 @@
 /*
  * Student live lecture (/l/[lectureId]): one markup, two layouts.
  * Wide: the slide on the left, as big as the height allows (its navigation right under it),
- * and a sidebar on the right (about 20%, at least 260 px): lecture, Jump to live, the
- * I'm lost panel, and My spots at the bottom.
+ * and a sidebar on the right (about 20%, at least 260 px): lecture, the I'm lost panel, and
+ * at the bottom Jump to live (while behind) and My spots.
  * Narrow: top bar, the slide edge to edge in a 16 px gutter, the I'm lost panel, then the
  * slide strip, so nothing important is below the fold on a 390 x 844 phone.
  * The slide's width comes from the room left (--slide-room) times its shape (--slide-ratio).
@@ -297,7 +298,7 @@
   width: min(100cqw, max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778));
   justify-self: center;
 }
-@media (max-width: 699.98px), (max-width: 899.98px) and (orientation: portrait) {
+@media (max-width: 699.98px), (max-aspect-ratio: 9999/10000) {
   [data-lecture] {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -320,14 +321,13 @@
     align-items: center;
     gap: 8px;
     height: 56px;
-    margin-right: -8px;
   }
   [data-lecture-slide] { grid-area: slide; }
   [data-lecture-panel] { grid-area: panel; }
   [data-lecture-nav] { grid-area: nav; }
   [data-lecture-jump="side"] { display: none; }
 }
-@media (min-width: 900px), (min-width: 700px) and (orientation: landscape) {
+@media (min-width: 700px) and (min-aspect-ratio: 1/1) {
   [data-lecture] {
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(260px, 20vw, 380px);
@@ -344,7 +344,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* Top aligned, level with the sidebar, so a width bound slide does not float in a band of background. */
+    justify-content: flex-start;
     gap: 8px;
     min-width: 0;
     min-height: 0;
@@ -358,8 +359,9 @@
     grid-area: side;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto auto 1fr auto;
-    grid-template-areas: "brand info" "jump jump" "panel panel" ". ." "spots spots";
+    /* Jump to live sits above My spots, so it comes and goes without moving I'm lost. */
+    grid-template-rows: auto auto 1fr auto auto;
+    grid-template-areas: "brand info" "panel panel" ". ." "jump jump" "spots spots";
     align-content: start;
     row-gap: 16px;
   }

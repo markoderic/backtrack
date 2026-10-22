@@ -383,6 +383,8 @@ export function LostButton({
   function startNote() {
     if (!active) return;
     setEditing({ id: active.id, slide: viewing, draft: active.note ?? "" });
+    // The tools (and Stop marking) are hidden while the note is open, so marking stops.
+    onMarkingChangeRef.current?.(false);
     focusNext.current = "textarea";
   }
 

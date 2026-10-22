@@ -230,7 +230,7 @@ describe("StudentLecture", () => {
     expect(screen.queryByRole("button", { name: /Jump to live/ })).not.toBeInTheDocument();
   });
 
-  it("behind live, puts Jump to live in the sidebar (laptop) and as a pill over the slide's bottom edge (phone), never in the strip row", async () => {
+  it("behind live, puts Jump to live in the sidebar under I'm lost (laptop) and as a pill over the slide (phone), never in the strip row", async () => {
     const { container } = show();
     await settle();
     expect(container.querySelector("[data-lecture-jump]")).toBeNull();
@@ -241,11 +241,29 @@ describe("StudentLecture", () => {
     expect(container.querySelector("[data-lecture-slide]")).toContainElement(pill);
     expect(container.querySelector("[data-lecture-nav]")).not.toContainElement(side);
     expect(container.querySelector("[data-lecture-nav]")).not.toContainElement(pill);
-    // The sidebar's sits right above I'm lost.
-    expect(side.compareDocumentPosition(panel()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The sidebar's comes after the I'm lost panel (its grid row is above My spots), so I'm lost never moves.
+    expect(panel().compareDocumentPosition(side) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(pill);
     expect(shownSrc()).toBe("https://signed/7.webp");
     expect(container.querySelector("[data-lecture-jump]")).toBeNull();
+  });
+
+  it("a double click on Jump to live records no tap (I'm lost does not move under it)", async () => {
+    show();
+    await settle();
+    fireEvent.click(back());
+    const [side] = jumps(7);
+    fireEvent.click(side);
+    fireEvent.click(side);
+    fireEvent.doubleClick(side);
+    await settle();
+    expect(upsert).not.toHaveBeenCalled();
+    expect(lost()).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("has no empty theme slot at the edge of the top bar", () => {
+    const { container } = show();
+    expect(container.querySelector("[data-theme-slot]")).toBeNull();
   });
 
   it("Back is disabled on slide 1", () => {
@@ -812,6 +830,31 @@ describe("StudentLecture Mark the spot", () => {
     expect(count).toHaveTextContent("1");
     expect(count).not.toHaveAttribute("data-count-red");
     expect(lost()).toHaveAttribute("data-phase", "default");
+  });
+
+  it("hides the phone's Jump to live pill while marking, so it does not sit in the drag area", async () => {
+    const { container } = show(7);
+    await settle();
+    fireEvent.click(back());
+    fireEvent.click(lost());
+    fireEvent.click(screen.getByRole("button", { name: "Mark the spot" }));
+    expect(container.querySelector('[data-lecture-jump="pill"]')).toBeNull();
+    expect(container.querySelector('[data-lecture-jump="side"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop marking" }));
+    expect(container.querySelector('[data-lecture-jump="pill"]')).not.toBeNull();
+  });
+
+  it("drops a drag cut off by the slide changing: no dashed box is left on the next slide", async () => {
+    show(7);
+    await settle();
+    fireEvent.click(lost());
+    fireEvent.click(screen.getByRole("button", { name: "Mark the spot" }));
+    fireEvent.pointerDown(layer(), { ...mouse, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(layer(), { ...mouse, clientX: 300, clientY: 200 });
+    expect(document.querySelector("[data-highlight-box]")).not.toBeNull();
+    teacherMoves(8);
+    await waitFor(() => expect(layer()).not.toHaveAttribute("data-marking"));
+    expect(document.querySelector("[data-highlight-box]")).toBeNull();
   });
 
   it("ends marking when the teacher moves a following student to the next slide", async () => {

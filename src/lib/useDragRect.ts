@@ -120,5 +120,21 @@ export function useDragRect({ layerRef, imageRef, touch, onRect, onStart }: Opti
     setDraft(null);
   }
 
-  return { box, draft, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel } };
+  /**
+   * Ends a drag that is going on without a box (the caller stopped taking drags mid-way, so
+   * the pointerup may never come here): no draft is left drawn, and the pointer is let go.
+   */
+  const cancel = useCallback(() => {
+    const d = drag.current;
+    drag.current = null;
+    setDraft(null);
+    if (!d) return;
+    try {
+      layerRef.current?.releasePointerCapture?.(d.pointerId);
+    } catch {
+      // Already released.
+    }
+  }, [layerRef]);
+
+  return { box, draft, cancel, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel } };
 }

@@ -94,7 +94,9 @@ describe("HighlightLayer", () => {
   it("while marking, shows a short instruction on the slide and saves the box the moment the drag ends", () => {
     const onMark = vi.fn();
     render(<Stage onMark={onMark} />);
-    expect(screen.getByText("Drag over the part you lost")).toBeInTheDocument();
+    const hint = screen.getByText("Drag over the part you lost");
+    // At the bottom, so it does not cover the slide's title (often the part being marked).
+    expect(hint.className).toContain("bottom-3");
     expect(layer()).toHaveAttribute("data-marking");
     expect(layer().style.touchAction).toBe("none");
     drag([100, 100], [300, 200]);
@@ -138,6 +140,25 @@ describe("HighlightLayer", () => {
     render(<Stage onCancel={onCancel} />);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a drag that marking ends in the middle of: no dashed box stays, and a later move draws nothing", () => {
+    const onMark = vi.fn();
+    const release = vi.fn();
+    const { rerender } = render(<Stage onMark={onMark} />);
+    layer().releasePointerCapture = release;
+    fireEvent.pointerDown(layer(), { ...mouse, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(layer(), { ...mouse, clientX: 300, clientY: 200 });
+    expect(boxes()).toHaveLength(1);
+    rerender(<Stage marking={false} onMark={onMark} />);
+    expect(boxes()).toHaveLength(0);
+    expect(release).toHaveBeenCalledWith(1);
+    // Marking again: a move without a new press draws nothing, and the old press saves nothing.
+    rerender(<Stage onMark={onMark} />);
+    fireEvent.pointerMove(layer(), { ...mouse, clientX: 400, clientY: 300 });
+    expect(boxes()).toHaveLength(0);
+    fireEvent.pointerUp(layer(), { ...mouse, clientX: 400, clientY: 300 });
+    expect(onMark).not.toHaveBeenCalled();
   });
 
   it("Escape does nothing when not marking", () => {

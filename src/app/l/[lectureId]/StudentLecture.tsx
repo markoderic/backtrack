@@ -188,22 +188,11 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
             </span>
           </Link>
           <div data-lecture-info="" className="flex shrink-0 justify-end">
-            {/* The popover lines up with the top bar's right edge, past the theme slot (the sidebar's edge on a laptop). */}
-            <InfoButton panelClassName="-right-11 wide:right-0" />
+            {/* The popover lines up with the right edge (of the top bar, or of the sidebar on a laptop). */}
+            <InfoButton panelClassName="right-0" />
           </div>
-          {/* Room for the theme button, which comes with dark mode (not built yet). */}
-          <span aria-hidden data-theme-slot="" className="size-9 shrink-0 wide:hidden" />
+          {/* The theme button comes with dark mode (not built yet); until then no empty slot at the edge. */}
         </div>
-        {behind && (
-          <button
-            type="button"
-            data-lecture-jump="side"
-            onClick={jumpToLive}
-            className="press focus-ring flex h-12 w-full items-center justify-center rounded-md bg-ink px-4 type-button text-surface hover:bg-ink-hover"
-          >
-            {jumpLabel}
-          </button>
-        )}
         <LostButton
           key={lectureId}
           lectureId={lectureId}
@@ -222,6 +211,18 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           onRejected={recheck}
           idle={reconnecting ? <p className="animate-fade-in type-small text-secondary">Reconnecting…</p> : null}
         />
+        {behind && (
+          // On a laptop, at the bottom of the sidebar above My spots: it comes and goes without moving
+          // I'm lost, so a double click on it can never land on I'm lost.
+          <button
+            type="button"
+            data-lecture-jump="side"
+            onClick={jumpToLive}
+            className="press focus-ring flex h-12 w-full items-center justify-center rounded-md bg-ink px-4 type-button text-surface hover:bg-ink-hover"
+          >
+            {jumpLabel}
+          </button>
+        )}
       </div>
       {/* Always there, so a screen reader hears when the connection drops (the panel shows it). */}
       <p role="status" className="sr-only">
@@ -266,7 +267,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
               </p>
             )}
           </div>
-          {behind && (
+          {behind && !marking && (
             // On a phone, Jump to live floats over the bottom edge of the slide (the sidebar has it on a laptop).
             <button
               type="button"

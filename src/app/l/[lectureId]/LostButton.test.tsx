@@ -444,6 +444,16 @@ describe("LostButton", () => {
       expect(status()).toHaveTextContent("Mark cleared.");
     });
 
+    it("Add a note while marking turns marking off (Stop marking is hidden while the note is open)", async () => {
+      const { onMarkingChange, show } = setup();
+      await settle();
+      press();
+      show({ marking: true });
+      onMarkingChange.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+      expect(onMarkingChange).toHaveBeenLastCalledWith(false);
+    });
+
     it("Undo while marking turns marking off", async () => {
       const { onMarkingChange, show } = setup();
       await settle();
