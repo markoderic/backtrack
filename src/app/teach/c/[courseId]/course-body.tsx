@@ -12,6 +12,8 @@ import { LECTURE_DELETED } from "../../delete-lecture-copy";
 import { PastLectures, type PastLecture } from "./PastLectures";
 import { SlideAccess } from "./SlideAccess";
 import { isStudentAccess, todayInOxford } from "@/lib/slideAccess";
+import { DETAIL_COLUMNS, colorClass, readDetails } from "@/lib/courseDetails";
+import { CourseDetailsEditor } from "./CourseDetails";
 
 const PAGE = 1000;
 
@@ -32,7 +34,18 @@ type ExportRow = {
   lost_taps: number;
   students: number;
 };
-type CourseRow = { id: string; name: string; archived: boolean; student_access?: unknown; semester_end?: string | null };
+type CourseRow = {
+  id: string;
+  name: string;
+  archived: boolean;
+  student_access?: unknown;
+  semester_end?: string | null;
+  color?: unknown;
+  section?: unknown;
+  meet_days?: unknown;
+  start_minute?: unknown;
+  end_minute?: unknown;
+};
 type Summary = { joined: number | null; lostTaps: number | null; mostLost: { number: number; firstLine: string } | null };
 
 /**
@@ -139,10 +152,19 @@ export async function CourseBody({
   // the query asks for the teacher's own course explicitly as well.
   const readCourse = (columns: string) =>
     supabase.from("courses").select(columns).eq("id", courseId).eq("teacher_id", user.id).maybeSingle();
-  let read = await readCourse("id, name, archived, student_access, semester_end");
-  // Before migration 0016 the two access columns are not there yet: read the course without
-  // them, and the page leaves the setting out. 22P02 is a malformed uuid in the url.
-  if (read.error && read.error.code !== "22P02") read = await readCourse("id, name, archived");
+  // Newest columns first. Before migration 0018 (color, section, schedule) and 0016 (who can see
+  // slides) those columns are not there yet: the course is read again without them, and the page
+  // leaves out what they drive. 22P02 is a malformed uuid in the url: no second read.
+  const columnSets = [
+    `id, name, archived, student_access, semester_end, ${DETAIL_COLUMNS}`,
+    "id, name, archived, student_access, semester_end",
+    "id, name, archived",
+  ];
+  let read = await readCourse(columnSets[0]);
+  for (const columns of columnSets.slice(1)) {
+    if (!read.error || read.error.code === "22P02") break;
+    read = await readCourse(columns);
+  }
   const { error } = read;
   // Any other error is a real failure, not a missing course.
   if (error && error.code !== "22P02") throw new Error(error.message);
@@ -176,15 +198,26 @@ export async function CourseBody({
   });
 
   const { code, title } = splitCourseName(course.name);
+  // Present once 0018 is in (the column comes back, even when empty).
+  const details = "color" in course ? readDetails(course as Record<string, unknown>) : null;
 
   return (
     <TeacherPage crumbs={[{ label: "Courses", href: "/teach" }, { label: code }]} teacherName={teacherName}>
       <RefreshOnReturn />
       <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <h1 className="type-display break-words text-ink">{code}</h1>
-            {title && <p className="type-lecture-l text-secondary">{title}</p>}
+          <div className="flex min-w-0 flex-1 gap-4">
+            {details && (
+              <span
+                aria-hidden
+                data-course-color={details.color ?? "none"}
+                className={`w-1.5 shrink-0 self-stretch rounded-full ${colorClass(details.color)}`}
+              />
+            )}
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <h1 className="type-display break-words text-ink">{code}</h1>
+              {title && <p className="type-lecture-l text-secondary">{title}</p>}
+            </div>
           </div>
           {/* An archived course still opens (from Settings or by url) for its past lectures and the
               CSV; a new lecture waits until it is unarchived. */}
@@ -201,6 +234,12 @@ export async function CourseBody({
             </ButtonPrimaryLink>
           )}
         </div>
+
+        {details && (
+          <div className="pt-4">
+            <CourseDetailsEditor courseId={course.id} code={code} details={details} />
+          </div>
+        )}
 
         {/* Always in the page so the line is announced when it appears. */}
         <p role="status" data-testid="course-status" className="type-small text-secondary empty:sr-only">

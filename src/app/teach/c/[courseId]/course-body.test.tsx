@@ -375,19 +375,22 @@ describe("CourseBody: Students can see slides until", () => {
     expect(html).toMatch(/<option value="semester" selected="">End of semester<\/option>/);
     expect(html).toContain('value="2026-12-11"');
     expect(selectCalls.filter(([t]) => t === "courses")).toEqual([
-      ["courses", "id, name, archived, student_access, semester_end"],
+      ["courses", "id, name, archived, student_access, semester_end, color, section, meet_days, start_minute, end_minute"],
     ]);
   });
 
   it("before migration 0016 reads the course again without the new columns and leaves the setting out", async () => {
     maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.color does not exist" } })
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.student_access does not exist" } })
       .mockResolvedValueOnce({ data: { id: "c1", name: "IMS 452", archived: false }, error: null });
     const html = renderToStaticMarkup(await CourseBody({ params }));
     expect(selectCalls.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, archived, student_access, semester_end, color, section, meet_days, start_minute, end_minute",
       "id, name, archived, student_access, semester_end",
       "id, name, archived",
     ]);
+    expect(html).not.toContain('data-testid="course-details"');
     expect(html).toContain("No lectures yet");
     expect(html).not.toContain("Students can see slides until");
   });
@@ -396,5 +399,62 @@ describe("CourseBody: Students can see slides until", () => {
     maybeSingle.mockResolvedValue({ data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } });
     await expect(CourseBody({ params })).rejects.toThrow("NOT_FOUND");
     expect(selectCalls.filter(([t]) => t === "courses")).toHaveLength(1);
+  });
+});
+
+describe("CourseBody: color, section and schedule (batch D)", () => {
+  const row = {
+    id: "c1",
+    name: "IMS 452 Senior Design",
+    archived: false,
+    student_access: "semester",
+    semester_end: null,
+    color: "plum",
+    section: "Section B",
+    meet_days: [1, 3, 5],
+    start_minute: 605,
+    end_minute: 660,
+  };
+
+  it("reads the details with the course in one read", async () => {
+    maybeSingle.mockResolvedValue({ data: row, error: null });
+    await CourseBody({ params });
+    expect(selectCalls.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, archived, student_access, semester_end, color, section, meet_days, start_minute, end_minute",
+    ]);
+  });
+
+  it("shows the color bar, the section and when it meets in the header, with Edit details", async () => {
+    maybeSingle.mockResolvedValue({ data: row, error: null });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('data-course-color="plum"');
+    expect(html).toContain("bg-course-plum");
+    expect(html).toContain("Section B · Mon Wed Fri · 10:05–11:00 AM");
+    expect(html).toContain("Edit details");
+    // The header comes before the past lectures and the setting.
+    expect(html.indexOf("bg-course-plum")).toBeLessThan(html.indexOf('data-testid="course-details"'));
+  });
+
+  it("with nothing set yet: a quiet bar and Add color, section and time", async () => {
+    maybeSingle.mockResolvedValue({
+      data: { ...row, color: null, section: null, meet_days: null, start_minute: null, end_minute: null },
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('data-course-color="none"');
+    expect(html).toContain("Add color, section and time");
+  });
+
+  it("after 0016 but before 0018: the slide setting shows, the details do not", async () => {
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.color does not exist" } })
+      .mockResolvedValueOnce({
+        data: { id: "c1", name: "IMS 452", archived: false, student_access: "always", semester_end: null },
+        error: null,
+      });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain("Students can see slides until");
+    expect(html).not.toContain('data-testid="course-details"');
+    expect(html).not.toContain("data-course-color");
   });
 });
