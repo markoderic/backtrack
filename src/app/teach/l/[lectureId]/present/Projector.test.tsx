@@ -858,6 +858,18 @@ describe("Projector slide that has no image", () => {
     expect(screen.queryByText(/didn't load/)).not.toBeInTheDocument();
   });
 
+  it("tries the image again when the teacher comes back to the slide (a one-off failure heals)", async () => {
+    show({ initialSlide: 4 });
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.getByRole("status")).toHaveTextContent("Slide 4 didn't load.");
+    press("ArrowLeft");
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/3.webp"));
+    press("ArrowRight");
+    // Same signed url as before, mounted again.
+    await waitFor(() => expect(shownSlide()).toBe("https://signed/4.webp"));
+    expect(screen.queryByText(/didn't load/)).not.toBeInTheDocument();
+  });
+
   it("says so when the image itself fails to load (a deleted file), and the next slide shows", async () => {
     show({ initialSlide: 4 });
     fireEvent.error(screen.getByRole("img"));

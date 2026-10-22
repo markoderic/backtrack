@@ -176,9 +176,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const [joinCardFading, setJoinCardFading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { urlFor, loaded } = useSlideImages(lectureId, current);
-  // The signed url whose image failed to load (deleted object, expired url). A renewed url
-  // for the same slide is a different string, so it is tried again.
-  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
+  // The image that failed to load on this visit to its slide (deleted object, expired url, a
+  // network blip). Cleared whenever the slide changes, so coming back to the slide tries the
+  // image again; a renewed url for the same slide is a different string and is tried too.
+  const [broken, setBroken] = useState<{ slide: number; url: string } | null>(null);
   const joined = useJoinedCount(lectureId);
   // Hears an End from anywhere else (the dashboard, a phone): Realtime, plus a read every 20 s.
   const ended = useLiveLecture(lectureId, initialSlide).state?.ended ?? false;
@@ -239,6 +240,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
         if (updateError) throw new Error(updateError.message);
         if (data) {
           currentRef.current = target;
+          setBroken(null);
           setCurrent(target);
           setError(null);
           continue;
@@ -265,6 +267,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
         // Show where the lecture really is; the press that assumed another slide is dropped.
         currentRef.current = row.current_slide;
         wantedRef.current = row.current_slide;
+        setBroken(null);
         setCurrent(row.current_slide);
         setError(null);
       }
@@ -401,7 +404,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const url = urlFor(current);
   // The slide has no image (no slide row or signed url once the list is in), or its image
   // failed to load: say so instead of an empty screen. The keys keep working.
-  const missing = url ? brokenUrl === url : loaded;
+  const missing = url ? broken?.slide === current && broken.url === url : loaded;
 
   if (isEnded) {
     return (
@@ -522,7 +525,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
         <img
           src={url}
           alt={`Slide ${current}`}
-          onError={() => setBrokenUrl(url)}
+          onError={() => setBroken({ slide: current, url })}
           className="h-full w-full object-contain"
         />
       )}
