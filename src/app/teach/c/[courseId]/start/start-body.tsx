@@ -1,5 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { readTeacherName } from "../../../teacher";
+import { TeacherPage, splitCourseName } from "../../../ui";
 import { StartForm } from "./start-form";
 
 export async function StartBody({ params }: { params: Promise<{ courseId: string }> }) {
@@ -21,17 +23,27 @@ export async function StartBody({ params }: { params: Promise<{ courseId: string
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!course) notFound();
 
-  const { count, error: countError } = await supabase
-    .from("lectures")
-    .select("id", { count: "exact", head: true })
-    .eq("course_id", course.id);
+  const [{ count, error: countError }, teacherName] = await Promise.all([
+    supabase.from("lectures").select("id", { count: "exact", head: true }).eq("course_id", course.id),
+    readTeacherName(supabase, user.id),
+  ]);
   if (countError) throw new Error(countError.message);
 
+  const { code } = splitCourseName(course.name);
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-6 p-4">
-      <h1 className="text-4xl font-semibold">{course.name}</h1>
-      <h2 className="text-2xl font-semibold">Start lecture</h2>
-      <StartForm courseId={course.id} existingCount={count ?? 0} />
-    </main>
+    <TeacherPage
+      crumbs={[
+        { label: "Courses", href: "/teach" },
+        { label: code, href: `/teach/c/${course.id}` },
+        { label: "Start lecture" },
+      ]}
+      teacherName={teacherName}
+    >
+      {/* Figma 33:979: a 720 wide column (360 side padding at 1440). */}
+      <main className="mx-auto flex w-full max-w-[784px] animate-rise-in flex-col gap-7 px-4 py-12 sm:px-8">
+        <h1 className="type-display text-ink">Start lecture</h1>
+        <StartForm courseId={course.id} existingCount={count ?? 0} />
+      </main>
+    </TeacherPage>
   );
 }

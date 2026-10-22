@@ -38,4 +38,10 @@ describe("SignInButton", () => {
       `${window.location.origin}/auth/callback`,
     );
   });
+
+  it("shows the Google G in the button", () => {
+    render(<SignInButton />);
+    const button = screen.getByRole("button", { name: "Sign in with Google" });
+    expect(button.querySelector('img[src="/brand/google-g.svg"]')).not.toBeNull();
+  });
 });

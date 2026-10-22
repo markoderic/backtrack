@@ -1,16 +1,6 @@
+import { SignInView } from "../sign-in-view";
+
+// The server's hosted domain check failed in /auth/callback (it already signed them out).
 export default function NotMiamiPage() {
-  return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "1rem",
-        textAlign: "center",
-      }}
-    >
-      <p>Backtrack is for Miami accounts right now. Sign in with your @miamioh.edu Google account.</p>
-    </main>
-  );
+  return <SignInView message="That isn't a Miami account. Use your @miamioh.edu account." />;
 }

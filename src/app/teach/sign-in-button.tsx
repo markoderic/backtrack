@@ -1,6 +1,7 @@
 "use client";
 
 import { createBrowserSupabase } from "@/lib/supabase/browser";
+import "./google-button.css";
 
 export function SignInButton() {
   function signIn() {
@@ -16,7 +17,13 @@ export function SignInButton() {
   }
 
   return (
-    <button type="button" onClick={signIn} style={{ padding: "0.75rem 1.5rem", border: "1px solid currentColor" }}>
+    <button
+      type="button"
+      onClick={signIn}
+      className={`google-button press focus-ring flex h-12 w-75 max-w-full items-center justify-center gap-3 rounded-md px-4 whitespace-nowrap`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- a fixed 20 px local SVG */}
+      <img src="/brand/google-g.svg" alt="" aria-hidden width={20} height={20} className="block size-5 shrink-0" />
       Sign in with Google
     </button>
   );

@@ -1,8 +1,116 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { formatLectureDate } from "@/lib/lectureDate";
+import { topThree } from "@/lib/stats";
+import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { Icon } from "@/components/Icon";
 import { LiveLectureRow } from "../../LiveLectureRow";
+import { readTeacherName } from "../../teacher";
+import { TeacherPage, splitCourseName, textLinkClass } from "../../ui";
+import { PastLectures, type PastLecture } from "./PastLectures";
+
+const PAGE = 1000;
+
+type Supabase = Awaited<ReturnType<typeof createServerSupabase>>;
+type LectureRow = {
+  id: string;
+  name: string;
+  status: string;
+  lecture_date: string;
+  started_at?: string;
+  slide_count?: number;
+};
+type ExportRow = {
+  lecture_date: string;
+  lecture_name: string;
+  slide_number: number;
+  first_line: string;
+  lost_taps: number;
+  students: number;
+};
+type Summary = { joined: number | null; lostTaps: number | null; mostLost: { number: number; firstLine: string } | null };
+
+/**
+ * Joined, lost taps and the most lost slide of each ended lecture, for the table.
+ * Lost taps and the slides come from course_export (the same numbers as the CSV: ended lectures,
+ * lost taps not undone). Its rows are in lecture_date, started_at, id order, slide_count rows a
+ * lecture, so they are matched back to the lectures in that order. These are labels only: a
+ * failed read leaves the cells empty instead of taking the course page down.
+ */
+async function summarize(supabase: Supabase, courseId: string, past: LectureRow[]): Promise<Map<string, Summary>> {
+  const out = new Map<string, Summary>(past.map((l) => [l.id, { joined: null, lostTaps: null, mostLost: null }]));
+  if (past.length === 0) return out;
+  const ids = past.map((l) => l.id);
+
+  const [exportRows, joinedRows] = await Promise.all([
+    (async () => {
+      try {
+        const rows: ExportRow[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .rpc("course_export", { p_course_id: courseId })
+            .range(from, from + PAGE - 1);
+          if (error) return null;
+          const page = (data ?? []) as ExportRow[];
+          rows.push(...page);
+          if (page.length < PAGE) return rows;
+        }
+      } catch {
+        return null;
+      }
+    })(),
+    (async () => {
+      try {
+        const rows: { lecture_id: string }[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from("participants")
+            .select("lecture_id")
+            .in("lecture_id", ids)
+            .order("lecture_id")
+            .order("anon_id")
+            .range(from, from + PAGE - 1);
+          if (error) return null;
+          const page = (data ?? []) as { lecture_id: string }[];
+          rows.push(...page);
+          if (page.length < PAGE) return rows;
+        }
+      } catch {
+        return null;
+      }
+    })(),
+  ]);
+
+  if (joinedRows) {
+    for (const l of past) out.get(l.id)!.joined = 0;
+    for (const r of joinedRows) {
+      const s = out.get(r.lecture_id);
+      if (s) s.joined = (s.joined ?? 0) + 1;
+    }
+  }
+
+  if (exportRows) {
+    const ordered = [...past].sort(
+      (a, b) =>
+        a.lecture_date.localeCompare(b.lecture_date) ||
+        (a.started_at ?? "").localeCompare(b.started_at ?? "") ||
+        a.id.localeCompare(b.id),
+    );
+    let at = 0;
+    for (const l of ordered) {
+      const count = l.slide_count ?? 0;
+      const rows = exportRows.slice(at, at + count);
+      // Stop matching as soon as anything does not line up (a lecture renamed or ended in between).
+      if (rows.length !== count || rows.some((r) => r.lecture_date !== l.lecture_date || r.lecture_name !== l.name)) break;
+      at += count;
+      const top = topThree(rows.map((r) => ({ slide_number: r.slide_number, taps: r.lost_taps, students: r.students })))[0];
+      const s = out.get(l.id)!;
+      s.lostTaps = rows.reduce((n, r) => n + r.lost_taps, 0);
+      const row = top ? rows.find((r) => r.slide_number === top) : undefined;
+      s.mostLost = row ? { number: row.slide_number, firstLine: row.first_line } : null;
+    }
+  }
+  return out;
+}
 
 export async function CourseBody({ params }: { params: Promise<{ courseId: string }> }) {
   const { courseId } = await params;
@@ -25,49 +133,77 @@ export async function CourseBody({ params }: { params: Promise<{ courseId: strin
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!course) notFound();
 
-  const { data: lectures, error: lecturesError } = await supabase
-    .from("lectures")
-    .select("id, name, status, lecture_date")
-    .eq("course_id", course.id)
-    .order("lecture_date", { ascending: false })
-    .order("started_at", { ascending: false });
+  const [{ data: lectures, error: lecturesError }, teacherName] = await Promise.all([
+    supabase
+      .from("lectures")
+      .select("id, name, status, lecture_date, started_at, slide_count")
+      .eq("course_id", course.id)
+      .order("lecture_date", { ascending: false })
+      .order("started_at", { ascending: false }),
+    readTeacherName(supabase, user.id),
+  ]);
   if (lecturesError) throw new Error(lecturesError.message);
-  const live = (lectures ?? []).filter((l) => l.status === "live");
-  const past = (lectures ?? []).filter((l) => l.status !== "live");
+  const live = ((lectures ?? []) as LectureRow[]).filter((l) => l.status === "live");
+  const past = ((lectures ?? []) as LectureRow[]).filter((l) => l.status !== "live");
+  const summaries = await summarize(supabase, course.id, past);
+
+  const rows: PastLecture[] = past.map((l) => {
+    const s = summaries.get(l.id);
+    return {
+      id: l.id,
+      name: l.name,
+      lectureDate: l.lecture_date,
+      joined: s?.joined ?? null,
+      lostTaps: s?.lostTaps ?? null,
+      mostLost: s?.mostLost ?? null,
+    };
+  });
+
+  const { code, title } = splitCourseName(course.name);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-6 p-4">
-      <h1 className="text-4xl font-semibold">{course.name}</h1>
-      <Link href={`/teach/c/${course.id}/start`} className="self-start border border-current px-6 py-3">
-        Start lecture
-      </Link>
-      {live.map((lecture) => (
-        <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
-      ))}
-      <h2 className="text-2xl font-semibold">Past lectures</h2>
-      {past.length === 0 ? (
-        <p>No lectures yet.</p>
-      ) : (
-        <>
-          {/* A plain link, not next/link: it downloads a file and must not be prefetched as a page. */}
-          <a href={`/teach/c/${course.id}/export`} download className="self-start border border-current px-4 py-2">
-            Export semester CSV
-          </a>
-          <ul className="flex flex-col gap-2">
-            {past.map((lecture) => (
-              <li key={lecture.id}>
-                <Link
-                  href={`/teach/l/${lecture.id}`}
-                  className="flex flex-wrap items-baseline justify-between gap-x-3 border border-current px-4 py-3"
-                >
-                  <span>{lecture.name}</span>
-                  <span>{formatLectureDate(lecture.lecture_date)}</span>
-                </Link>
-              </li>
+    <TeacherPage crumbs={[{ label: "Courses", href: "/teach" }, { label: code }]} teacherName={teacherName}>
+      <main className="mx-auto flex w-full max-w-[1104px] animate-rise-in flex-col gap-2 px-4 py-12 sm:px-8">
+        <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <h1 className="type-display break-words text-ink">{code}</h1>
+            {title && <p className="type-lecture-l text-secondary">{title}</p>}
+          </div>
+          <ButtonPrimaryLink href={`/teach/c/${course.id}/start`} className="w-auto!">
+            Start lecture
+          </ButtonPrimaryLink>
+        </div>
+
+        {live.length > 0 && (
+          <div className="mt-8 flex flex-col">
+            {live.map((lecture) => (
+              <LiveLectureRow key={lecture.id} id={lecture.id} name={lecture.name} />
             ))}
-          </ul>
-        </>
-      )}
-    </main>
+          </div>
+        )}
+
+        {past.length === 0 ? (
+          <div className="flex flex-col gap-2 py-16">
+            <h2 className="type-title text-ink">No lectures yet</h2>
+            <p className="type-body text-secondary">
+              Start one when class begins. Past lectures and their data collect here.
+            </p>
+          </div>
+        ) : (
+          <section className="flex flex-col pt-10">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 pb-3">
+              <h2 className="type-title text-ink">Past lectures</h2>
+              <div className="flex-1" />
+              {/* A plain link, not next/link: it downloads a file and must not be prefetched as a page. */}
+              <a href={`/teach/c/${course.id}/export`} download className={textLinkClass}>
+                <Icon name="download" size={18} />
+                Export semester CSV
+              </a>
+            </div>
+            <PastLectures lectures={rows} />
+          </section>
+        )}
+      </main>
+    </TeacherPage>
   );
 }

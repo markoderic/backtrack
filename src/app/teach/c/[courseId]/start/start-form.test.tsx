@@ -29,6 +29,12 @@ function choose(name = "slides.pdf") {
 }
 
 const startButton = () => screen.getByRole("button", { name: "Start lecture" });
+const nameField = () => screen.getByLabelText("Name") as HTMLInputElement;
+// The slides are prepared as soon as the PDF is picked; Start lecture opens up when they are ready.
+async function chooseReady(name = "slides.pdf") {
+  choose(name);
+  await waitFor(() => expect(startButton()).toBeEnabled());
+}
 
 beforeEach(() => {
   renderPdf.mockReset();
@@ -43,51 +49,53 @@ beforeEach(() => {
 describe("StartForm", () => {
   it("prefills the lecture name after the existing lectures", async () => {
     render(<StartForm courseId={COURSE} existingCount={6} />);
-    await waitFor(() =>
-      expect((screen.getByLabelText("Lecture name") as HTMLInputElement).value).toMatch(/^Lecture 7, [A-Z][a-z]{2} \d{1,2}$/),
-    );
+    await waitFor(() => expect(nameField().value).toMatch(/^Lecture 7, [A-Z][a-z]{2} \d{1,2}$/));
   });
 
-  it("keeps Start lecture disabled until a PDF is chosen and the name is not blank", async () => {
+  it("keeps Start lecture disabled until the slides are ready and the name is not blank", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     expect(startButton()).toBeDisabled();
-    choose();
-    await waitFor(() => expect(startButton()).toBeEnabled());
-    fireEvent.change(screen.getByLabelText("Lecture name"), { target: { value: "   " } });
+    await chooseReady();
+    fireEvent.change(nameField(), { target: { value: "   " } });
     expect(startButton()).toBeDisabled();
   });
 
-  it("accepts a dropped file", async () => {
+  it("accepts a dropped file and starts preparing it", async () => {
+    renderPdf.mockReturnValue(new Promise(() => {}));
     render(<StartForm courseId={COURSE} existingCount={0} />);
     const file = new File(["%PDF-1.7"], "dropped.pdf", { type: "application/pdf" });
     fireEvent.drop(screen.getByTestId("dropzone"), { dataTransfer: { files: [file] } });
     expect(screen.getByText("dropped.pdf")).toBeInTheDocument();
+    expect(renderPdf).toHaveBeenCalledWith(file, expect.any(Function));
   });
 
   it("shows a plain error for a file that is not a PDF and creates nothing", async () => {
     renderPdf.mockRejectedValue(new NotPdfError());
     render(<StartForm courseId={COURSE} existingCount={0} />);
     choose("notes.pdf");
-    fireEvent.click(startButton());
     expect(await screen.findByText("That file isn't a PDF.")).toBeInTheDocument();
     expect(upload).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
-    expect(startButton()).toBeEnabled();
+    // Back to the drop area, ready for another file.
+    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(startButton()).toBeDisabled();
   });
 
   it("shows a plain error for a password protected PDF", async () => {
     renderPdf.mockRejectedValue(new PasswordPdfError());
     render(<StartForm courseId={COURSE} existingCount={0} />);
     choose();
-    fireEvent.click(startButton());
     expect(await screen.findByText("That PDF is password protected. Remove the password and try again.")).toBeInTheDocument();
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("shows progress while preparing slides", async () => {
+  it("shows progress while preparing slides, and Cancel drops the file", async () => {
     let finish: (v: unknown) => void = () => {};
+    let progress: (d: number, t: number) => void = () => {};
     renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void) => {
+      progress = onProgress;
       onProgress(12, 40);
       return new Promise((resolve) => {
         finish = resolve;
@@ -95,21 +103,54 @@ describe("StartForm", () => {
     });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     choose();
-    fireEvent.click(startButton());
     expect(await screen.findByText("Preparing slide 12 of 40")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Preparing slides" })).toHaveAttribute("aria-valuenow", "12");
+    expect(screen.getByText(/^40 pages, /)).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
-    finish({ blobs: [], firstLines: [] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    // The cancelled render stops at its next page and its result is ignored.
+    expect(() => progress(13, 40)).toThrow();
+    finish({ blobs: [blob("image/webp")], firstLines: [""] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(/slides? ready/)).toBeNull();
+    expect(startButton()).toBeDisabled();
   });
 
-  it("does not start the lecture when an upload fails", async () => {
+  it("says how many slides are ready and what Start does", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady("Week 8 slides.pdf");
+    expect(screen.getByText("Week 8 slides.pdf")).toBeInTheDocument();
+    expect(screen.getByText("2 slides ready")).toBeInTheDocument();
+    expect(screen.getByText(/^2 pages, /)).toBeInTheDocument();
+    expect(screen.getByText("Opens the projector view with the join code.")).toBeInTheDocument();
+    expect(screen.getByText("Change file")).toBeInTheDocument();
+  });
+
+  it("does not start the lecture when an upload fails, and can try again without preparing again", async () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
     upload.mockResolvedValueOnce({ data: {}, error: null }).mockResolvedValue({ data: null, error: { message: "nope" } });
     render(<StartForm courseId={COURSE} existingCount={0} />);
-    choose();
+    await chooseReady();
     fireEvent.click(startButton());
     expect(await screen.findByText("Could not upload your slides. Try again.")).toBeInTheDocument();
     expect(rpc).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
+    expect(startButton()).toBeEnabled();
+    expect(renderPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the upload progress after Start", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
+    upload.mockReturnValue(new Promise(() => {}));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    fireEvent.click(startButton());
+    expect(await screen.findByText("Uploading slide 0 of 2")).toBeInTheDocument();
+    expect(startButton()).toBeDisabled();
+    expect(nameField()).toBeDisabled();
   });
 
   it("uploads every slide, creates the lecture and opens the projector view", async () => {
@@ -118,8 +159,8 @@ describe("StartForm", () => {
       firstLines: ["Welcome", "", "Goals"],
     });
     render(<StartForm courseId={COURSE} existingCount={2} />);
-    choose();
-    fireEvent.change(screen.getByLabelText("Lecture name"), { target: { value: " Week 3 " } });
+    await chooseReady();
+    fireEvent.change(nameField(), { target: { value: " Week 3 " } });
     fireEvent.click(startButton());
 
     await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
@@ -148,7 +189,7 @@ describe("StartForm", () => {
   it("uses the .jpg extension when the browser fell back to JPEG", async () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/jpeg")], firstLines: [""] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
-    choose();
+    await chooseReady();
     fireEvent.click(startButton());
     await waitFor(() => expect(push).toHaveBeenCalled());
     const slides = rpc.mock.calls[0][1].p_slides;
@@ -160,7 +201,7 @@ describe("StartForm", () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
     rpc.mockResolvedValue({ data: null, error: { message: "You do not own that course." } });
     render(<StartForm courseId={COURSE} existingCount={0} />);
-    choose();
+    await chooseReady();
     fireEvent.click(startButton());
     expect(await screen.findByText("Could not start the lecture. Try again.")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();

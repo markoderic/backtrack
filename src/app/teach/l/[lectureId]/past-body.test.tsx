@@ -4,14 +4,24 @@ import { render, screen } from "@testing-library/react";
 const maybeSingle = vi.fn();
 const slidesQuery = vi.fn();
 const getUser = vi.fn();
+const teacherRow = vi.fn();
+const joinedCount = vi.fn();
+const stats = vi.fn();
+const rpcCalls: [string, unknown][] = [];
 const selects: [string, string][] = [];
 const eqCalls: [string, string, unknown][] = [];
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => ({
     auth: { getUser },
+    rpc: (name: string, args: unknown) => {
+      rpcCalls.push([name, args]);
+      return Promise.resolve(stats());
+    },
     from: (table: string) => {
       const chain = {
-        maybeSingle,
+        maybeSingle: table === "teachers" ? teacherRow : maybeSingle,
+        then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+          Promise.resolve(joinedCount()).then(resolve, reject),
         order: slidesQuery,
         eq: (column: string, value: unknown) => {
           eqCalls.push([table, column, value]);
@@ -57,6 +67,9 @@ const lecture = {
   status: "ended",
   lecture_date: "2026-10-19",
   slide_count: 3,
+  started_at: "2026-10-19T14:02:00Z",
+  ended_at: "2026-10-19T14:55:00Z",
+  courses: { teacher_id: "u1", name: "ACC 221 Intro to Financial Accounting" },
 };
 
 beforeEach(() => {
@@ -73,6 +86,17 @@ beforeEach(() => {
   });
   getUser.mockReset();
   getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
+  rpcCalls.length = 0;
+  teacherRow.mockReset().mockResolvedValue({ data: { display_name: "Linda Carter" }, error: null });
+  joinedCount.mockReset().mockResolvedValue({ count: 38, error: null });
+  stats.mockReset().mockResolvedValue({
+    data: [
+      { slide_number: 1, taps: 2, students: 2 },
+      { slide_number: 2, taps: 0, students: 0 },
+      { slide_number: 3, taps: 38, students: 11 },
+    ],
+    error: null,
+  });
 });
 
 describe("PastBody", () => {
@@ -84,7 +108,7 @@ describe("PastBody", () => {
   it("asks only for a lecture of the signed in teacher's own courses, so a joined student gets a 404", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
     await expect(PastBody({ params })).rejects.toThrow("NOT_FOUND");
-    expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id)")]);
+    expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id")]);
     expect(eqCalls).toContainEqual(["lectures", "id", "l1"]);
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
     expect(slidesQuery).not.toHaveBeenCalled();
@@ -137,5 +161,33 @@ describe("PastBody", () => {
       lectureId: "l1",
       initialName: "Lecture 1, Oct 19",
     });
+  });
+
+  it("heads the page with the top bar, when it ran, joined, lost taps and Export this lecture", async () => {
+    maybeSingle.mockResolvedValue({ data: lecture, error: null });
+    render(await PastBody({ params }));
+    expect(rpcCalls).toEqual([["lecture_slide_stats", { p_lecture_id: "l1" }]]);
+    expect(eqCalls).toContainEqual(["participants", "lecture_id", "l1"]);
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(crumbs).toHaveTextContent("Courses/ACC 221/Lecture 1, Oct 19");
+    expect(screen.getByRole("link", { name: "ACC 221" })).toHaveAttribute("href", "/teach/c/c1");
+    expect(screen.getByText("Linda Carter")).toBeInTheDocument();
+    // 14:02 to 14:55 UTC is 10:02 to 10:55 in Oxford, Ohio (EDT).
+    expect(screen.getByText("Oct 19, 10:02 to 10:55")).toBeInTheDocument();
+    expect(screen.getByText("38 joined")).toBeInTheDocument();
+    expect(screen.getByText("40 lost taps")).toBeInTheDocument();
+    const exportLink = screen.getByRole("link", { name: "Export this lecture" });
+    expect(exportLink).toHaveAttribute("href", "/teach/l/l1/export");
+    expect(exportLink).toHaveAttribute("download");
+  });
+
+  it("leaves joined and lost taps out when they cannot be read", async () => {
+    maybeSingle.mockResolvedValue({ data: lecture, error: null });
+    joinedCount.mockResolvedValue({ count: null, error: { message: "nope" } });
+    stats.mockResolvedValue({ data: null, error: { message: "nope" } });
+    render(await PastBody({ params }));
+    expect(screen.getByText("Oct 19, 10:02 to 10:55")).toBeInTheDocument();
+    expect(screen.queryByText(/joined/)).toBeNull();
+    expect(screen.queryByText(/lost tap/)).toBeNull();
   });
 });

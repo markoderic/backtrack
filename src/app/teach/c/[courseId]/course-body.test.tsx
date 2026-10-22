@@ -3,22 +3,36 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const maybeSingle = vi.fn();
 const lectures = vi.fn();
 const getUser = vi.fn();
+const teacherRow = vi.fn();
+const participants = vi.fn();
+const exportRows = vi.fn();
+const rpcCalls: [string, unknown][] = [];
+const inCalls: [string, string, unknown][] = [];
 const eqCalls: [string, string, unknown][] = [];
 const orderCalls: [string, unknown][] = [];
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => ({
     auth: { getUser },
+    rpc: (name: string, args: unknown) => {
+      rpcCalls.push([name, args]);
+      return { range: () => Promise.resolve(exportRows()) };
+    },
     from: (table: string) => {
       const chain = {
         order: (column: string, options: unknown) => {
-          orderCalls.push([column, options]);
+          if (table === "lectures") orderCalls.push([column, options]);
           return chain;
         },
+        range: () => Promise.resolve(participants()),
         then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
           Promise.resolve(lectures()).then(resolve, reject),
-        maybeSingle,
+        maybeSingle: table === "teachers" ? teacherRow : maybeSingle,
         eq: (column: string, value: unknown) => {
           eqCalls.push([table, column, value]);
+          return chain;
+        },
+        in: (column: string, value: unknown) => {
+          inCalls.push([table, column, value]);
           return chain;
         },
       };
@@ -46,6 +60,11 @@ const links = (html: string) =>
 beforeEach(() => {
   eqCalls.length = 0;
   orderCalls.length = 0;
+  inCalls.length = 0;
+  rpcCalls.length = 0;
+  teacherRow.mockReset().mockResolvedValue({ data: { display_name: "Linda Carter" }, error: null });
+  participants.mockReset().mockResolvedValue({ data: [], error: null });
+  exportRows.mockReset().mockResolvedValue({ data: [], error: null });
   maybeSingle.mockReset();
   lectures.mockReset();
   lectures.mockResolvedValue({ data: [], error: null });
@@ -98,7 +117,7 @@ describe("CourseBody", () => {
       ["End lecture", "/teach/l/l2/live?end=1"],
     ]);
     expect(html).toContain("Lecture 1, Oct 19");
-    expect(html).not.toContain("No lectures yet.");
+    expect(html).not.toContain("No lectures yet");
     expect(html).not.toContain('href="/teach/l/l1/present"');
   });
 
@@ -113,8 +132,10 @@ describe("CourseBody", () => {
   it("says there are no lectures yet when there are none", async () => {
     maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
     const html = renderToStaticMarkup(await CourseBody({ params }));
-    expect(html).toContain("No lectures yet.");
+    expect(html).toContain("No lectures yet");
+    expect(html).toContain("Start one when class begins. Past lectures and their data collect here.");
     expect(html).not.toContain("Live now");
+    expect(html).not.toContain("Past lectures<");
   });
 
   const course = () => maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
@@ -176,7 +197,7 @@ describe("CourseBody", () => {
     expect(live).not.toContain("Export semester CSV");
     expect(live).toContain("Live now");
     expect(live).toContain('href="/teach/l/l1/present"');
-    expect(live).toContain("No lectures yet.");
+    expect(live).toContain("No lectures yet");
 
     lectures.mockResolvedValue({ data: [], error: null });
     expect(renderToStaticMarkup(await CourseBody({ params }))).not.toContain("/export");
@@ -195,5 +216,84 @@ describe("CourseBody", () => {
     expect(html).toContain('href="/teach/l/l2/present"');
     expect(html).toContain('href="/teach/l/l1"');
     expect(html).toContain('href="/teach/c/c1/export"');
+  });
+
+  it("shows the course code as the heading with the rest of the name under it, and Start lecture", async () => {
+    maybeSingle.mockResolvedValue({ data: { id: "c1", name: "ACC 221 Intro to Financial Accounting" }, error: null });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toMatch(/<h1[^>]*>ACC 221<\/h1>/);
+    expect(html).toContain("Intro to Financial Accounting");
+    expect(html).toMatch(/<a [^>]*href="\/teach\/c\/c1\/start"[^>]*>Start lecture<\/a>/);
+    // Top bar: Courses / ACC 221, and the teacher's name.
+    expect(html).toMatch(/<a [^>]*href="\/teach"[^>]*>Courses<\/a>/);
+    expect(html).toMatch(/aria-current="page"[^>]*>ACC 221</);
+    expect(html).toContain("Linda Carter");
+  });
+
+  it("shows joined, lost taps and the most lost slide of each past lecture, from the teacher's own reads", async () => {
+    course();
+    lectures.mockResolvedValue({
+      data: [
+        { id: "l2", name: "Week 8", status: "ended", lecture_date: "2026-10-21", started_at: "2026-10-21T14:00:00Z", slide_count: 3 },
+        { id: "l1", name: "Week 7", status: "ended", lecture_date: "2026-10-14", started_at: "2026-10-14T14:00:00Z", slide_count: 2 },
+      ],
+      error: null,
+    });
+    // course_export: oldest lecture first, one row per slide.
+    exportRows.mockResolvedValue({
+      data: [
+        { lecture_date: "2026-10-14", lecture_name: "Week 7", slide_number: 1, first_line: "Intro", lost_taps: 0, students: 0 },
+        { lecture_date: "2026-10-14", lecture_name: "Week 7", slide_number: 2, first_line: "Closing entries", lost_taps: 4, students: 3 },
+        { lecture_date: "2026-10-21", lecture_name: "Week 8", slide_number: 1, first_line: "Welcome", lost_taps: 5, students: 2 },
+        { lecture_date: "2026-10-21", lecture_name: "Week 8", slide_number: 2, first_line: "Accrual example", lost_taps: 3, students: 3 },
+        { lecture_date: "2026-10-21", lecture_name: "Week 8", slide_number: 3, first_line: "Wrap up", lost_taps: 0, students: 0 },
+      ],
+      error: null,
+    });
+    participants.mockResolvedValue({
+      data: [{ lecture_id: "l1" }, { lecture_id: "l2" }, { lecture_id: "l2" }, { lecture_id: "l2" }],
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(rpcCalls).toEqual([["course_export", { p_course_id: "c1" }]]);
+    expect(inCalls).toContainEqual(["participants", "lecture_id", ["l2", "l1"]]);
+    const text = html.replace(/<[^>]+>/g, "|");
+    // Week 8: 3 joined, 8 lost taps, most lost slide 2 (more students beat more taps, D3).
+    expect(text).toMatch(/Week 8\|+3\|+ joined\|+8\|+ lost taps\|+Most lost: slide \|+2\|+Accrual example/);
+    // Week 7: 1 joined, 4 lost taps, slide 2.
+    expect(text).toMatch(/Week 7\|+1\|+ joined\|+4\|+ lost taps\|+Most lost: slide \|+2\|+Closing entries/);
+  });
+
+  it("leaves the numbers out instead of failing when they cannot be read", async () => {
+    course();
+    lectures.mockResolvedValue({
+      data: [{ id: "l1", name: "Week 7", status: "ended", lecture_date: "2026-10-14", slide_count: 2 }],
+      error: null,
+    });
+    exportRows.mockResolvedValue({ data: null, error: { message: "nope" } });
+    participants.mockResolvedValue({ data: null, error: { message: "nope" } });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('href="/teach/l/l1"');
+    expect(html).not.toContain(" joined");
+    expect(html).not.toContain(" lost taps");
+  });
+
+  it("shows five past lectures and the number of the rest", async () => {
+    course();
+    lectures.mockResolvedValue({
+      data: Array.from({ length: 8 }, (_, i) => ({
+        id: `l${8 - i}`,
+        name: `Week ${8 - i}`,
+        status: "ended",
+        lecture_date: `2026-10-${String(21 - i).padStart(2, "0")}`,
+        slide_count: 1,
+      })),
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain('href="/teach/l/l8"');
+    expect(html).toContain('href="/teach/l/l4"');
+    expect(html).not.toContain('href="/teach/l/l3"');
+    expect(html).toMatch(/<button[^>]*>3(<!-- -->)? more<\/button>/);
   });
 });

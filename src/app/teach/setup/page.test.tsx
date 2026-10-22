@@ -5,8 +5,8 @@ vi.mock("../actions", () => ({ saveSetup: vi.fn(), addCourse: vi.fn() }));
 
 import { SetupForm } from "./setup-form";
 
-const submit = () => screen.getByRole("button", { name: "Continue" });
-const name = () => screen.getByLabelText("Your name");
+const submit = () => screen.getByRole("button", { name: "Done" });
+const name = () => screen.getByLabelText("Your name, as students see it");
 const firstCourse = () => screen.getAllByLabelText("Course")[0];
 
 describe("SetupForm", () => {
@@ -43,5 +43,15 @@ describe("SetupForm", () => {
     fireEvent.change(courses[1], { target: { value: "BIO 121" } });
     const sent = Array.from(container.querySelectorAll<HTMLInputElement>('input[name="course"]')).map((i) => i.value);
     expect(sent).toEqual(["IMS 452", "BIO 121"]);
+  });
+
+  it("starts with the name from Google, which the teacher can change", () => {
+    render(<SetupForm defaultName="Linda Carter" />);
+    expect((name() as HTMLInputElement).value).toBe("Linda Carter");
+    expect(screen.getByRole("group", { name: "Your courses" })).toBeInTheDocument();
+    fireEvent.change(firstCourse(), { target: { value: "ACC 221" } });
+    expect(submit()).toBeEnabled();
+    fireEvent.change(name(), { target: { value: "" } });
+    expect(submit()).toBeDisabled();
   });
 });

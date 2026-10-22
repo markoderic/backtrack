@@ -1,0 +1,22 @@
+/*
+ * The Sign in with Google button follows Google's own light style, as their branding rules ask
+ * (Figma 33:719): white, a 1px #747775 border, Roboto Medium 15 in #1F1F1F, the G at 20 px.
+ * These are Google's colors, not Backtrack tokens, so they stay out of the theme and live here.
+ * A plain global class (the Turbopack css rule in next.config.ts does not do CSS modules).
+ */
+.google-button {
+  --google-fill: #ffffff;
+  --google-border: #747775;
+  --google-text: #1f1f1f;
+  --google-hover: #f7f8f8;
+  background-color: var(--google-fill);
+  border: 1px solid var(--google-border);
+  color: var(--google-text);
+  font-family: Roboto, var(--font-geist-sans), Arial, sans-serif;
+  font-weight: 500;
+  font-size: 15px;
+  line-height: normal;
+}
+.google-button:hover {
+  background-color: var(--google-hover);
+}

@@ -2,48 +2,55 @@
 
 import { useState } from "react";
 import { saveSetup } from "../actions";
+import { ButtonPrimary } from "@/components/ButtonPrimary";
+import { fieldClass, labelClass, textLinkClass } from "../ui";
 
-const inputClass = "w-full border border-current px-3 py-2";
-
-export function SetupForm() {
-  const [name, setName] = useState("");
+export function SetupForm({ defaultName = "" }: { defaultName?: string }) {
+  const [name, setName] = useState(defaultName);
   const [courses, setCourses] = useState([""]);
 
   const ready = name.trim() !== "" && courses.some((c) => c.trim() !== "");
 
   return (
-    <form action={saveSetup} className="flex w-full max-w-md flex-col gap-4">
-      <label className="flex flex-col gap-1">
-        Your name
+    <form action={saveSetup} className="flex w-full flex-col gap-7">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="setup-name" className={labelClass}>
+          Your name, as students see it
+        </label>
         <input
+          id="setup-name"
           name="name"
           value={name}
           maxLength={80}
+          autoComplete="name"
           onChange={(e) => setName(e.target.value)}
-          className={inputClass}
+          className={fieldClass}
         />
-      </label>
+      </div>
 
-      {courses.map((course, i) => (
-        <label key={i} className="flex flex-col gap-1">
-          Course
+      <fieldset className="flex flex-col gap-2">
+        <legend className={`${labelClass} mb-2`}>Your courses</legend>
+        {courses.map((course, i) => (
           <input
+            key={i}
             name="course"
+            aria-label="Course"
             value={course}
             maxLength={120}
+            placeholder={i === 0 ? "ACC 221 Intro to Financial Accounting" : undefined}
+            autoFocus={i > 0 && i === courses.length - 1}
             onChange={(e) => setCourses(courses.map((c, j) => (j === i ? e.target.value : c)))}
-            className={inputClass}
+            className={`${fieldClass} ${i > 0 ? "animate-pop-in" : ""}`}
           />
-        </label>
-      ))}
+        ))}
+        <button type="button" onClick={() => setCourses([...courses, ""])} className={textLinkClass}>
+          Add another course
+        </button>
+      </fieldset>
 
-      <button type="button" onClick={() => setCourses([...courses, ""])} className="self-start underline">
-        Add another course
-      </button>
-
-      <button type="submit" disabled={!ready} className="border border-current px-6 py-3 disabled:opacity-40">
-        Continue
-      </button>
+      <ButtonPrimary type="submit" disabled={!ready}>
+        Done
+      </ButtonPrimary>
     </form>
   );
 }

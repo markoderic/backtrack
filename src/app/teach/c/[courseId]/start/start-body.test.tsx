@@ -65,9 +65,15 @@ describe("StartBody", () => {
   it("passes the number of lectures already in the course to the form", async () => {
     maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
     const element = await StartBody({ params });
-    const form = (element.props.children as { props: { courseId: string; existingCount: number } }[]).find(
-      (c) => c && c.props && "existingCount" in c.props,
-    );
-    expect(form?.props).toEqual({ courseId: "c1", existingCount: 3 });
+    // Finds the StartForm element anywhere in the page tree.
+    type El = { props?: { children?: unknown; existingCount?: number } };
+    const find = (node: unknown): El | undefined => {
+      if (Array.isArray(node)) return node.map(find).find(Boolean);
+      const el = node as El;
+      if (!el || typeof el !== "object" || !el.props) return undefined;
+      if ("existingCount" in el.props) return el;
+      return find(el.props.children);
+    };
+    expect(find(element)?.props).toEqual({ courseId: "c1", existingCount: 3 });
   });
 });
