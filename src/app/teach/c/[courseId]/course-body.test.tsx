@@ -10,6 +10,7 @@ const rpcCalls: [string, unknown][] = [];
 const inCalls: [string, string, unknown][] = [];
 const eqCalls: [string, string, unknown][] = [];
 const orderCalls: [string, unknown][] = [];
+const selectCalls: [string, string][] = [];
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => ({
     auth: { getUser },
@@ -36,7 +37,12 @@ vi.mock("@/lib/supabase/server", () => ({
           return chain;
         },
       };
-      return { select: () => chain };
+      return {
+        select: (columns: string) => {
+          selectCalls.push([table, columns]);
+          return chain;
+        },
+      };
     },
   }),
 }));
@@ -60,6 +66,7 @@ const links = (html: string) =>
 
 beforeEach(() => {
   eqCalls.length = 0;
+  selectCalls.length = 0;
   orderCalls.length = 0;
   inCalls.length = 0;
   rpcCalls.length = 0;
@@ -354,5 +361,40 @@ describe("CourseBody, Delete lecture", () => {
     expect(html).toContain('aria-label="More for Live one"');
     // No hover-only Delete on the rows any more.
     expect(html).not.toContain('aria-label="Delete System check, Oct 22"');
+  });
+});
+
+describe("CourseBody: Students can see slides until", () => {
+  it("shows the setting with the course's choice and date", async () => {
+    maybeSingle.mockResolvedValue({
+      data: { id: "c1", name: "IMS 452", archived: false, student_access: "semester", semester_end: "2026-12-11" },
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toContain("Students can see slides until");
+    expect(html).toMatch(/<option value="semester" selected="">End of semester<\/option>/);
+    expect(html).toContain('value="2026-12-11"');
+    expect(selectCalls.filter(([t]) => t === "courses")).toEqual([
+      ["courses", "id, name, archived, student_access, semester_end"],
+    ]);
+  });
+
+  it("before migration 0016 reads the course again without the new columns and leaves the setting out", async () => {
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.student_access does not exist" } })
+      .mockResolvedValueOnce({ data: { id: "c1", name: "IMS 452", archived: false }, error: null });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(selectCalls.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, archived, student_access, semester_end",
+      "id, name, archived",
+    ]);
+    expect(html).toContain("No lectures yet");
+    expect(html).not.toContain("Students can see slides until");
+  });
+
+  it("a malformed uuid is still a 404 without a second read", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } });
+    await expect(CourseBody({ params })).rejects.toThrow("NOT_FOUND");
+    expect(selectCalls.filter(([t]) => t === "courses")).toHaveLength(1);
   });
 });

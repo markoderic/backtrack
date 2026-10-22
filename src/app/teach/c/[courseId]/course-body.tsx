@@ -10,6 +10,8 @@ import { readTeacherName } from "../../teacher";
 import { TeacherPage, splitCourseName } from "../../ui";
 import { LECTURE_DELETED } from "../../delete-lecture-copy";
 import { PastLectures, type PastLecture } from "./PastLectures";
+import { SlideAccess } from "./SlideAccess";
+import { isStudentAccess, todayInOxford } from "@/lib/slideAccess";
 
 const PAGE = 1000;
 
@@ -30,6 +32,7 @@ type ExportRow = {
   lost_taps: number;
   students: number;
 };
+type CourseRow = { id: string; name: string; archived: boolean; student_access?: unknown; semester_end?: string | null };
 type Summary = { joined: number | null; lostTaps: number | null; mostLost: { number: number; firstLine: string } | null };
 
 /**
@@ -134,14 +137,16 @@ export async function CourseBody({
 
   // Row level security only returns the course to the teacher who owns it, and
   // the query asks for the teacher's own course explicitly as well.
-  const { data: course, error } = await supabase
-    .from("courses")
-    .select("id, name, archived")
-    .eq("id", courseId)
-    .eq("teacher_id", user.id)
-    .maybeSingle();
-  // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing course.
+  const readCourse = (columns: string) =>
+    supabase.from("courses").select(columns).eq("id", courseId).eq("teacher_id", user.id).maybeSingle();
+  let read = await readCourse("id, name, archived, student_access, semester_end");
+  // Before migration 0016 the two access columns are not there yet: read the course without
+  // them, and the page leaves the setting out. 22P02 is a malformed uuid in the url.
+  if (read.error && read.error.code !== "22P02") read = await readCourse("id, name, archived");
+  const { error } = read;
+  // Any other error is a real failure, not a missing course.
   if (error && error.code !== "22P02") throw new Error(error.message);
+  const course = read.data as CourseRow | null;
   if (!course) notFound();
 
   const [{ data: lectures, error: lecturesError }, teacherName] = await Promise.all([
@@ -230,6 +235,17 @@ export async function CourseBody({
             </div>
             <PastLectures lectures={rows} />
           </section>
+        )}
+
+        {isStudentAccess(course.student_access) && (
+          <div className="pt-12">
+            <SlideAccess
+              courseId={course.id}
+              access={course.student_access}
+              semesterEnd={course.semester_end ?? null}
+              today={todayInOxford()}
+            />
+          </div>
         )}
       </main>
     </TeacherPage>
