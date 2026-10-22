@@ -1245,7 +1245,8 @@ describe("LectureData with many slides", () => {
     renderLive({ slides: many, initialCurrentSlide: 23 });
     await waitFor(() => expect(counts(17)).toBe("3 lost, 3 taps"));
     await waitFor(() => expect(within(slideRow(23)).getByText("Current slide")).toBeInTheDocument());
-    act(() => resize?.(width));
+    await waitFor(() => expect(resize).not.toBeNull());
+    act(() => resize!(width));
   }
 
   it("shows every slide number while the columns are wide enough", async () => {
@@ -1522,7 +1523,9 @@ describe("LectureData with more slides than fit", () => {
         left = Math.max(0, Math.min(v, 50 * 24 + 12 - width));
       },
     });
-    act(() => resize?.(width));
+    // The observer is made in an effect after the data renders: wait for it.
+    await waitFor(() => expect(resize).not.toBeNull());
+    act(() => resize!(width));
     return ol;
   }
 
