@@ -39,6 +39,25 @@ describe("TeacherTopBar", () => {
     expect(back.className).toContain("after:-inset-y-3");
   });
 
+  it("links to Settings on every teacher page, with a 44 px hit area", () => {
+    render(<TeacherTopBar crumbs={crumbs} teacherName="Linda Carter" />);
+    const settings = screen.getByRole("link", { name: "Settings" });
+    expect(settings).toHaveAttribute("href", "/teach/settings");
+    expect(settings).not.toHaveAttribute("aria-current");
+    expect(settings.className).toContain(hitAreaClass);
+  });
+
+  it("marks Settings as the current page on the Settings page", () => {
+    render(<TeacherTopBar crumbs={[{ label: "Settings" }]} teacherName="Linda Carter" onSettings />);
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("leaves the teacher's name out on a phone (the back link and Settings keep their room)", () => {
+    render(<TeacherTopBar crumbs={crumbs} teacherName="Linda Carter" />);
+    expect(screen.getByText("Linda Carter").className).toContain("hidden");
+    expect(screen.getByText("Linda Carter").className).toContain("sm:block");
+  });
+
   it("has no back link on the top level", () => {
     render(<TeacherTopBar crumbs={[{ label: "Courses" }]} />);
     expect(screen.queryByTestId("back-link")).toBeNull();

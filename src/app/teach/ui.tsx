@@ -66,14 +66,24 @@ export const staggerClass =
 export type Crumb = { label: string; href?: string };
 
 /**
- * The teacher top bar: 64 high with a hairline, logo, breadcrumb, then the teacher's name
- * on the right. The design's Settings link belongs to Task 11 and is not shown yet.
+ * The teacher top bar: 64 high with a hairline, logo, breadcrumb, then the teacher's name and
+ * the Settings link on the right (Figma 33:788, 34:1246). On a phone the name is left out so the
+ * back link and Settings keep their room.
  */
-export function TeacherTopBar({ crumbs, teacherName }: { crumbs: Crumb[]; teacherName?: string | null }) {
+export function TeacherTopBar({
+  crumbs,
+  teacherName,
+  onSettings = false,
+}: {
+  crumbs: Crumb[];
+  teacherName?: string | null;
+  /** True on the Settings page itself, where the link is marked as the current page. */
+  onSettings?: boolean;
+}) {
   // On a phone the breadcrumb is hidden, so the page one level up gets a short back link instead.
   const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2] : undefined;
   return (
-    <header className="flex h-16 shrink-0 items-center gap-6 border-b border-hairline px-4 sm:px-8">
+    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-hairline px-4 sm:gap-6 sm:px-8">
       <Link href="/teach" aria-label="backtrack, courses" className="press focus-ring shrink-0 rounded-sm">
         <LogoLockup size="S" />
       </Link>
@@ -118,7 +128,14 @@ export function TeacherTopBar({ crumbs, teacherName }: { crumbs: Crumb[]; teache
         </ol>
       </nav>
       <div className="min-w-0 flex-1" />
-      {teacherName && <p className="min-w-0 truncate type-small text-secondary">{teacherName}</p>}
+      {teacherName && <p className="hidden min-w-0 truncate type-small text-secondary sm:block">{teacherName}</p>}
+      <Link
+        href="/teach/settings"
+        aria-current={onSettings ? "page" : undefined}
+        className={`press focus-ring shrink-0 rounded-sm type-small-strong whitespace-nowrap text-ink hover:text-ink-hover ${hitAreaClass}`}
+      >
+        Settings
+      </Link>
     </header>
   );
 }
@@ -127,15 +144,17 @@ export function TeacherTopBar({ crumbs, teacherName }: { crumbs: Crumb[]; teache
 export function TeacherPage({
   crumbs,
   teacherName,
+  onSettings,
   children,
 }: {
   crumbs: Crumb[];
   teacherName?: string | null;
+  onSettings?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <TeacherTopBar crumbs={crumbs} teacherName={teacherName} />
+      <TeacherTopBar crumbs={crumbs} teacherName={teacherName} onSettings={onSettings} />
       {children}
     </div>
   );
