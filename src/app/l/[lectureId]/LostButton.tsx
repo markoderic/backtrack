@@ -93,6 +93,8 @@ export function LostButton({
   // Goes up when the highlight menu saves an I'm lost, so the button shows Saved too.
   const [savedSignal, setSavedSignal] = useState(0);
   const [lastViewing, setLastViewing] = useState(viewing);
+  // The saved line whose note field has focus, if any.
+  const [focusedBar, setFocusedBar] = useState<string | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
   const [fatal, setFatal] = useState<Error | null>(null);
 
@@ -205,8 +207,8 @@ export function LostButton({
     onSpotsRef.current([...taps.values()]);
   }, [taps]);
 
-  // A note being typed (not sent yet) holds the saved line open.
-  const typing = !!bar && !bar.saved && bar.note !== "";
+  // A note being typed (not sent yet) holds the saved line open: the field has focus, or holds real text.
+  const typing = !!bar && !bar.saved && (bar.note.trim() !== "" || focusedBar === bar.id);
   const barId = bar?.id;
 
   // The next slide closes the saved line, unless a note is being typed.
@@ -318,6 +320,8 @@ export function LostButton({
                     value={bar.note}
                     onChange={(e) => setBar({ ...bar, note: e.target.value })}
                     onKeyDown={onNoteKeyDown}
+                    onFocus={() => setFocusedBar(bar.id)}
+                    onBlur={() => setFocusedBar(null)}
                     className="block h-6 w-full min-w-0 bg-transparent type-note text-ink outline-hidden placeholder:text-secondary"
                   />
                 </form>

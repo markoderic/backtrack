@@ -240,6 +240,31 @@ describe("LostButton", () => {
       expect(ops(send).map((o) => o.op)).toEqual(["insert"]);
     });
 
+    it("a focused empty note field holds the line open; blurring it lets the 10 seconds run", async () => {
+      vi.useFakeTimers();
+      setup();
+      await settle();
+      press();
+      fireEvent.focus(noteField());
+      await act(async () => vi.advanceTimersByTime(30000));
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      fireEvent.blur(noteField());
+      await act(async () => vi.advanceTimersByTime(9999));
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    });
+
+    it("spaces alone in an unfocused field do not hold the line open", async () => {
+      vi.useFakeTimers();
+      setup();
+      await settle();
+      press();
+      typeNote("   ");
+      await act(async () => vi.advanceTimersByTime(10000));
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    });
+
     it("closes on the next slide, but not while a note is being typed", async () => {
       const { rerender, send, loadOwn, onSpots, lastSpots } = setup({ viewing: 7 });
       await settle();
@@ -531,18 +556,19 @@ describe("LostButton", () => {
     expect(screen.getByText("Saved slide 7")).toBeInTheDocument();
   });
 
-  it("tells the page about each tap, after it is queued", async () => {
-    const order: string[] = [];
-    const send = vi.fn<Send>(async () => {
-      order.push("send");
-      return "ok";
+  it("tells the page about each tap only after the tap is in the queue", async () => {
+    // The send never finishes, so the op stays in the queue (localStorage) and we can see it was there first.
+    const send = vi.fn<Send>(() => new Promise<SendResult>(() => {}));
+    const queuedWhenTold: number[] = [];
+    const onTap = vi.fn(() => {
+      queuedWhenTold.push(JSON.parse(localStorage.getItem(KEY) ?? "[]").length);
     });
-    const onTap = vi.fn(() => order.push("tap"));
     setup({ send, onTap });
     await settle();
     press();
+    expect(onTap).toHaveBeenCalledTimes(1);
     expect(onTap).toHaveBeenCalledWith("lost");
-    expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toHaveLength(1);
+    expect(queuedWhenTold).toEqual([1]);
   });
 
   it("shows Saved on the button right after a press (ring and check)", async () => {

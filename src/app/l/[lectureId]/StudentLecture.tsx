@@ -142,8 +142,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       <header className="flex h-14 shrink-0 items-center gap-2 pl-4 pr-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <LogoMark size={22} />
-          <p className="shrink-0 whitespace-nowrap type-small-strong text-ink">{courseName}</p>
-          <p className="min-w-0 truncate type-lecture text-secondary max-sm:hidden">{lectureName}</p>
+          {/* Both truncate; the lecture name gives way first (a shrink factor under 1 would let the course overflow). */}
+          <p className="min-w-0 truncate type-small-strong text-ink">{courseName}</p>
+          <p className="min-w-0 shrink-[4] truncate type-lecture text-secondary max-sm:hidden">{lectureName}</p>
         </div>
         <Link
           href={`/spots/${lectureId}`}
@@ -210,7 +211,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
             </div>
           </div>
 
-          <div className="flex max-w-full shrink-0 flex-col gap-2" style={{ width: frameWidth }}>
+          {/* At least 560 px (or the window) wide, so the saved line never wraps in a short, wide window. */}
+          <div className="flex max-w-full shrink-0 flex-col gap-2" style={{ width: `max(${frameWidth}, min(100cqw, 560px))` }}>
             <div className="flex h-14 w-full items-center gap-3">
               <div className="flex shrink-0">
                 <button

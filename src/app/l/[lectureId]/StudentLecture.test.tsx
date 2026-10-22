@@ -92,6 +92,22 @@ describe("StudentLecture", () => {
     expect(screen.getByText("live")).toBeInTheDocument();
   });
 
+  it("truncates a long course name instead of running into My spots", () => {
+    render(
+      <StudentLecture
+        lectureId={LECTURE}
+        lectureName="Lecture 3, Oct 26"
+        courseName="ACC 221 Principles of Financial Accounting, Section B"
+        initialSlide={7}
+      />,
+    );
+    const course = within(screen.getByRole("banner")).getByText("ACC 221 Principles of Financial Accounting, Section B");
+    expect(course.className).toMatch(/\btruncate\b/);
+    expect(course.className).toMatch(/\bmin-w-0\b/);
+    expect(course.className).not.toMatch(/\bshrink-0\b/);
+    expect(within(screen.getByRole("banner")).getByRole("link", { name: /My spots/ }).className).toMatch(/\bshrink-0\b/);
+  });
+
   it("has a My spots link with the count in the top bar, and no theme button yet", () => {
     show();
     const link = within(screen.getByRole("banner")).getByRole("link", { name: /My spots/ });
