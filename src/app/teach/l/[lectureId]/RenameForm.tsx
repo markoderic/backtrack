@@ -26,7 +26,17 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const busy = useRef(false);
+  // What is in the field and what is saved right now, for a save that runs after a render
+  // (a second Enter while the first save was out).
+  const typed = useRef(initialName);
+  const savedName = useRef(initialName);
+  // Enter or a blur came while a save was out: once it is back, the field is saved again.
+  const again = useRef(false);
   const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    typed.current = name;
+    savedName.current = current;
+  });
 
   // A refresh brings the name in from the server; it replaces the field only when nothing is typed there.
   const [seenInitial, setSeenInitial] = useState(initialName);
@@ -44,11 +54,15 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
   }, [saved]);
 
   async function commit() {
-    if (busy.current) return;
-    const trimmed = name.trim();
-    if (trimmed === current) {
+    if (busy.current) {
+      again.current = true;
+      return;
+    }
+    const sent = typed.current;
+    const trimmed = sent.trim();
+    if (trimmed === savedName.current) {
       // Nothing new (maybe only spaces around it): show the saved name again.
-      if (name !== current) setName(current);
+      if (sent !== savedName.current) setName(savedName.current);
       setError(null);
       return;
     }
@@ -67,15 +81,23 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
         .select("id");
       // No row back means the update matched nothing (not the teacher's lecture).
       if (updateError || !data || data.length === 0) throw new Error("not renamed");
+      savedName.current = trimmed;
       setCurrent(trimmed);
-      setName(trimmed);
-      setSaved(true);
+      // Only tidy the field when it still holds what was sent: words typed while the save was
+      // out stay (batch A review M1), and are saved by the next Enter or blur, or right away
+      // when one already came meanwhile.
+      if (typed.current === sent) setName(trimmed);
+      setSaved(typed.current === sent);
       router.refresh();
     } catch {
       setError("Could not rename the lecture.");
     } finally {
       busy.current = false;
       setSaving(false);
+    }
+    if (again.current) {
+      again.current = false;
+      void commit();
     }
   }
 
@@ -105,6 +127,7 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
             aria-describedby={error ? "rename-lecture-error" : undefined}
             aria-busy={saving || undefined}
             onChange={(e) => {
+              typed.current = e.target.value;
               setName(e.target.value);
               setError(null);
               setSaved(false);
@@ -113,6 +136,7 @@ export function RenameForm({ lectureId, initialName }: { lectureId: string; init
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 e.preventDefault();
+                typed.current = current;
                 setName(current);
                 setError(null);
               }

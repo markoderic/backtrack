@@ -212,4 +212,34 @@ describe("RenameForm (the lecture name, always a field)", () => {
     view.rerender(<RenameForm lectureId="l1" initialName="Again" />);
     expect(field().value).toBe("Typing");
   });
+
+  it("keeps what was typed while a save was out, and saves it next (batch A review M1)", async () => {
+    let first!: (v: unknown) => void;
+    h.select.mockReturnValueOnce(new Promise((r) => (first = r)));
+    render(<RenameForm lectureId="l1" initialName="Lecture 1, Oct 19" />);
+    type("Lecture 1, Intro");
+    enter();
+    // A quick typo fix and Enter again while the first save is out.
+    type("Lecture 1, Intro to Accrual");
+    enter();
+    expect(h.updates).toHaveLength(1);
+    await act(async () => first({ data: [{ id: "l1" }], error: null }));
+    expect(field().value).toBe("Lecture 1, Intro to Accrual");
+    await waitFor(() => expect(h.updates).toEqual([{ name: "Lecture 1, Intro" }, { name: "Lecture 1, Intro to Accrual" }]));
+    await waitFor(() => expect(status()).toHaveTextContent("Renamed."));
+    expect(field().value).toBe("Lecture 1, Intro to Accrual");
+  });
+
+  it("text typed while a save was out (no second Enter) stays in the field and is not overwritten", async () => {
+    let first!: (v: unknown) => void;
+    h.select.mockReturnValueOnce(new Promise((r) => (first = r)));
+    render(<RenameForm lectureId="l1" initialName="Lecture 1, Oct 19" />);
+    type("  Lecture 1, Intro  ");
+    enter();
+    type("Lecture 1, Intro!");
+    await act(async () => first({ data: [{ id: "l1" }], error: null }));
+    expect(field().value).toBe("Lecture 1, Intro!");
+    expect(h.updates).toHaveLength(1);
+  });
 });
+
