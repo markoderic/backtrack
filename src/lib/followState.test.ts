@@ -91,4 +91,11 @@ describe("followReducer", () => {
     run(start, { type: "back" }, { type: "liveChanged", n: 7 }, { type: "disconnected" });
     expect(start).toEqual(copy);
   });
+
+  it("readOk: the connection is live again and the live slide moves, but a student who went back stays", () => {
+    const behind = run(initialFollowState(5), { type: "back" }, { type: "disconnected" }, { type: "readOk", n: 6 });
+    expect(behind).toEqual({ live: 6, viewing: 4, following: false, conn: "live", ended: false });
+    const following = run(initialFollowState(5), { type: "disconnected" }, { type: "readOk", n: 6 });
+    expect(following).toEqual({ live: 6, viewing: 6, following: true, conn: "live", ended: false });
+  });
 });

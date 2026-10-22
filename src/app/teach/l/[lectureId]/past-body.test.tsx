@@ -150,6 +150,7 @@ describe("PastBody", () => {
         { number: 3, first_line: "Joins" },
       ],
       courseId: "c1",
+      teacherId: "u1",
     });
   });
 

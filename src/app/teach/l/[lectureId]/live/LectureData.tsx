@@ -41,6 +41,8 @@ type Props = {
   code?: string | null;
   /** Open the End lecture confirm on load (the url has ?end=1). Only a live lecture uses it. */
   confirmEndOnLoad?: boolean;
+  /** The signed in teacher, so "Hide notes" is remembered for them on this browser. */
+  teacherId?: string;
   /**
    * The past lecture page's own heading (name to rename, when, joined, export). In past
    * mode it takes the place of this view's heading, so the lecture name shows once.
@@ -111,6 +113,26 @@ function noteTime(iso: string): string | null {
   return clock.format(d).replace(/\s?[AP]M$/i, "");
 }
 
+/** localStorage key for "Hide notes", per teacher. Set means hidden; notes show by default. */
+export const hideNotesKey = (teacherId?: string) => `backtrack:hide-notes${teacherId ? `:${teacherId}` : ""}`;
+
+function readNotesHidden(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeNotesHidden(key: string, hidden: boolean): void {
+  try {
+    if (hidden) window.localStorage.setItem(key, "1");
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Storage is blocked: the choice holds until the page closes.
+  }
+}
+
 /** "482916" -> "482 916", as the design shows a code. */
 const spacedCode = (code: string) => (code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code);
 
@@ -128,6 +150,7 @@ export function LectureData({
   courseId,
   code,
   confirmEndOnLoad,
+  teacherId,
   children,
 }: Props) {
   const router = useRouter();
@@ -143,6 +166,16 @@ export function LectureData({
   const [endError, setEndError] = useState(false);
   // The slide the teacher clicked. Until then the panel shows the slide that lost the most people.
   const [picked, setPicked] = useState<number | null>(null);
+  // Hide notes keeps students' raw notes off a projected view; only their count shows. The
+  // panel first draws after the data loads in the browser, so reading storage here never
+  // changes the server's markup.
+  const notesKey = hideNotesKey(teacherId);
+  const [notesHidden, setNotesHidden] = useState(() => typeof window !== "undefined" && readNotesHidden(notesKey));
+  const toggleNotes = () => {
+    const next = !notesHidden;
+    setNotesHidden(next);
+    writeNotesHidden(notesKey, next);
+  };
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const backLink = useRef<HTMLAnchorElement>(null);
@@ -624,7 +657,12 @@ export function LectureData({
           >
             {/* Swapping slides fades the panel in (opacity only). */}
             <div key={selected} className="flex animate-fade-in flex-col gap-4">
-              <p className="type-small text-secondary">Slide {selected}</p>
+              <div className="flex items-baseline justify-between gap-4">
+                <p className="type-small text-secondary">Slide {selected}</p>
+                <button type="button" onClick={toggleNotes} className={textLinkClass}>
+                  {notesHidden ? "Show notes" : "Hide notes"}
+                </button>
+              </div>
               {selectedSlide.first_line && <h2 className="type-title break-words text-ink">{selectedSlide.first_line}</h2>}
               <p className="flex flex-wrap items-baseline gap-x-3">
                 <span className={`type-number-m ${selectedStat.students > 0 ? "text-lost" : "text-secondary"}`}>
@@ -651,7 +689,15 @@ export function LectureData({
                   </div>
                 </>
               )}
-              {selectedNotes.length > 0 && (
+              {selectedNotes.length > 0 && notesHidden && (
+                <>
+                  <h3 className="type-small-strong text-ink">Notes</h3>
+                  <p data-testid="notes-hidden" className="type-small text-secondary">
+                    {plural(selectedNotes.length, "note", "notes")} hidden
+                  </p>
+                </>
+              )}
+              {selectedNotes.length > 0 && !notesHidden && (
                 <>
                   <h3 className="type-small-strong text-ink">Notes</h3>
                   <ul data-testid="notes" className="flex flex-col gap-4">

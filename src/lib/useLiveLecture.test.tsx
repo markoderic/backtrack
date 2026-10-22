@@ -455,6 +455,33 @@ describe("useLiveLecture", () => {
       expect(result.current.state).toMatchObject({ live: 6, viewing: 6, following: true, conn: "live" });
     });
 
+    it("a failed 20 second check with the channel up shows Reconnecting, and the next good read says live without moving a student who went back", async () => {
+      const { result } = await started();
+      act(() => result.current.back());
+      single.mockResolvedValueOnce({ data: null, error: { message: "Failed to fetch" } });
+      await wait(20000);
+      expect(result.current.state).toMatchObject({ viewing: 2, following: false, conn: "reconnecting" });
+      // The retry a second later works: live again, and the student stays on slide 2.
+      single.mockResolvedValue(row(5));
+      await wait(1000);
+      expect(result.current.state).toEqual({ live: 5, viewing: 2, following: false, conn: "live", ended: false });
+      // Later reads keep them there too.
+      single.mockResolvedValue(row(6));
+      await wait(20000);
+      expect(result.current.state).toEqual({ live: 6, viewing: 2, following: false, conn: "live", ended: false });
+    });
+
+    it("a failed check followed by the channel dropping still jumps to live once the channel is back", async () => {
+      const { result } = await started();
+      act(() => result.current.back());
+      single.mockResolvedValueOnce({ data: null, error: { message: "Failed to fetch" } });
+      await wait(20000);
+      act(() => channel.status?.("CHANNEL_ERROR"));
+      single.mockResolvedValue(row(7));
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      expect(result.current.state).toMatchObject({ live: 7, viewing: 7, following: true, conn: "live" });
+    });
+
     it("keeps the newest read when an older one comes back last", async () => {
       const { result } = await started();
       let older: (v: unknown) => void = () => {};

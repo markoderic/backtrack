@@ -78,7 +78,7 @@ vi.mock("@/lib/useSlideUrls", () => ({
   useSlideUrls: (lectureId: string, wanted: number[]) => h.slideUrls(lectureId, wanted),
 }));
 
-import { LectureData } from "./LectureData";
+import { LectureData, hideNotesKey } from "./LectureData";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const slides = Array.from({ length: 5 }, (_, i) => ({ number: i + 1, first_line: `Heading ${i + 1}` }));
@@ -133,6 +133,7 @@ beforeEach(() => {
   h.lectureQuery.mockReset().mockResolvedValue({ data: { current_slide: 3, status: "live" }, error: null });
   h.rpc.mockReset().mockResolvedValue({ data: null, error: null });
   h.slideUrls.mockReset().mockReturnValue({});
+  localStorage.clear();
 });
 
 describe("LectureData live", () => {
@@ -388,6 +389,82 @@ describe("LectureData live", () => {
     select(2);
     update(row("b", { slide_number: 2, note: "too fast", undone: true }));
     expect(notes()).toEqual(["what is a join?"]);
+  });
+
+  describe("Hide notes", () => {
+    const withNotes = () =>
+      h.tapsQuery.mockResolvedValue({
+        data: [
+          row("a", { slide_number: 2, note: "what is a join?" }),
+          row("b", { slide_number: 2, note: "too fast", anon_id: "s2" }),
+        ],
+        error: null,
+      });
+    const noteTexts = () => within(panel()).queryAllByTestId("note").map((n) => n.textContent);
+
+    it("shows the notes by default, and Hide notes swaps them for their count", async () => {
+      withNotes();
+      renderLive({ teacherId: "t1" });
+      await waitFor(() => expect(noteTexts()).toEqual(["what is a join?", "too fast"]));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Hide notes" }));
+      expect(noteTexts()).toEqual([]);
+      expect(screen.queryByText("what is a join?")).not.toBeInTheDocument();
+      expect(within(panel()).getByTestId("notes-hidden")).toHaveTextContent("2 notes hidden");
+      // A new note on the shown slide stays hidden too.
+      insert(row("c", { slide_number: 2, note: "lost here", anon_id: "s3" }));
+      expect(screen.queryByText("lost here")).not.toBeInTheDocument();
+      expect(within(panel()).getByTestId("notes-hidden")).toHaveTextContent("3 notes hidden");
+      fireEvent.click(within(panel()).getByRole("button", { name: "Show notes" }));
+      expect(noteTexts()).toEqual(["what is a join?", "too fast", "lost here"]);
+    });
+
+    it("is remembered for this teacher in localStorage, and only for them", async () => {
+      withNotes();
+      const first = renderLive({ teacherId: "t1" });
+      await waitFor(() => expect(noteTexts()).toHaveLength(2));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Hide notes" }));
+      expect(localStorage.getItem(hideNotesKey("t1"))).toBe("1");
+      first.unmount();
+
+      const again = renderLive({ teacherId: "t1" });
+      await waitFor(() => expect(within(panel()).getByTestId("notes-hidden")).toHaveTextContent("2 notes hidden"));
+      expect(within(panel()).getByRole("button", { name: "Show notes" })).toBeInTheDocument();
+      again.unmount();
+
+      renderLive({ teacherId: "t2" });
+      await waitFor(() => expect(noteTexts()).toHaveLength(2));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Hide notes" }));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Show notes" }));
+      expect(localStorage.getItem(hideNotesKey("t2"))).toBeNull();
+      expect(localStorage.getItem(hideNotesKey("t1"))).toBe("1");
+    });
+
+    it("still works with localStorage blocked", async () => {
+      withNotes();
+      const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      try {
+        renderLive({ teacherId: "t1" });
+        await waitFor(() => expect(noteTexts()).toHaveLength(2));
+        fireEvent.click(within(panel()).getByRole("button", { name: "Hide notes" }));
+        expect(noteTexts()).toEqual([]);
+      } finally {
+        get.mockRestore();
+        set.mockRestore();
+      }
+    });
+
+    it("is there in past mode too", async () => {
+      withNotes();
+      renderLive({ mode: "past", teacherId: "t1" });
+      await waitFor(() => expect(noteTexts()).toHaveLength(2));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Hide notes" }));
+      expect(noteTexts()).toEqual([]);
+    });
   });
 
   it("adds one to the joined count for every participant insert", async () => {

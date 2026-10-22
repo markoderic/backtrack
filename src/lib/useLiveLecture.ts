@@ -17,8 +17,10 @@ const READ_FRESH_MS = 5000;
  * first read arrives, unless `initialLive` (the slide the server already read)
  * is given. Reads only current_slide and status, never the slide count.
  * A failed read leaves the connection on "reconnecting" and is retried after
- * 1, 2, 4 seconds and so on, up to 10, until it works; then the view jumps to
- * the live slide.
+ * 1, 2, 4 seconds and so on, up to 10, until it works. Then the view jumps to
+ * the live slide only if the channel itself had dropped (or it was the first
+ * read); after a failed background read with the channel up, a student who
+ * went back stays where they are.
  *
  * The channel is the fast way to hear of a new slide or the end, not the only
  * one: while the lecture is live the same small read runs again 20 seconds
@@ -90,8 +92,9 @@ export function useLiveLecture(
       } catch {
         if (cancelled || mine !== latest) return;
         reading = false;
-        // Not connected, as far as the student can tell: say so and try again.
-        droppedRef.current = true;
+        // Not connected, as far as the student can tell: say so and try again. Only the
+        // channel going down counts as dropped (see subscribe): a failed read alone, like
+        // one flaky 20 second check, must not move a student who went back once it works.
         dispatch({ type: "disconnected" });
         clearTimeout(timer);
         timer = setTimeout(load, Math.min(RETRY_FIRST_MS * 2 ** failures, RETRY_MAX_MS));
@@ -107,12 +110,17 @@ export function useLiveLecture(
       if (data.status === "ended") {
         end();
       } else if (!readyRef.current || (droppedRef.current && !channelDown)) {
-        // The first read, or the connection came back: show the live slide.
+        // The first read, or the channel came back: show the live slide.
         readyRef.current = true;
         droppedRef.current = false;
         dispatch({ type: "reconnected", n });
-      } else {
+      } else if (channelDown) {
+        // The channel is still down: the live slide updates, "Reconnecting…" stays.
         dispatch({ type: "liveChanged", n });
+      } else {
+        // The channel is fine: a read that works says live again (after a failed one),
+        // and never moves a student who went back.
+        dispatch({ type: "readOk", n });
       }
       setReady(true);
       // Still live: read again in 20 seconds, in case the channel misses the end.

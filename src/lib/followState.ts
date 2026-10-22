@@ -11,6 +11,7 @@ export type FollowState = {
 
 export type FollowEvent =
   | { type: "liveChanged"; n: number }
+  | { type: "readOk"; n: number }
   | { type: "back" }
   | { type: "forward" }
   | { type: "jumpToLive" }
@@ -33,6 +34,10 @@ export function followReducer(state: FollowState, ev: FollowEvent): FollowState 
       }
       return { ...state, live: ev.n };
     }
+    case "readOk":
+      // A background read worked while the channel is fine: the live slide as liveChanged
+      // (a student who went back stays), and the connection is live again.
+      return { ...followReducer(state, { type: "liveChanged", n: ev.n }), conn: "live" };
     case "back":
       if (state.viewing <= 1) return state;
       return { ...state, viewing: state.viewing - 1, following: false };

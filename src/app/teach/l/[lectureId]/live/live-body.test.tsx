@@ -127,6 +127,7 @@ describe("LiveBody", () => {
       courseId: "c1",
       code: "482916",
       confirmEndOnLoad: false,
+      teacherId: "u1",
     });
   });
 

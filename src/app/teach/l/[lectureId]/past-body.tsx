@@ -125,6 +125,7 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
         lectureName={lecture.name}
         slides={slides}
         courseId={lecture.course_id}
+        teacherId={user.id}
       >
         {/* The heading of the past lecture (Figma 34:1117): name to rename, when, joined, lost taps, export. */}
         <div className="flex animate-page-in flex-wrap items-center gap-x-8 gap-y-3">

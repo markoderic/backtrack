@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 
 const slidesResult = vi.fn();
@@ -23,7 +23,7 @@ vi.mock("@/lib/supabase/browser", () => ({
   }),
 }));
 
-import { useSlideUrls } from "./useSlideUrls";
+import { useSlideUrls, RENEW_MS } from "./useSlideUrls";
 
 const path = (n: number) => `L/${n}.webp`;
 
@@ -113,5 +113,61 @@ describe("useSlideUrls", () => {
     rerender({ wanted: [2, 3] });
     await waitFor(() => expect(result.current[2]).toBe("https://signed/L/2.webp"));
     expect(result.current[3]).toBe("https://signed/L/3.webp");
+  });
+
+  describe("renewing before the urls expire", () => {
+    const wait = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
+    let signing = 0;
+    beforeEach(() => {
+      vi.useFakeTimers();
+      signing = 0;
+      createSignedUrls.mockImplementation(async (paths: string[]) => {
+        signing++;
+        return { data: paths.map((p) => ({ path: p, signedUrl: `https://signed/${p}?v=${signing}`, error: null })), error: null };
+      });
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("signs every wanted slide again after 3.5 hours, keeping the old urls until then", async () => {
+      const { result } = renderHook(() => useSlideUrls("L", [2, 4]));
+      await wait(0);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=1");
+      await wait(RENEW_MS - 1);
+      expect(createSignedUrls).toHaveBeenCalledTimes(1);
+      await wait(1);
+      expect(createSignedUrls).toHaveBeenCalledTimes(2);
+      expect(createSignedUrls).toHaveBeenLastCalledWith([path(2), path(4)], 14400);
+      expect(result.current[4]).toBe("https://signed/L/4.webp?v=2");
+    });
+
+    it("keeps the old urls when a renewal fails and tries again a minute later", async () => {
+      const { result } = renderHook(() => useSlideUrls("L", [2]));
+      await wait(0);
+      createSignedUrls.mockResolvedValueOnce({ data: null, error: { message: "sign broke" } });
+      await wait(RENEW_MS);
+      expect(createSignedUrls).toHaveBeenCalledTimes(2);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=1");
+      await wait(60 * 1000);
+      expect(createSignedUrls).toHaveBeenCalledTimes(3);
+      expect(result.current[2]).toBe("https://signed/L/2.webp?v=2");
+    });
+
+    it("starts one renewal, not one per focus", async () => {
+      renderHook(() => useSlideUrls("L", [2]));
+      await wait(0);
+      vi.setSystemTime(Date.now() + 4 * 60 * 60 * 1000);
+      for (let i = 0; i < 5; i++) await act(async () => window.dispatchEvent(new Event("focus")));
+      await wait(0);
+      expect(createSignedUrls).toHaveBeenCalledTimes(2);
+    });
+
+    it("catches up when the page is shown again after a sleep", async () => {
+      const { result } = renderHook(() => useSlideUrls("L", [3]));
+      await wait(0);
+      vi.setSystemTime(Date.now() + 4 * 60 * 60 * 1000);
+      await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+      await wait(0);
+      expect(result.current[3]).toBe("https://signed/L/3.webp?v=2");
+    });
   });
 });

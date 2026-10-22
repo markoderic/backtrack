@@ -75,6 +75,7 @@ export async function LiveBody({
         code={lecture.code}
         // ?end=1 comes from the End lecture links.
         confirmEndOnLoad={end === "1"}
+        teacherId={user.id}
       />
     </div>
   );
