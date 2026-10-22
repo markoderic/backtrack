@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // from("lost_taps").update(patch).eq("id", id).select("id")
@@ -28,6 +28,7 @@ function show(o: { spot?: Spot; students?: number; slideCount?: number } = {}) {
     students: o.students ?? 6,
     slideCount: o.slideCount ?? 23,
     onNoteSaved: vi.fn(),
+    onHighlightSaved: vi.fn(),
     onMoved: vi.fn(async () => {}),
     onBack: vi.fn(),
   };
@@ -231,5 +232,159 @@ describe("SpotDetail: leaving", () => {
     const { onBack } = show();
     fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SpotDetail: the highlight", () => {
+  const RECT = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+  const withRect: Spot = { ...lostSpot, rect: RECT };
+  const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
+  const boxes = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>("[data-highlight-box]"));
+  const layer = () => document.querySelector("[data-highlight-layer]") as HTMLElement;
+  const drawButton = (name = "Highlight") => screen.getByRole("button", { name });
+  // A drag from (500, 250) to (900, 450) on the 1000 x 500 slide.
+  function drag(from: [number, number] = [500, 250], to: [number, number] = [900, 450]) {
+    fireEvent.pointerDown(layer(), { ...mouse, clientX: from[0], clientY: from[1] });
+    fireEvent.pointerMove(layer(), { ...mouse, clientX: to[0], clientY: to[1] });
+    fireEvent.pointerUp(layer(), { ...mouse, clientX: to[0], clientY: to[1] });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, width: 1000, height: 500, toJSON: () => ({}),
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("draws the spot's highlight over the slide image", () => {
+    const { container } = show({ spot: withRect });
+    const [box] = boxes(container);
+    expect(boxes(container)).toHaveLength(1);
+    expect(box.style.left).toBe("10%");
+    expect(box.style.top).toBe("20%");
+    expect(box.style.width).toBe("30%");
+    expect(box.style.height).toBe("40%");
+    expect(screen.getByRole("img").parentElement?.contains(box)).toBe(true);
+  });
+
+  it("draws the highlight of a saved spot too", () => {
+    const { container } = show({ spot: { ...withRect, kind: "save" } });
+    expect(boxes(container)).toHaveLength(1);
+  });
+
+  it("draws nothing when the spot has no highlight", () => {
+    const { container } = show();
+    expect(boxes(container)).toHaveLength(0);
+  });
+
+  it("draws the highlight only on the spot's slide, not on the slides next to it", () => {
+    const { container } = show({ spot: withRect });
+    fireEvent.click(screen.getByRole("button", { name: "Next slide" }));
+    expect(boxes(container)).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /highlight/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to slide 7" }));
+    expect(boxes(container)).toHaveLength(1);
+  });
+
+  it("offers Highlight when there is none and Change highlight when there is one", () => {
+    const { unmount } = show();
+    expect(drawButton("Highlight")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change highlight" })).not.toBeInTheDocument();
+    unmount();
+    show({ spot: withRect });
+    expect(drawButton("Change highlight")).toBeInTheDocument();
+  });
+
+  it("a drag on the slide does nothing until Highlight is pressed", () => {
+    show();
+    expect(layer()).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("saves a dragged box as an update of the four hl_ columns of the row, then shows it", async () => {
+    const { onHighlightSaved, container } = show({ spot: withRect });
+    fireEvent.click(drawButton("Change highlight"));
+    drag();
+    await waitFor(() => expect(onHighlightSaved).toHaveBeenCalledWith({ x: 0.5, y: 0.5, w: 0.4, h: 0.4 }));
+    expect(from).toHaveBeenCalledWith("lost_taps");
+    expect(update).toHaveBeenCalledWith({ hl_x: 0.5, hl_y: 0.5, hl_w: 0.4, hl_h: 0.4 });
+    expect(eq).toHaveBeenCalledWith("id", "tap-1");
+    expect(selectAfter).toHaveBeenCalledWith("id");
+    expect(await screen.findByRole("status")).toHaveTextContent("Highlight saved");
+    const [box] = boxes(container);
+    expect(boxes(container)).toHaveLength(1);
+    expect(box.style.left).toBe("50%");
+    expect(box.style.width).toBe("40%");
+    // The drawing layer goes away when the highlight is saved.
+    expect(layer()).toBeNull();
+  });
+
+  it("adds a first highlight to a spot that had none", async () => {
+    const { onHighlightSaved } = show();
+    fireEvent.click(drawButton());
+    drag();
+    await waitFor(() => expect(onHighlightSaved).toHaveBeenCalled());
+    expect(drawButton("Change highlight")).toBeInTheDocument();
+  });
+
+  it("a click on the slide saves nothing", () => {
+    show();
+    fireEvent.click(drawButton());
+    drag([500, 250], [500, 250]);
+    expect(update).not.toHaveBeenCalled();
+    expect(layer()).toBeInTheDocument();
+  });
+
+  it("Escape stops drawing without saving", () => {
+    show({ spot: withRect });
+    fireEvent.click(drawButton("Change highlight"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(layer()).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("pressing the button again stops drawing", () => {
+    show();
+    fireEvent.click(drawButton());
+    expect(drawButton()).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(drawButton());
+    expect(layer()).toBeNull();
+  });
+
+  it("says plainly when the database refuses, and keeps the old highlight", async () => {
+    selectAfter.mockResolvedValue({ data: null, error: { message: "permission denied" } });
+    const { onHighlightSaved, container } = show({ spot: withRect });
+    fireEvent.click(drawButton("Change highlight"));
+    drag();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the highlight");
+    expect(onHighlightSaved).not.toHaveBeenCalled();
+    expect(boxes(container)).toHaveLength(1);
+    expect(boxes(container)[0].style.left).toBe("10%");
+  });
+
+  it("treats an update that changed no row as a failure", async () => {
+    selectAfter.mockResolvedValue({ data: [], error: null });
+    const { onHighlightSaved } = show();
+    fireEvent.click(drawButton());
+    drag();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the highlight");
+    expect(onHighlightSaved).not.toHaveBeenCalled();
+  });
+
+  it("moving the marker takes the highlight off the row, as it belonged to the slide it was drawn on", async () => {
+    const { onMoved, container } = show({ spot: withRect });
+    fireEvent.click(move());
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(6));
+    expect(update).toHaveBeenCalledWith({ slide_number: 6, hl_x: null, hl_y: null, hl_w: null, hl_h: null });
+    expect(boxes(container)).toHaveLength(0);
+  });
+
+  it("moving the marker of a spot with no highlight changes only the slide", async () => {
+    const { onMoved } = show();
+    fireEvent.click(move());
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(6));
+    expect(update).toHaveBeenCalledWith({ slide_number: 6 });
   });
 });

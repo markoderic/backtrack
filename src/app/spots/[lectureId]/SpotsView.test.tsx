@@ -287,3 +287,75 @@ describe("SpotsView: opening a spot", () => {
     expect(within(items[0]).getByText("ask Dr. Lee")).toBeInTheDocument();
   });
 });
+
+describe("SpotsView: highlights", () => {
+  const withBox = (id: string, slide: number, at: string, hl: Record<string, unknown>) => ({ ...tap(id, slide, at), ...hl });
+  const boxes = () => Array.from(document.querySelectorAll<HTMLElement>("[data-highlight-box]"));
+  const HL = { hl_x: 0.1, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 };
+
+  async function open(slide: string) {
+    show();
+    await screen.findByText(/You saved \d+ spots?/);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`Slide ${slide}`) }));
+  }
+
+  it("asks for the four hl_ columns", async () => {
+    show();
+    await screen.findByText("You saved 3 spots");
+    expect(calls.find((c) => c.startsWith("lost_taps.select("))).toMatch(/hl_x, hl_y, hl_w, hl_h/);
+  });
+
+  it("draws the highlight of the spot that has one", async () => {
+    tables.lost_taps = { data: [withBox("a", 3, "2026-10-26T14:05:00Z", HL)], error: null };
+    await open("3");
+    expect(boxes()).toHaveLength(1);
+    expect(boxes()[0].style.left).toBe("10%");
+    expect(boxes()[0].style.height).toBe("40%");
+    expect(screen.getByRole("button", { name: "Change highlight" })).toBeInTheDocument();
+  });
+
+  it("draws nothing for a spot with no highlight, or a half filled one", async () => {
+    tables.lost_taps = {
+      data: [tap("a", 3, "2026-10-26T14:05:00Z"), withBox("b", 5, "2026-10-26T14:06:00Z", { hl_x: 0.1, hl_y: null, hl_w: null, hl_h: null })],
+      error: null,
+    };
+    await open("3");
+    expect(boxes()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Highlight" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Slide 5/ }));
+    expect(boxes()).toHaveLength(0);
+  });
+
+  it("keeps a changed highlight when the student goes back to the list and opens the spot again", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, width: 1000, height: 500, toJSON: () => ({}),
+    });
+    tables.lost_taps = { data: [tap("b", 9, "2026-10-26T14:20:00Z")], error: null };
+    await open("9");
+    fireEvent.click(screen.getByRole("button", { name: "Highlight" }));
+    const layer = document.querySelector("[data-highlight-layer]") as HTMLElement;
+    const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
+    fireEvent.pointerDown(layer, { ...mouse, clientX: 500, clientY: 250 });
+    fireEvent.pointerUp(layer, { ...mouse, clientX: 900, clientY: 450 });
+    await screen.findByText("Highlight saved");
+    expect(update).toHaveBeenCalledWith({ hl_x: 0.5, hl_y: 0.5, hl_w: 0.4, hl_h: 0.4 });
+    expect(eqId).toHaveBeenCalledWith("id", "b");
+    fireEvent.click(screen.getByRole("button", { name: "Back to my spots" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Slide 9/ }));
+    expect(boxes()).toHaveLength(1);
+    expect(boxes()[0].style.left).toBe("50%");
+    vi.restoreAllMocks();
+  });
+
+  it("moving the marker clears the highlight, in the list state too", async () => {
+    tables.lost_taps = { data: [withBox("b", 9, "2026-10-26T14:20:00Z", HL)], error: null };
+    await open("9");
+    rpc.mockResolvedValue({ data: allStats({ 8: 3 }), error: null });
+    fireEvent.click(screen.getByRole("button", { name: "Move marker one slide earlier" }));
+    await screen.findByText("3 people got lost here");
+    expect(update).toHaveBeenCalledWith({ slide_number: 8, hl_x: null, hl_y: null, hl_w: null, hl_h: null });
+    expect(boxes()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Highlight" })).toBeInTheDocument();
+  });
+});

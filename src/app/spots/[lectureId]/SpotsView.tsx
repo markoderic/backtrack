@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { InfoButton } from "@/components/InfoButton";
 import { formatLectureDate } from "@/lib/lectureDate";
+import { isRect, type Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { flushLeftoverTaps, rejectedKey } from "@/lib/tapSync";
 import { SpotDetail, type Spot } from "./SpotDetail";
@@ -37,12 +38,18 @@ async function loadStudents(lectureId: string): Promise<Record<number, number>> 
   return out;
 }
 
+/** The row's highlight, or null when it has none (the database keeps all four columns or none). */
+function rectOf(r: Record<string, unknown>): Rect | null {
+  const rect = { x: r.hl_x, y: r.hl_y, w: r.hl_w, h: r.hl_h };
+  return isRect(rect) ? rect : null;
+}
+
 async function loadAll(lectureId: string, userId: string): Promise<Loaded> {
   const supabase = createBrowserSupabase();
   const [taps, slides, students] = await Promise.all([
     supabase
       .from("lost_taps")
-      .select("id, kind, slide_number, note, tapped_at")
+      .select("id, kind, slide_number, note, tapped_at, hl_x, hl_y, hl_w, hl_h")
       .eq("lecture_id", lectureId)
       .eq("undone", false)
       .eq("anon_id", userId),
@@ -59,6 +66,7 @@ async function loadAll(lectureId: string, userId: string): Promise<Loaded> {
       slideNumber: r.slide_number as number,
       note: (r.note as string | null) ?? null,
       tappedAt: r.tapped_at as string,
+      rect: rectOf(r),
     }))
     .sort((a, b) => a.tappedAt.localeCompare(b.tappedAt));
 
@@ -121,7 +129,8 @@ export function SpotsView({ lectureId, userId, lectureName, lectureDate, slideCo
         l && {
           ...l,
           students,
-          spots: l.spots.map((s) => (s.id === id ? { ...s, slideNumber: newSlide } : s)),
+          // The highlight stays behind: it was drawn on the slide the marker left.
+          spots: l.spots.map((s) => (s.id === id ? { ...s, slideNumber: newSlide, rect: null } : s)),
         },
       );
     } catch (e) {
@@ -131,6 +140,10 @@ export function SpotsView({ lectureId, userId, lectureName, lectureDate, slideCo
 
   function onNoteSaved(id: string, note: string | null) {
     setLoaded((l) => l && { ...l, spots: l.spots.map((s) => (s.id === id ? { ...s, note } : s)) });
+  }
+
+  function onHighlightSaved(id: string, rect: Rect) {
+    setLoaded((l) => l && { ...l, spots: l.spots.map((s) => (s.id === id ? { ...s, rect } : s)) });
   }
 
   const open = loaded?.spots.find((s) => s.id === openId);
@@ -161,6 +174,7 @@ export function SpotsView({ lectureId, userId, lectureName, lectureDate, slideCo
             students={loaded.students[open.slideNumber] ?? 0}
             slideCount={slideCount}
             onNoteSaved={(note) => onNoteSaved(open.id, note)}
+            onHighlightSaved={(rect) => onHighlightSaved(open.id, rect)}
             onMoved={(n) => onMoved(open.id, n)}
             onBack={() => setOpenId(null)}
           />

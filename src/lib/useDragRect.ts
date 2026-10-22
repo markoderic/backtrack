@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type RefObject } from "react";
 import { containedBox, rectFromDrag, type Box, type Rect } from "./rect";
+
+/** Style that puts a div exactly over the slide inside its layer (the whole layer until the slide's place is known). */
+export function slideBoxStyle(box: Box | null): CSSProperties {
+  return box
+    ? { left: box.left, top: box.top, width: box.width, height: box.height }
+    : { left: 0, top: 0, width: "100%", height: "100%" };
+}
 
 type Options = {
   /** The element that takes the pointer. It covers the slide image exactly (the image is object-contain inside it). */

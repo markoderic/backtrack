@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { HighlightBoxes } from "@/components/HighlightBoxes";
+import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
+import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
 import { useSlideImages } from "@/lib/useSlideImages";
 
 export type Spot = {
@@ -11,6 +14,8 @@ export type Spot = {
   slideNumber: number;
   note: string | null;
   tappedAt: string;
+  /** The part of the slide the student highlighted, as fractions of it. */
+  rect?: Rect | null;
 };
 
 type Props = {
@@ -21,6 +26,8 @@ type Props = {
   /** Only used to stop the next arrow on the last slide. It is never shown. */
   slideCount: number;
   onNoteSaved: (note: string | null) => void;
+  /** Called after the row's highlight was changed. */
+  onHighlightSaved?: (rect: Rect) => void;
   /** Called after the row was updated. Resolves when the counts were read again. */
   onMoved: (newSlide: number) => Promise<void>;
   onBack: () => void;
@@ -38,12 +45,53 @@ function countLine(kind: Spot["kind"], students: number): string | null {
   return null;
 }
 
+const NO_HIGHLIGHT = { hl_x: null, hl_y: null, hl_w: null, hl_h: null };
+
+/** Takes the pointer over the slide image while the student draws a new highlight. */
+function DrawLayer({ imageRef, onRect }: { imageRef: React.RefObject<HTMLImageElement | null>; onRect: (rect: Rect) => void }) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  // The Highlight button is already pressed, so a touch can draw too.
+  const { box, draft, handlers } = useDragRect({ layerRef, imageRef, touch: true, onRect });
+  return (
+    <div
+      ref={layerRef}
+      data-highlight-layer=""
+      className="absolute inset-0 select-none"
+      style={{ touchAction: "none", cursor: "crosshair" }}
+      {...handlers}
+    >
+      <div className="absolute" style={slideBoxStyle(box)}>
+        {draft && <HighlightBoxes rects={[draft]} />}
+      </div>
+    </div>
+  );
+}
+
 /** One spot: the slide, how many got lost on it, the note, and the marker. */
-export function SpotDetail({ lectureId, spot, students, slideCount, onNoteSaved, onMoved, onBack }: Props) {
+export function SpotDetail({ lectureId, spot, students, slideCount, onNoteSaved, onHighlightSaved, onMoved, onBack }: Props) {
   // The slide on screen. Browsing moves this; only "Move marker" moves the marker.
   const [viewing, setViewing] = useState(spot.slideNumber);
   const { urlFor } = useSlideImages(lectureId, viewing);
   const url = urlFor(viewing);
+
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [rect, setRect] = useState<Rect | null>(spot.rect ?? null);
+  const [drawing, setDrawing] = useState(false);
+  const [savingHighlight, setSavingHighlight] = useState(false);
+  const [highlightError, setHighlightError] = useState(false);
+  const [highlightSaved, setHighlightSaved] = useState(false);
+  // The highlight belongs to the slide of the spot, so it only shows and changes there.
+  const onSpotSlide = viewing === spot.slideNumber;
+  if (drawing && !onSpotSlide) setDrawing(false);
+
+  useEffect(() => {
+    if (!drawing) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setDrawing(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawing]);
 
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState(false);
@@ -55,7 +103,7 @@ export function SpotDetail({ lectureId, spot, students, slideCount, onNoteSaved,
   const noteChanged = note.trim() !== (spot.note ?? "");
 
   // update(...).select("id") so a row the database refused to change (no error, no row) is not taken for a success.
-  async function change(patch: { slide_number: number } | { note: string | null }): Promise<boolean> {
+  async function change(patch: Record<string, number | string | null>): Promise<boolean> {
     const { data, error } = await createBrowserSupabase()
       .from("lost_taps")
       .update(patch)
@@ -70,13 +118,33 @@ export function SpotDetail({ lectureId, spot, students, slideCount, onNoteSaved,
     setMoveError(false);
     const next = spot.slideNumber - 1;
     try {
-      if (!(await change({ slide_number: next }))) throw new Error("not changed");
+      // A highlight is a part of the slide it was drawn on, so it does not come along.
+      if (!(await change({ slide_number: next, ...(rect ? NO_HIGHLIGHT : {}) }))) throw new Error("not changed");
+      setRect(null);
       await onMoved(next);
       setViewing(next);
     } catch {
       setMoveError(true);
     } finally {
       setMoving(false);
+    }
+  }
+
+  async function saveHighlight(next: Rect) {
+    if (savingHighlight) return;
+    setSavingHighlight(true);
+    setHighlightError(false);
+    setHighlightSaved(false);
+    try {
+      if (!(await change({ hl_x: next.x, hl_y: next.y, hl_w: next.w, hl_h: next.h }))) throw new Error("not changed");
+      setRect(next);
+      setDrawing(false);
+      setHighlightSaved(true);
+      onHighlightSaved?.(next);
+    } catch {
+      setHighlightError(true);
+    } finally {
+      setSavingHighlight(false);
     }
   }
 
@@ -119,8 +187,12 @@ export function SpotDetail({ lectureId, spot, students, slideCount, onNoteSaved,
 
       <div className="flex min-h-40 items-center justify-center bg-neutral-100">
         {url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={`Slide ${viewing}`} className="h-auto w-full" />
+          <div className="relative w-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img ref={imageRef} src={url} alt={`Slide ${viewing}`} draggable={false} className="h-auto w-full" />
+            {onSpotSlide && rect && <HighlightBoxes rects={[rect]} />}
+            {onSpotSlide && drawing && <DrawLayer imageRef={imageRef} onRect={(r) => void saveHighlight(r)} />}
+          </div>
         )}
       </div>
 
@@ -173,6 +245,25 @@ export function SpotDetail({ lectureId, spot, students, slideCount, onNoteSaved,
         {noteSaved && <p role="status">Note saved</p>}
         {noteError && <p role="alert">Could not save the note. Try again.</p>}
       </div>
+
+      {onSpotSlide && (
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            aria-pressed={drawing}
+            onClick={() => {
+              setDrawing((d) => !d);
+              setHighlightError(false);
+              setHighlightSaved(false);
+            }}
+            className={`self-start border border-current px-4 py-3 ${drawing ? "bg-black text-white" : ""}`}
+          >
+            {rect ? "Change highlight" : "Highlight"}
+          </button>
+          {highlightSaved && <p role="status">Highlight saved</p>}
+          {highlightError && <p role="alert">Could not save the highlight. Try again.</p>}
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <button

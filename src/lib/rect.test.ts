@@ -59,6 +59,10 @@ describe("isRect", () => {
     expect(isRect({ x: 0.1, y: 0.2, w: 0.3, h: 0.4 })).toBe(true);
   });
 
+  it("accepts a box that touches the edge by a float rounding hair, as the database returns them", () => {
+    expect(isRect({ x: Math.fround(0.3333), y: 0, w: Math.fround(0.6667), h: 1 })).toBe(true);
+  });
+
   it("rejects anything else", () => {
     expect(isRect(null)).toBe(false);
     expect(isRect("x")).toBe(false);

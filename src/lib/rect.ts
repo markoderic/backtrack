@@ -13,13 +13,16 @@ function fits(start: number, size: number): boolean {
   return start >= 0 && size > 0 && f32(f32(start) + f32(size)) <= 1;
 }
 
+/** Slack for sums like x + w that are 1 in the database (float4) but a hair over in a double. */
+const EDGE = 1e-6;
+
 /** True for four finite fractions that lie inside the slide. */
 export function isRect(v: unknown): v is Rect {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
   if (![r.x, r.y, r.w, r.h].every((n) => typeof n === "number" && Number.isFinite(n))) return false;
   const { x, y, w, h } = r as Rect;
-  return x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= 1 && y + h <= 1;
+  return x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= 1 + EDGE && y + h <= 1 + EDGE;
 }
 
 /** One axis of a drag: where it starts and how long it is, both as fractions of the slide. */

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import type { Rect } from "@/lib/rect";
-import { useDragRect } from "@/lib/useDragRect";
+import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
 
 export type Highlight = { kind: "lost" | "save"; rect: Rect; note?: string };
 
@@ -112,14 +112,7 @@ export function HighlightLayer({ viewing, imageRef, onChoose }: Props) {
         onPointerCancel={handlers.onPointerCancel}
       >
         {/* The box of the slide itself, so the rects are fractions of the slide and not of the black bars. */}
-        <div
-          className="absolute"
-          style={
-            box
-              ? { left: box.left, top: box.top, width: box.width, height: box.height }
-              : { left: 0, top: 0, width: "100%", height: "100%" }
-          }
-        >
+        <div className="absolute" style={slideBoxStyle(box)}>
           {shown && <HighlightBoxes rects={[shown]} />}
           {pending && (
             <div
