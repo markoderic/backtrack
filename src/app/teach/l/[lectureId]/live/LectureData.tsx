@@ -7,7 +7,7 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { ButtonPrimary } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
-import { highlightsBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
+import { highlightsBySlide, notesBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
 import { useSlideUrls } from "@/lib/useSlideUrls";
 import { textLinkClass } from "../../../ui";
 
@@ -110,16 +110,6 @@ function noteTime(iso: string): string | null {
   return clock.format(d).replace(/\s?[AP]M$/i, "");
 }
 
-type Note = { id: string; text: string; at: string };
-
-/** The notes on one slide, oldest first, from counted rows only (lost and not undone). No names. */
-function notesOn(rows: TapRow[], slide: number): Note[] {
-  return rows
-    .filter((t) => t.kind === "lost" && !t.undone && t.slide_number === slide && t.note && t.note.trim() !== "")
-    .sort((a, b) => a.tapped_at.localeCompare(b.tapped_at) || a.id.localeCompare(b.id))
-    .map((t) => ({ id: t.id, text: t.note!.trim(), at: t.tapped_at }));
-}
-
 /** "482916" -> "482 916", as the design shows a code. */
 const spacedCode = (code: string) => (code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code);
 
@@ -155,10 +145,6 @@ export function LectureData({
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const backLink = useRef<HTMLAnchorElement>(null);
-  // True from a press inside the End area until that press is done. A blur it causes (Safari and
-  // Firefox on macOS don't focus a pressed button, so focus goes nowhere) must not close the
-  // confirm, or End lecture could never be clicked there.
-  const pressingInside = useRef(false);
   const bars = useRef<HTMLOListElement>(null);
   // Columns too narrow for every slide number (measured, so it follows the window).
   const [dense, setDense] = useState(false);
@@ -375,7 +361,8 @@ export function LectureData({
   const selectedSlide = slides[selected - 1];
   const selectedStat = stats[selected - 1];
   const selectedRects = boxes.get(selected);
-  const selectedNotes = useMemo(() => notesOn(rows, selected), [rows, selected]);
+  const noteMap = useMemo(() => notesBySlide(rows), [rows]);
+  const selectedNotes = noteMap.get(selected) ?? [];
 
   // The live page has this heading; the past page passes its own (children) instead.
   const ownHeading = mode === "live";
@@ -419,15 +406,11 @@ export function LectureData({
               // A non-modal popover: Tab past Keep going (or anywhere else) closes it, so it never
               // stays open over the page with focus behind it. A press inside it never closes it,
               // and switching windows leaves it open. A press outside closes it (pointerdown above).
-              onPointerDown={() => {
-                pressingInside.current = true;
-                // The blur a press causes comes in the same task; after it the flag is done.
-                setTimeout(() => {
-                  pressingInside.current = false;
-                }, 0);
-              }}
+              // A press inside never moves focus (no blur, so no close and no reopen on touch, and
+              // none in Safari or Firefox on macOS where a pressed button isn't focused). Clicks still fire.
+              onMouseDown={(e) => e.preventDefault()}
               onBlur={(e) => {
-                if (!confirming || ending || pressingInside.current || !document.hasFocus()) return;
+                if (!confirming || ending || !document.hasFocus()) return;
                 if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
                 closeConfirm(false);
               }}
@@ -452,7 +435,6 @@ export function LectureData({
                   role="dialog"
                   aria-labelledby="end-lecture-title"
                   aria-describedby="end-lecture-text"
-                  // A press on its text or padding moves focus here, still inside, instead of nowhere.
                   tabIndex={-1}
                   className="absolute top-full right-0 z-30 mt-px flex outline-hidden w-80 max-w-[calc(100vw-32px)] origin-top-right animate-pop-in flex-col gap-3 rounded-md border border-hairline bg-surface p-5 shadow-popover"
                 >

@@ -94,8 +94,11 @@ describe("notesBySlide", () => {
       tap({ id: "c", slide_number: 4, note: "other slide" }),
     ];
     const notes = notesBySlide(rows);
-    expect(notes.get(2)).toEqual(["first", "second"]);
-    expect(notes.get(4)).toEqual(["other slide"]);
+    expect(notes.get(2)).toEqual([
+      { id: "a", text: "first", at: "2026-10-26T10:01:00Z" },
+      { id: "b", text: "second", at: "2026-10-26T10:02:00Z" },
+    ]);
+    expect(notes.get(4)?.map((n) => n.text)).toEqual(["other slide"]);
     expect(notes.get(1)).toBeUndefined();
   });
 

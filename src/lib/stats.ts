@@ -49,15 +49,17 @@ export function slideStats(taps: TapRow[], slideCount: number): SlideStat[] {
   }));
 }
 
+export type SlideNote = { id: string; text: string; at: string };
+
 /** The notes on each slide, oldest first, from counted rows only. No names. */
-export function notesBySlide(taps: TapRow[]): Map<number, string[]> {
-  const out = new Map<number, string[]>();
+export function notesBySlide(taps: TapRow[]): Map<number, SlideNote[]> {
+  const out = new Map<number, SlideNote[]>();
   const sorted = taps
     .filter((t) => counts(t) && t.note && t.note.trim() !== "")
     .sort((a, b) => a.tapped_at.localeCompare(b.tapped_at) || a.id.localeCompare(b.id));
   for (const t of sorted) {
     const list = out.get(t.slide_number) ?? [];
-    list.push(t.note!.trim());
+    list.push({ id: t.id, text: t.note!.trim(), at: t.tapped_at });
     out.set(t.slide_number, list);
   }
   return out;

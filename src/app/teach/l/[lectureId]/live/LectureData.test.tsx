@@ -579,50 +579,43 @@ describe("End lecture", () => {
     expect(h.rpc).not.toHaveBeenCalled();
   });
 
-  it("a press inside that sends focus nowhere (Safari, Firefox on macOS) keeps it open, and End lecture still ends", async () => {
+  it("a press inside the End area never moves focus (mousedown is cancelled), and End lecture still ends", async () => {
     await open();
     const dialog = screen.getByRole("dialog");
-    const keep = within(dialog).getByRole("button", { name: "Keep going" });
     const end = within(dialog).getByRole("button", { name: "End lecture" });
-    // The press on End lecture: pointerdown, then Keep going loses focus to nothing.
-    fireEvent.pointerDown(end);
-    fireEvent.blur(keep, { relatedTarget: null });
+    // fireEvent returns false when the event's default was prevented: no focus change, so no blur.
+    expect(fireEvent.mouseDown(end)).toBe(false);
+    expect(fireEvent.mouseDown(dialog)).toBe(false);
+    expect(fireEvent.mouseDown(screen.getByText(DIALOG_TEXT))).toBe(false);
+    expect(fireEvent.mouseDown(within(dialog).getByRole("button", { name: "Keep going" }))).toBe(false);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("tabindex", "-1");
     fireEvent.click(end);
     await waitFor(() => expect(screen.getByText("Lecture ended.")).toBeInTheDocument());
     expect(h.rpc).toHaveBeenCalledWith("end_lecture", { p_lecture_id: LECTURE });
   });
 
-  it("a press on the confirm's text or padding keeps it open (focus moves to the confirm itself)", async () => {
+  it("tapping the End lecture toggle while the confirm is open closes it and it stays closed", async () => {
     await open();
-    const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveAttribute("tabindex", "-1");
-    const keep = within(dialog).getByRole("button", { name: "Keep going" });
-    fireEvent.pointerDown(dialog);
-    fireEvent.blur(keep, { relatedTarget: dialog });
+    // A touch tap: the compat mousedown is cancelled, so focus never leaves (no blur), then the click.
+    expect(fireEvent.mouseDown(endButton())).toBe(false);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    fireEvent.pointerDown(screen.getByText(DIALOG_TEXT));
-    fireEvent.blur(keep, { relatedTarget: null });
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(endButton());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.rpc).not.toHaveBeenCalled();
   });
 
-  it("an inside press only covers its own blur: a later Tab out to nothing still closes it", async () => {
-    vi.useFakeTimers();
-    try {
-      renderLive();
-      await act(async () => {});
-      fireEvent.click(endButton());
-      const keep = within(screen.getByRole("dialog")).getByRole("button", { name: "Keep going" });
-      fireEvent.pointerDown(keep);
-      await act(async () => vi.advanceTimersByTimeAsync(1));
-      // Focus leaves the page content (Tab out to the browser's own UI): relatedTarget is null.
-      fireEvent.blur(keep, { relatedTarget: null });
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      expect(h.rpc).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+  it("a press outside the End area is not cancelled", async () => {
+    await open();
+    expect(fireEvent.mouseDown(within(slideRow(1)).getByRole("button"))).toBe(true);
+  });
+
+  it("focus leaving to nothing (Tab out of the page) closes it", async () => {
+    await open();
+    const keep = within(screen.getByRole("dialog")).getByRole("button", { name: "Keep going" });
+    fireEvent.blur(keep, { relatedTarget: null });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(h.rpc).not.toHaveBeenCalled();
   });
 
   it("focus moving inside the confirm keeps it open", async () => {
