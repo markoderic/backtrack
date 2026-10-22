@@ -82,14 +82,16 @@ export function highlightsBySlide(taps: TapRow[]): Map<number, Rect[]> {
 }
 
 /**
- * The slides whose bar is red: every slide whose people count is one of the three highest
- * different counts above zero. Ties are all red, so with counts 5, 2, 2, 2, 1, 0 every slide
- * with 5, 2 or 1 is red and the 0 is not (Marko: "why is 2 highlighted in red when there is a
- * bunch of 2 lost"). A slide nobody is lost on is never red.
+ * The slides whose bar is red: a slide whose people count is one of the three highest
+ * different counts above zero (ties all red, so with 5, 5, 3 both 5s are red) AND at least
+ * half of the highest count, so a lone slide far ahead does not drag small counts in (with 5, 2,
+ * 1 only the 5 is red). Marko asked why one slide with 2 lost was red when others with 2 were
+ * gray; the controller ruled the half rule on top. A slide nobody is lost on is never red.
  */
 export function redSlides(rows: SlideStat[]): Set<number> {
   const top = [...new Set(rows.map((r) => r.students).filter((n) => n > 0))].sort((a, b) => b - a).slice(0, 3);
-  return new Set(rows.filter((r) => top.includes(r.students)).map((r) => r.slide_number));
+  const floor = (top[0] ?? 0) / 2;
+  return new Set(rows.filter((r) => top.includes(r.students) && r.students >= floor).map((r) => r.slide_number));
 }
 
 /**

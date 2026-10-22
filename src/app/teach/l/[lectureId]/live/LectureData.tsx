@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
@@ -36,6 +36,10 @@ const BAR_MIN = 2;
  * number. Columns are never narrower than 24 px (the WCAG 2.5.8 target minimum).
  */
 const DENSE_COLUMN = 40;
+/** The narrowest a column gets (WCAG 2.5.8 target size); past that the chart scrolls. */
+const MIN_COLUMN = 24;
+/** The chart's side padding inside its scroller (px-1.5). */
+const CHART_PAD = 6;
 
 type Props = {
   lectureId: string;
@@ -220,6 +224,12 @@ export function LectureData({
   const bars = useRef<HTMLOListElement>(null);
   // Columns too narrow for every slide number (measured, so it follows the window).
   const [dense, setDense] = useState(false);
+  // When the slides do not all fit: the ones in view, as "first-last" (null when all fit).
+  const [inView, setInView] = useState<string | null>(null);
+  const chartWidth = useRef(0);
+  // The shape the panel draws a slide at until its image loads: the last image's shape.
+  const [slideRatio, setSlideRatio] = useState(16 / 9);
+  const tipButton = useRef<HTMLElement | null>(null);
   // Where focus goes once the confirm it was in is gone: the way back after ending here,
   // or End class again after a failure. Ended by someone else, focus is left alone.
   const focusAfterEnd = useRef<"back" | "end" | null>(null);
@@ -412,11 +422,42 @@ export function LectureData({
     if (!ol || typeof ResizeObserver === "undefined" || slides.length === 0) return;
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? 0;
+      chartWidth.current = width;
       setDense(width / slides.length < DENSE_COLUMN);
+      measureView();
     });
     observer.observe(ol);
     return () => observer.disconnect();
+    // measureView reads only refs and the slide count.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slides.length, loaded]);
+
+  /**
+   * Which slides are in view when 24 px columns do not all fit (macOS hides scrollbars, so the
+   * chart says it, with a fade on the side that has more). Renders only when the range changes.
+   */
+  function measureView() {
+    const ol = bars.current;
+    const width = chartWidth.current;
+    const n = slides.length;
+    if (!ol || n === 0 || width <= 0 || width / n >= MIN_COLUMN) {
+      setInView(null);
+      return;
+    }
+    const left = ol.scrollLeft;
+    const first = Math.min(n, Math.max(1, Math.round((left - CHART_PAD) / MIN_COLUMN) + 1));
+    const last = Math.min(n, Math.max(first, Math.floor((left + width + CHART_PAD) / MIN_COLUMN)));
+    setInView(`${first}-${last}`);
+  }
+
+  /** Moves the chart by most of its width, earlier (-1) or later (1). */
+  function scrollChart(dir: -1 | 1) {
+    const ol = bars.current;
+    if (!ol) return;
+    const by = Math.max(MIN_COLUMN, Math.round(chartWidth.current * 0.8));
+    ol.scrollLeft = Math.max(0, ol.scrollLeft + dir * by);
+    measureView();
+  }
 
   const rows = useMemo(() => Array.from(taps.values()), [taps]);
   const stats = useMemo(() => slideStats(rows, slides.length), [rows, slides.length]);
@@ -424,7 +465,7 @@ export function LectureData({
   // default selection and the labels that always show in a dense chart.
   const ranked = useMemo(() => topThree(stats), [stats]);
   const top = useMemo(() => new Set(ranked), [ranked]);
-  // Red bars: the three highest different counts, ties all red (see redSlides).
+  // Red bars: the three highest different counts that are at least half the highest, ties all red (see redSlides).
   const red = useMemo(() => redSlides(stats), [stats]);
   const most = Math.max(0, ...stats.map((s) => s.students));
   const boxes = useMemo(() => highlightsBySlide(rows), [rows]);
@@ -432,6 +473,10 @@ export function LectureData({
   const noteMap = useMemo(() => notesBySlide(rows), [rows]);
 
   const liveSlide = Math.min(Math.max(current, 1), Math.max(slides.length, 1));
+  // The panel opens on the most lost slide and then stays there: once someone is lost, that
+  // slide is pinned, so a later tap that changes the top slide never swaps the panel (or the
+  // big view) out from under the teacher. Clicking a bar picks another.
+  if (loaded && picked === null && ranked[0] !== undefined) setPicked(ranked[0]);
   const selected =
     picked !== null && picked >= 1 && picked <= slides.length ? picked : (ranked[0] ?? (live ? liveSlide : 1));
   const selectedSlide = slides[selected - 1];
@@ -471,6 +516,7 @@ export function LectureData({
   const showTip = (n: number, button: HTMLElement) => {
     const box = chartBox.current;
     if (!box) return;
+    tipButton.current = button;
     const b = box.getBoundingClientRect();
     const r = button.getBoundingClientRect();
     const count = button.querySelector("[data-count]")?.getBoundingClientRect() ?? r;
@@ -482,6 +528,39 @@ export function LectureData({
     if (url && typeof Image !== "undefined") new Image().src = url;
   };
   const tipStat = tip ? stats[tip.n - 1] : undefined;
+  const hideTip = () => {
+    tipButton.current = null;
+    setTip(null);
+  };
+  // A bar that grows under the card (a new tap) takes the card up with its count.
+  const showTipRef = useRef(showTip);
+  useLayoutEffect(() => {
+    showTipRef.current = showTip;
+  });
+  const tipN = tip?.n;
+  useLayoutEffect(() => {
+    if (tipN !== undefined && tipButton.current) showTipRef.current(tipN, tipButton.current);
+  }, [stats, tipN]);
+
+  // The selected bar is always in view: on load, on a pick, and when the chart starts to scroll.
+  const scrolls = inView !== null;
+  useEffect(() => {
+    const ol = bars.current;
+    const li = ol?.querySelector<HTMLElement>(`[data-testid="slide-${selected}"]`);
+    if (!ol || !li || !scrolls) return;
+    const o = ol.getBoundingClientRect();
+    const r = li.getBoundingClientRect();
+    if (o.width === 0) return;
+    if (r.left < o.left + CHART_PAD) ol.scrollLeft += r.left - o.left - CHART_PAD;
+    else if (r.right > o.right - CHART_PAD) ol.scrollLeft += r.right - o.right + CHART_PAD;
+    else return;
+    measureView();
+    // measureView reads only refs and the slide count.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, loaded, scrolls]);
+  const [viewFirst, viewLast] = inView ? inView.split("-").map(Number) : [1, slides.length];
+  const redBefore = inView ? [...red].filter((n) => n < viewFirst).length : 0;
+  const redAfter = inView ? [...red].filter((n) => n > viewLast).length : 0;
 
   // The live page has this heading; the past page passes its own (children) instead.
   const ownHeading = mode === "live";
@@ -661,7 +740,10 @@ export function LectureData({
                   ref={bars}
                   data-testid="bars"
                   data-dense={dense ? "true" : "false"}
-                  onScroll={() => setTip(null)}
+                  onScroll={() => {
+                    hideTip();
+                    measureView();
+                  }}
                   className="-mx-3 -my-2 flex h-[396px] animate-fade-in items-end overflow-x-auto overflow-y-hidden px-1.5 py-2"
                 >
                   {slides.map((slide) => {
@@ -689,9 +771,9 @@ export function LectureData({
                           aria-pressed={isSelected}
                           onClick={() => setPicked(slide.number)}
                           onPointerEnter={(e) => showTip(slide.number, e.currentTarget)}
-                          onPointerLeave={() => setTip(null)}
+                          onPointerLeave={hideTip}
                           onFocus={(e) => showTip(slide.number, e.currentTarget)}
-                          onBlur={() => setTip(null)}
+                          onBlur={hideTip}
                           className="group press focus-ring relative flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm px-[8%]"
                         >
                           {/* What a screen reader hears; the drawing below is hidden from it. */}
@@ -765,6 +847,21 @@ export function LectureData({
                     );
                   })}
                 </ol>
+                {/* More slides on a side: a fade over that edge (the scrollbar may be hidden). */}
+                {scrolls && viewFirst > 1 && (
+                  <div
+                    aria-hidden
+                    data-testid="fade-left"
+                    className="pointer-events-none absolute inset-y-0 -left-3 w-12 bg-linear-to-r from-bg to-transparent"
+                  />
+                )}
+                {scrolls && viewLast < slides.length && (
+                  <div
+                    aria-hidden
+                    data-testid="fade-right"
+                    className="pointer-events-none absolute inset-y-0 -right-3 w-12 bg-linear-to-l from-bg to-transparent"
+                  />
+                )}
                 {/* The hover and focus card: the same words a screen reader hears in the bar's name. */}
                 {tip && tipStat && (
                   <div
@@ -783,6 +880,38 @@ export function LectureData({
                   </div>
                 )}
               </div>
+              {/* Which slides are in view, and the way to the others, when they do not all fit. */}
+              {scrolls && (
+                <div data-testid="chart-scroll" className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    aria-label="Earlier slides"
+                    disabled={viewFirst <= 1}
+                    onClick={() => scrollChart(-1)}
+                    className={`${buttonSecondaryClass} size-9! px-0! disabled:opacity-40`}
+                  >
+                    <Icon name="back" size={18} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Later slides"
+                    disabled={viewLast >= slides.length}
+                    onClick={() => scrollChart(1)}
+                    className={`${buttonSecondaryClass} size-9! px-0! disabled:opacity-40`}
+                  >
+                    <Icon name="forward" size={18} />
+                  </button>
+                  <p data-testid="chart-range" className="type-small text-secondary">
+                    Slides {viewFirst} to {viewLast} of {slides.length}
+                    {redBefore > 0 && (
+                      <span className="text-ink">{`, ${plural(redBefore, "red bar", "red bars")} to the left`}</span>
+                    )}
+                    {redAfter > 0 && (
+                      <span className="text-ink">{`, ${plural(redAfter, "red bar", "red bars")} to the right`}</span>
+                    )}
+                  </p>
+                </div>
+              )}
             </>
           )}
         </section>
@@ -812,6 +941,9 @@ export function LectureData({
                   url={slideUrls[selected]}
                   rects={selectedRects}
                   marksLabel={marked(marks.get(selected) ?? 0)}
+                  onOpen={() => setPicked(selected)}
+                  ratio={slideRatio}
+                  onRatio={setSlideRatio}
                 />
                 <p data-testid="panel-marks" className="type-small text-secondary">
                   {marked(marks.get(selected) ?? 0) ?? "Nobody marked the spot"}

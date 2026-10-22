@@ -154,10 +154,19 @@ describe("highlightsBySlide", () => {
 
 describe("redSlides", () => {
   it("is every slide whose count is one of the three highest different counts, ties all red", () => {
-    // Counts 5, 2, 2, 2, 1, 0: the top three different counts are 5, 2 and 1.
-    expect([...redSlides(stat([5, 2, 2, 2, 1, 0]))].sort()).toEqual([1, 2, 3, 4, 5]);
+    // 6, 5, 5, 4, 1, 0: the top three different counts are 6, 5 and 4, all at least half of 6.
+    expect([...redSlides(stat([6, 5, 5, 4, 1, 0]))].sort()).toEqual([1, 2, 3, 4]);
     // 4 different counts: the lowest one (1) is gray.
-    expect([...redSlides(stat([1, 4, 2, 3, 1]))].sort()).toEqual([2, 3, 4]);
+    expect([...redSlides(stat([4, 4, 3, 2, 1]))].sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it("leaves a top-3 count gray when it is under half the highest one", () => {
+    // 5, 2, 1: only 5 is red (2 and 1 are under 2.5).
+    expect([...redSlides(stat([5, 2, 2, 2, 1, 0]))]).toEqual([1]);
+    // 4, 2: 2 is exactly half, so red.
+    expect([...redSlides(stat([4, 2, 0]))].sort()).toEqual([1, 2]);
+    // 11, 8, 5: 5 is under 5.5.
+    expect([...redSlides(stat([0, 1, 3, 5, 8, 5, 11, 4, 2, 0]))].sort((a, b) => a - b)).toEqual([5, 7]);
   });
 
   it("never makes a slide nobody is lost on red", () => {

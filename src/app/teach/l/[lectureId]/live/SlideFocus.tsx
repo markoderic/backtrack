@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
@@ -9,6 +9,8 @@ import type { Rect } from "@/lib/rect";
 
 /** Every student's box, translucent: where most people pointed comes out darkest (Figma 34:862). */
 const BOX = "rounded-xs bg-lost/20";
+/** The shape a slide is drawn at until its image says otherwise. */
+const WIDE = 16 / 9;
 
 type Props = {
   number: number;
@@ -19,12 +21,18 @@ type Props = {
   rects: Rect[];
   /** "3 marked the spot", or nothing, for the big view's caption. */
   marksLabel: string | null;
+  /** Called when the big view opens (the data view pins the slide then, so it never swaps). */
+  onOpen?: () => void;
+  /** The shape to draw the slide at until its image loads (the last slide's shape). */
+  ratio?: number;
+  /** Told the image's own shape once it loads. */
+  onRatio?: (ratio: number) => void;
 };
 
-/** The slide while its image is not there: a blank slide of the usual shape with its first line. */
+/** The slide while its image is not there: a blank slide with its first line. */
 function Blank({ firstLine }: { firstLine: string }) {
   return (
-    <div className="flex aspect-video w-full items-center justify-center bg-surface p-6">
+    <div className="flex h-full w-full items-center justify-center bg-surface p-6">
       {firstLine && <span className="line-clamp-2 text-center type-small text-secondary">{firstLine}</span>}
     </div>
   );
@@ -32,11 +40,16 @@ function Blank({ firstLine }: { firstLine: string }) {
 
 /**
  * The selected slide, large, with every student's Mark the spot box on it. It fills the
- * panel's width; pressing it opens the slide bigger still, over the page (a modal dialog:
- * Esc, Close or a press on the dimmed page close it, and focus goes back to the slide).
+ * panel's width at the slide's own shape (the last image's shape until this one loads, so
+ * nothing below jumps); pressing it opens the slide bigger still, over the page. The big view
+ * is a modal dialog: Esc, Close or a press on the dimmed page close it, Tab stays on Close (also
+ * after a click on the slide inside it), the page behind does not scroll, and focus goes back
+ * to the slide.
  */
-export function SlideFocus({ number, firstLine, url, rects, marksLabel }: Props) {
+export function SlideFocus({ number, firstLine, url, rects, marksLabel, onOpen, ratio: guess, onRatio }: Props) {
   const [open, setOpen] = useState(false);
+  const [own, setOwn] = useState<number | null>(null);
+  const ratio = own ?? guess ?? WIDE;
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
@@ -45,37 +58,75 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel }: Props)
     setOpen(false);
     trigger.current?.focus();
   };
-
+  const closeRef = useRef(close);
   useEffect(() => {
-    if (open) closeButton.current?.focus();
+    closeRef.current = close;
+  });
+
+  // While open: focus starts on Close; Esc and Tab are heard on the whole document, so a click
+  // on the slide or the title (which moves focus off Close) never lets them reach the page.
+  useEffect(() => {
+    if (!open) return;
+    closeButton.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeRef.current();
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        closeButton.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown, true);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.body.style.overflow = overflow;
+    };
   }, [open]);
 
-  // Esc closes; Tab stays on Close, the one control in the dialog.
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    } else if (e.key === "Tab") {
-      e.preventDefault();
-      closeButton.current?.focus();
-    }
-  }
-
-  const slide = (big: boolean) => (
+  const small = (
     <div
-      className={`relative overflow-hidden rounded-sm bg-surface shadow-slide ${big ? "inline-block max-w-full" : "w-full"}`}
+      data-testid="slide-box"
+      className="relative w-full overflow-hidden rounded-sm bg-surface shadow-slide"
+      style={{ aspectRatio: ratio }}
     >
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={url}
-          alt={big ? `Slide ${number}` : ""}
+          alt=""
           draggable={false}
-          className={big ? "block h-auto max-h-[calc(100dvh-160px)] w-auto max-w-full" : "block h-auto w-full"}
+          onLoad={(e) => {
+            const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+            if (w > 0 && h > 0) {
+              setOwn(w / h);
+              onRatio?.(w / h);
+            }
+          }}
+          className="absolute inset-0 block h-full w-full"
         />
       ) : (
-        <div className={big ? "w-[min(1280px,calc(100vw-64px))]" : "w-full"}>
+        <Blank firstLine={firstLine} />
+      )}
+      <HighlightBoxes rects={rects} boxClassName={BOX} />
+    </div>
+  );
+
+  const big = (
+    <div className="relative inline-block max-w-full overflow-hidden rounded-sm bg-surface shadow-slide">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={`Slide ${number}`}
+          draggable={false}
+          className="block h-auto max-h-[calc(100dvh-160px)] w-auto max-w-full"
+        />
+      ) : (
+        <div className="w-[min(1280px,calc(100vw-64px))]" style={{ aspectRatio: ratio }}>
           <Blank firstLine={firstLine} />
         </div>
       )}
@@ -91,10 +142,13 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel }: Props)
         data-testid={`highlights-${number}`}
         aria-haspopup="dialog"
         aria-label={`Enlarge slide ${number}`}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          onOpen?.();
+          setOpen(true);
+        }}
         className="group press focus-ring relative block w-full cursor-zoom-in rounded-sm text-left"
       >
-        {slide(false)}
+        {small}
         <span
           aria-hidden
           className="pointer-events-none absolute right-2 bottom-2 rounded-sm bg-surface/90 px-2 py-0.5 type-caption text-ink opacity-0 shadow-popover transition-opacity duration-(--dur-fast) ease-out group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -116,8 +170,9 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel }: Props)
               role="dialog"
               aria-modal="true"
               aria-labelledby={titleId}
-              onKeyDown={onKeyDown}
-              className="flex max-h-full max-w-full animate-pop-in flex-col gap-4 rounded-md bg-bg p-4 shadow-popover sm:p-6"
+              // A click inside keeps focus in the dialog (not on the page behind).
+              tabIndex={-1}
+              className="flex max-h-full max-w-full animate-pop-in flex-col gap-4 rounded-md bg-bg p-4 shadow-popover outline-hidden sm:p-6"
             >
               <div className="flex items-center gap-6">
                 <p id={titleId} className="min-w-0 flex-1 truncate type-body-strong text-ink">
@@ -130,7 +185,7 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel }: Props)
                   Close
                 </button>
               </div>
-              <div className="flex min-h-0 justify-center">{slide(true)}</div>
+              <div className="flex min-h-0 justify-center">{big}</div>
             </div>
           </div>,
           document.body,

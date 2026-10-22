@@ -78,7 +78,7 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
   // Joined, lost taps and the rest are in the data view's summary row right under this.
   const when = lectureWhen(lecture.lecture_date, lecture.started_at, lecture.ended_at);
 
-  // The data view reads only the numbers, never the slide images.
+  // The data view reads the taps and the joined count, and the images of the slides it shows.
   return (
     <div className="flex min-h-screen flex-col">
       <TeacherTopBar

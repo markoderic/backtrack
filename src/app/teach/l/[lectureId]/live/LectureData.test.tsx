@@ -196,8 +196,8 @@ describe("LectureData live", () => {
     expect(within(slideRow(1)).getByTestId("bar").className).toContain("bg-strip");
   });
 
-  it("makes every bar red whose count is one of the three highest different counts (ties all red), zero never", async () => {
-    // People per slide: 4, 2, 2, 1, 0, 2. The different counts 4, 2 and 1 are the top three.
+  it("makes a bar red when its count is in the top three different counts and at least half the highest (ties all red), zero never", async () => {
+    // People per slide: 4, 2, 2, 1, 0, 2. The top three different counts are 4, 2 and 1; 1 is under half of 4.
     const people = [4, 2, 2, 1, 0, 2];
     h.tapsQuery.mockResolvedValue({
       data: people.flatMap((n, i) =>
@@ -208,13 +208,14 @@ describe("LectureData live", () => {
     renderLive({ slides: Array.from({ length: 6 }, (_, i) => ({ number: i + 1, first_line: "" })) });
     await waitFor(() => expect(counts(1)).toBe("4 lost, 4 taps"));
     const isRed = (n: number) => within(slideRow(n)).getByTestId("bar").className.includes("bg-lost");
-    expect([1, 2, 3, 4, 5, 6].map(isRed)).toEqual([true, true, true, true, false, true]);
+    expect([1, 2, 3, 4, 5, 6].map(isRed)).toEqual([true, true, true, false, false, true]);
     expect(within(slideRow(6)).getByRole("button")).toHaveAccessibleName("Slide 6: 2 lost, 2 taps, among the most lost");
+    expect(within(slideRow(4)).getByRole("button")).toHaveAccessibleName("Slide 4: 1 lost, 1 tap");
     expect(within(slideRow(5)).getByRole("button")).toHaveAccessibleName("Slide 5: 0 lost, 0 taps");
-    // A fourth different count (3) drops the lowest one (1) to gray.
-    insert(row("x", { slide_number: 2, anon_id: "p9" }));
-    expect(isRed(4)).toBe(false);
-    expect(isRed(2)).toBe(true);
+    // Slide 1 grows to 6: 2 is now under half of 6, so only slide 1 stays red.
+    insert(row("x", { slide_number: 1, anon_id: "p8" }));
+    insert(row("y", { slide_number: 1, anon_id: "p9" }));
+    expect([1, 2, 3, 4, 5, 6].map(isRed)).toEqual([true, false, false, false, false, false]);
   });
 
   it("has no legend under the chart", async () => {
@@ -295,10 +296,11 @@ describe("LectureData live", () => {
     });
     renderLive();
     await waitFor(() => expect(counts(4)).toBe("3 lost, 3 taps"));
-    expect(within(screen.getByTestId("bars")).getAllByText("among the most lost")).toHaveLength(3);
+    // 3, 2 and 1 people: 1 is under half of 3.
+    expect(within(screen.getByTestId("bars")).getAllByText("among the most lost")).toHaveLength(2);
     expect(within(slideRow(4)).getByText("among the most lost")).toBeInTheDocument();
     expect(within(slideRow(2)).getByText("among the most lost")).toBeInTheDocument();
-    expect(within(slideRow(1)).getByText("among the most lost")).toBeInTheDocument();
+    expect(within(slideRow(1)).queryByText("among the most lost")).not.toBeInTheDocument();
     expect(within(slideRow(3)).queryByText("among the most lost")).not.toBeInTheDocument();
     expect(within(slideRow(5)).queryByText("among the most lost")).not.toBeInTheDocument();
   });
@@ -717,6 +719,8 @@ describe("End class", () => {
   async function open() {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    // The channel opens once Realtime has the token: wait for it, so ending can close it.
+    await waitFor(() => expect(h.makeChannel).toHaveBeenCalled());
     fireEvent.click(endButton());
   }
 
@@ -1328,5 +1332,242 @@ describe("LectureData with many slides", () => {
     expect(shown(100)).toBe(true);
     expect(shown(15)).toBe(false);
     expect(shown(105)).toBe(false);
+  });
+});
+
+describe("LectureData summary row", () => {
+  const HL = { hl_x: 0.1, hl_y: 0.2, hl_w: 0.3, hl_h: 0.1 };
+  const fixture = () =>
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        // s1 taps twice on slide 2 (one student, two taps), with a note.
+        row("a", { slide_number: 2, anon_id: "s1", note: "what is a join?" }),
+        row("b", { slide_number: 2, anon_id: "s1" }),
+        // s2 marks the spot on slide 2.
+        row("c", { slide_number: 2, anon_id: "s2", ...HL }),
+        // s3's tap with a note and a mark was undone: it counts nowhere.
+        row("d", { slide_number: 4, anon_id: "s3", undone: true, note: "gone", ...HL }),
+        // A save with a mark: private, never counted.
+        row("e", { slide_number: 4, anon_id: "s4", kind: "save", ...HL }),
+        // s5 marks slide 3 and leaves a note.
+        row("f", { slide_number: 3, anon_id: "s5", note: "too fast", ...HL }),
+        // A tap on a slide the lecture does not have.
+        row("g", { slide_number: 9, anon_id: "s6", note: "nowhere", ...HL }),
+      ],
+      error: null,
+    });
+
+  it("counts only counted lost taps on the lecture's slides, and caps here at joined", async () => {
+    fixture();
+    h.here.mockReturnValue(12);
+    renderLive();
+    await waitFor(() => expect(figure("sum-joined")).toBe("7"));
+    expect(h.here).toHaveBeenLastCalledWith(LECTURE, true);
+    // 12 here but 7 joined: never more here than joined.
+    expect(figure("sum-here")).toBe("7");
+    // s1, s2 and s5: three different students; 3 of 7 is 43%.
+    expect(figure("sum-tapped")).toBe("343% of joined");
+    expect(within(screen.getByTestId("sum-tapped")).getByText("43% of joined")).toBeInTheDocument();
+    // a, b, c, f.
+    expect(figure("sum-taps")).toBe("4");
+    // "what is a join?" and "too fast".
+    expect(figure("sum-notes")).toBe("2");
+    // s2 on slide 2 and s5 on slide 3.
+    expect(figure("sum-marks")).toBe("2");
+    // Slide 2: 2 people, 3 taps.
+    expect(figure("sum-most")).toBe("2Heading 2");
+  });
+
+  it("shows here only while live, and follows a Realtime change in every number", async () => {
+    fixture();
+    h.here.mockReturnValue(3);
+    renderLive({ mode: "past" });
+    await waitFor(() => expect(figure("sum-taps")).toBe("4"));
+    expect(screen.queryByTestId("sum-here")).not.toBeInTheDocument();
+    expect(h.here).toHaveBeenLastCalledWith(LECTURE, false);
+  });
+
+  it("moves with Realtime: an undo and a new tap change the counts at once", async () => {
+    fixture();
+    renderLive();
+    await waitFor(() => expect(figure("sum-taps")).toBe("4"));
+    expect(screen.queryByTestId("sum-here")).not.toBeInTheDocument();
+    update(row("c", { slide_number: 2, anon_id: "s2", undone: true, ...HL }));
+    expect(figure("sum-taps")).toBe("3");
+    expect(figure("sum-marks")).toBe("1");
+    expect(figure("sum-tapped")).toBe("229% of joined");
+    insert(row("n", { slide_number: 5, anon_id: "s7", note: "lost here", ...HL }));
+    expect(figure("sum-taps")).toBe("4");
+    expect(figure("sum-notes")).toBe("3");
+    expect(figure("sum-marks")).toBe("2");
+  });
+
+  it("says None yet for the most lost slide and 0s when nobody is lost", async () => {
+    h.tapsQuery.mockResolvedValue({ data: [], error: null });
+    renderLive();
+    await waitFor(() => expect(figure("sum-taps")).toBe("0"));
+    expect(figure("sum-most")).toBe("None yet");
+    expect(figure("sum-tapped")).toBe("00% of joined");
+  });
+});
+
+describe("LectureData hover and focus card", () => {
+  it("focusing a bar shows its card with the same words as its name, and it follows a new tap", async () => {
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 2, hl_x: 0.1, hl_y: 0.1, hl_w: 0.2, hl_h: 0.2 }),
+        row("b", { slide_number: 2, anon_id: "s2" }),
+      ],
+      error: null,
+    });
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(screen.queryByTestId("bar-tip")).not.toBeInTheDocument();
+    const bar = within(slideRow(2)).getByRole("button");
+    fireEvent.focus(bar);
+    const tip = () => screen.getByTestId("bar-tip");
+    expect(tip()).toHaveTextContent("Slide 2");
+    expect(tip()).toHaveTextContent("2 lost, 2 taps");
+    expect(tip()).toHaveTextContent("1 marked the spot");
+    expect(tip()).toHaveAttribute("aria-hidden", "true");
+    insert(row("c", { slide_number: 2, anon_id: "s3" }));
+    expect(tip()).toHaveTextContent("3 lost, 3 taps");
+    fireEvent.blur(bar);
+    expect(screen.queryByTestId("bar-tip")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(within(slideRow(4)).getByRole("button"));
+    expect(tip()).toHaveTextContent("Slide 4");
+    expect(tip()).not.toHaveTextContent("marked the spot");
+    fireEvent.pointerLeave(within(slideRow(4)).getByRole("button"));
+    expect(screen.queryByTestId("bar-tip")).not.toBeInTheDocument();
+  });
+});
+
+describe("LectureData keeps the shown slide still", () => {
+  it("pins the most lost slide on load: a new top slide never swaps the panel or closes the big view", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(within(panel()).getByText("Slide 2")).toBeInTheDocument();
+    fireEvent.click(within(panel()).getByRole("button", { name: "Enlarge slide 2" }));
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Slide 2, Heading 2");
+    // Slide 4 becomes the most lost.
+    for (const id of ["x", "y", "z"]) insert(row(id, { slide_number: 4, anon_id: id }));
+    expect(counts(4)).toBe("4 lost, 4 taps");
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Slide 2, Heading 2");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(within(panel()).getByText("Slide 2")).toBeInTheDocument();
+  });
+
+  it("pins the live slide when the teacher opens it before anyone is lost", async () => {
+    h.tapsQuery.mockResolvedValue({ data: [], error: null });
+    renderLive();
+    await waitFor(() => expect(within(panel()).getByText("Slide 3")).toBeInTheDocument());
+    fireEvent.click(within(panel()).getByRole("button", { name: "Enlarge slide 3" }));
+    insert(row("a", { slide_number: 1 }));
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Slide 3, Heading 3");
+  });
+});
+
+describe("LectureData with more slides than fit", () => {
+  let resize: ((width: number) => void) | null = null;
+  class FakeResizeObserver {
+    constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
+      resize = (width) => cb([{ contentRect: { width } }]);
+    }
+    observe() {}
+    disconnect() {
+      resize = null;
+    }
+  }
+  const many = Array.from({ length: 50 }, (_, i) => ({ number: i + 1, first_line: `Heading ${i + 1}` }));
+  let left = 0;
+
+  beforeEach(() => {
+    left = 0;
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 17 }),
+        row("b", { slide_number: 17, anon_id: "s2" }),
+        row("c", { slide_number: 17, anon_id: "s3" }),
+        row("d", { slide_number: 33 }),
+        row("e", { slide_number: 33, anon_id: "s2" }),
+        row("f", { slide_number: 42 }),
+      ],
+      error: null,
+    });
+    // A laid out chart: 600 px wide, each column 24 px from 6 px in, moved by the scroll.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const id = this.dataset?.testid ?? "";
+      const box = (l: number, w: number) => ({ left: l, right: l + w, width: w, top: 0, bottom: 10, height: 10, x: l, y: 0 }) as DOMRect;
+      if (id === "bars") return box(0, 600);
+      const m = /^slide-(\d+)$/.exec(id);
+      if (m) return box(6 + (Number(m[1]) - 1) * 24 - left, 24);
+      return box(0, 0);
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function renderAt(width: number) {
+    renderLive({ slides: many, initialCurrentSlide: 23 });
+    await waitFor(() => expect(counts(17)).toBe("3 lost, 3 taps"));
+    const ol = screen.getByTestId("bars");
+    Object.defineProperty(ol, "scrollLeft", {
+      configurable: true,
+      get: () => left,
+      set: (v: number) => {
+        left = Math.max(0, Math.min(v, 50 * 24 + 12 - width));
+      },
+    });
+    act(() => resize?.(width));
+    return ol;
+  }
+
+  it("says which slides are in view, fades the side that has more, and says where red bars are hidden", async () => {
+    await renderAt(600);
+    expect(screen.getByTestId("chart-range")).toHaveTextContent("Slides 1 to 25 of 50, 1 red bar to the right");
+    expect(screen.getByTestId("fade-right")).toBeInTheDocument();
+    expect(screen.queryByTestId("fade-left")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Earlier slides" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Later slides" })).toBeEnabled();
+  });
+
+  it("Later and Earlier slides move the chart by most of its width", async () => {
+    await renderAt(600);
+    fireEvent.click(screen.getByRole("button", { name: "Later slides" }));
+    expect(left).toBe(480);
+    expect(screen.getByTestId("chart-range")).toHaveTextContent("Slides 21 to 45 of 50, 1 red bar to the left");
+    expect(screen.getByTestId("fade-left")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Later slides" }));
+    expect(screen.getByTestId("chart-range")).toHaveTextContent("of 50");
+    expect(screen.getByRole("button", { name: "Later slides" })).toBeDisabled();
+    expect(screen.queryByTestId("fade-right")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Earlier slides" }));
+    fireEvent.click(screen.getByRole("button", { name: "Earlier slides" }));
+    expect(left).toBe(0);
+  });
+
+  it("follows a scroll by hand", async () => {
+    const ol = await renderAt(600);
+    left = 240;
+    fireEvent.scroll(ol);
+    expect(screen.getByTestId("chart-range")).toHaveTextContent("Slides 11 to 35 of 50");
+  });
+
+  it("scrolls the selected bar into view when it is picked", async () => {
+    await renderAt(600);
+    select(33);
+    // Slide 33 ends at 6 + 33 * 24 = 798: the chart moves by 798 - 600 + 6.
+    expect(left).toBe(204);
+    expect(screen.getByTestId("chart-range")).toHaveTextContent("Slides 9 to 33 of 50");
+  });
+
+  it("shows no range or buttons when every slide fits", async () => {
+    await renderAt(1300);
+    expect(screen.queryByTestId("chart-scroll")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("fade-right")).not.toBeInTheDocument();
   });
 });
