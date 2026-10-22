@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
 import { newDb, as } from "./harness";
 
@@ -12,6 +12,10 @@ const ANON = "44444444-4444-4444-4444-444444444444";
 const google = { provider: "google", providers: ["google"] };
 
 let db: PGlite;
+
+afterEach(async () => {
+  await db.close();
+});
 
 beforeEach(async () => {
   db = await newDb();
