@@ -2,11 +2,10 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ButtonPrimary } from "@/components/ButtonPrimary";
+import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { deleteLecture } from "./lecture-actions";
 import { DELETE_FAILED_ERROR } from "./delete-lecture-copy";
-import { textLinkClass } from "./ui";
 
 /**
  * The quiet trigger at the end of a past lecture row: it shows on hover or keyboard focus, and
@@ -111,7 +110,7 @@ export function DeleteLecture({ lectureId, lectureName, variant }: Props) {
           Delete
         </button>
       ) : (
-        <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className={textLinkClass}>
+        <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className={buttonSecondaryClass}>
           Delete lecture
         </button>
       )}
@@ -152,7 +151,7 @@ export function DeleteLecture({ lectureId, lectureName, variant }: Props) {
                 <ButtonPrimary disabled={pending} onClick={() => void confirm()} className="h-11! w-auto!">
                   {pending ? "Deleting…" : "Delete lecture"}
                 </ButtonPrimary>
-                <button type="button" autoFocus disabled={pending} onClick={close} className={textLinkClass}>
+                <button type="button" autoFocus disabled={pending} onClick={close} className={buttonSecondaryClass}>
                   Keep it
                 </button>
               </div>

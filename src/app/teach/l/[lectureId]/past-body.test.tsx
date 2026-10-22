@@ -163,11 +163,9 @@ describe("PastBody", () => {
     });
   });
 
-  it("heads the page with the top bar, when it ran, joined, lost taps and Export this lecture", async () => {
+  it("heads the page with the top bar, when it ran and Export this lecture, a white button", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
     render(await PastBody({ params }));
-    expect(rpcCalls).toEqual([["lecture_slide_stats", { p_lecture_id: "l1" }]]);
-    expect(eqCalls).toContainEqual(["participants", "lecture_id", "l1"]);
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(crumbs).toHaveTextContent("Courses/ACC 221/Lecture 1, Oct 19");
     expect(crumbs.querySelector('a[href="/teach/c/c1"]')).toHaveTextContent("ACC 221");
@@ -176,19 +174,18 @@ describe("PastBody", () => {
     expect(screen.getByText("Linda Carter")).toBeInTheDocument();
     // 14:02 to 14:55 UTC is 10:02 to 10:55 in Oxford, Ohio (EDT).
     expect(screen.getByText("Oct 19, 10:02 to 10:55")).toBeInTheDocument();
-    expect(screen.getByText("38 joined")).toBeInTheDocument();
-    expect(screen.getByText("40 lost taps")).toBeInTheDocument();
     const exportLink = screen.getByRole("link", { name: "Export this lecture" });
     expect(exportLink).toHaveAttribute("href", "/teach/l/l1/export");
     expect(exportLink).toHaveAttribute("download");
+    expect(exportLink.className).toContain("bg-surface");
+    expect(exportLink.className).not.toContain("underline");
   });
 
-  it("leaves joined and lost taps out when they cannot be read", async () => {
+  it("leaves joined and lost taps to the data view's summary row: the heading reads no counts", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
-    joinedCount.mockResolvedValue({ count: null, error: { message: "nope" } });
-    stats.mockResolvedValue({ data: null, error: { message: "nope" } });
     render(await PastBody({ params }));
-    expect(screen.getByText("Oct 19, 10:02 to 10:55")).toBeInTheDocument();
+    expect(rpcCalls).toEqual([]);
+    expect(eqCalls.filter(([t]) => t === "participants")).toEqual([]);
     expect(screen.queryByText(/joined/)).toBeNull();
     expect(screen.queryByText(/lost tap/)).toBeNull();
   });
