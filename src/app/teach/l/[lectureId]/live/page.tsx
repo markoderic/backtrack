@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { LiveBody, type LiveSearchParams } from "./live-body";
+import { LiveDataSkeleton } from "../../../skeletons";
 
 export default function LivePage({
   params,
@@ -9,7 +10,7 @@ export default function LivePage({
   searchParams: LiveSearchParams;
 }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<LiveDataSkeleton />}>
       <LiveBody params={params} searchParams={searchParams} />
     </Suspense>
   );

@@ -121,6 +121,42 @@ export function CourseSkeleton() {
   );
 }
 
+/** The data view below its heading: the summary row, the chart and the side panel. */
+function DataBones({ figures }: { figures: number }) {
+  return (
+    <>
+      <div aria-hidden className="flex flex-wrap gap-x-12 gap-y-5 border-t border-hairline px-4 py-6 sm:px-12">
+        {Array.from({ length: figures }, (_, i) => (
+          <div key={i} className="flex flex-col gap-2">
+            <Bone className="h-4 w-20" />
+            <Bone className="h-9 w-16" />
+          </div>
+        ))}
+      </div>
+      <div aria-hidden className="flex flex-1 flex-col border-t border-hairline lg:flex-row">
+        <div className="flex min-w-0 flex-1 flex-col gap-6 px-4 py-8 sm:px-12">
+          <Bone className="h-4 w-32" />
+          <div className="flex h-[260px] items-end gap-3">
+            {[30, 55, 20, 80, 45, 100, 35, 60, 25, 40].map((h, i) => (
+              <span key={i} className="block h-full max-w-9 min-w-3 flex-1">
+                <span className="flex h-full items-end">
+                  <span className="block w-full rounded-sm bg-hairline" style={{ height: `${h}%` }} />
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="flex w-full shrink-0 flex-col gap-4 border-t border-hairline px-4 py-8 sm:p-8 lg:w-[480px] lg:border-t-0 lg:border-l">
+          <Bone className="h-6 w-40" />
+          <Bone className="aspect-video h-auto w-full rounded-sm" />
+          <Bone className="h-4 w-3/4" />
+          <Bone className="h-4 w-1/2" />
+        </div>
+      </div>
+    </>
+  );
+}
+
 /** A past lecture (/teach/l/[lectureId]): its name and time, Export and Delete, the summary row, the chart and the side panel. */
 export function PastLectureSkeleton() {
   return (
@@ -146,36 +182,68 @@ export function PastLectureSkeleton() {
             <Bone className="h-11 w-36" />
           </div>
         </div>
-        <div aria-hidden className="flex flex-wrap gap-x-12 gap-y-5 border-t border-hairline px-4 py-6 sm:px-12">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="flex flex-col gap-2">
-              <Bone className="h-4 w-20" />
-              <Bone className="h-9 w-16" />
-            </div>
-          ))}
-        </div>
-        <div aria-hidden className="flex flex-1 flex-col border-t border-hairline lg:flex-row">
-          <div className="flex min-w-0 flex-1 flex-col gap-6 px-4 py-8 sm:px-12">
-            <Bone className="h-4 w-32" />
-            <div className="flex h-[260px] items-end gap-3">
-              {[30, 55, 20, 80, 45, 100, 35, 60, 25, 40].map((h, i) => (
-                <span key={i} className="block h-full max-w-9 min-w-3 flex-1">
-                  <span className="flex h-full items-end">
-                    <span className="block w-full rounded-sm bg-hairline" style={{ height: `${h}%` }} />
-                  </span>
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="flex w-full shrink-0 flex-col gap-4 border-t border-hairline px-4 py-8 sm:p-8 lg:w-[480px] lg:border-t-0 lg:border-l">
-            <Bone className="h-6 w-40" />
-            <Bone className="aspect-video h-auto w-full rounded-sm" />
-            <Bone className="h-4 w-3/4" />
-            <Bone className="h-4 w-1/2" />
-          </div>
-        </div>
+        <DataBones figures={6} />
       </main>
     </SkeletonShell>
+  );
+}
+
+/** The live data view (/teach/l/[lectureId]/live): name, Live line, Back to slides and End class, then the data. */
+export function LiveDataSkeleton() {
+  return (
+    <SkeletonShell
+      crumbs={
+        <>
+          <span className="text-secondary">Courses</span>
+          <Slash />
+          <Bone className="h-4 w-16" />
+          <Slash />
+          <Bone className="h-4 w-40" />
+        </>
+      }
+    >
+      <main className="flex min-w-0 flex-1 flex-col">
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-4 px-4 pt-8 pb-6 sm:px-12">
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+            <Bone className="h-8 w-[min(420px,90%)]" />
+            <Bone className="h-4 w-56" />
+          </div>
+          <div className="flex gap-6">
+            <Bone className="h-12 w-40 rounded-md" />
+            <Bone className="h-12 w-32 rounded-md" />
+          </div>
+        </div>
+        <DataBones figures={7} />
+      </main>
+    </SkeletonShell>
+  );
+}
+
+/**
+ * The projector (/teach/l/[lectureId]/present): no top bar, as on the projector itself. A slide
+ * shaped block centered in the room with the slim bar under it, faded in after 120 ms.
+ */
+export function ProjectorSkeleton() {
+  return (
+    <div data-testid="teacher-skeleton" aria-busy="true" className="fixed inset-0 flex flex-col bg-bg">
+      <p role="status" className="sr-only">
+        Loading
+      </p>
+      <div className="flex min-h-0 flex-1 flex-col animate-[fade-in_var(--dur-base)_var(--ease-out)_120ms_both]">
+        <div aria-hidden className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <Bone className="aspect-video max-h-full w-[min(100%,calc((100dvh-92px)*16/9))]" />
+        </div>
+        <div aria-hidden className="flex h-11 shrink-0 items-center gap-6 border-t border-hairline px-6">
+          <Bone className="h-4 w-48" />
+          <Bone className="h-4 w-28" />
+          <div className="flex-1" />
+          <Bone className="h-4 w-14" />
+          <Bone className="h-4 w-20" />
+          <Bone className="h-4 w-20" />
+          <Bone className="h-4 w-20" />
+        </div>
+      </div>
+    </div>
   );
 }
 

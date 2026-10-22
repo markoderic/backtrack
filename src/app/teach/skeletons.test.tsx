@@ -1,22 +1,35 @@
 import { describe, it, expect } from "vitest";
 import { isValidElement, type ReactElement } from "react";
 import { render, screen } from "@testing-library/react";
-import { CoursesSkeleton, CourseSkeleton, PastLectureSkeleton, SettingsSkeleton, StartSkeleton } from "./skeletons";
+import {
+  CoursesSkeleton,
+  CourseSkeleton,
+  LiveDataSkeleton,
+  PastLectureSkeleton,
+  ProjectorSkeleton,
+  SettingsSkeleton,
+  StartSkeleton,
+} from "./skeletons";
 import TeachLoading from "./loading";
 import CourseLoading from "./c/[courseId]/loading";
 import StartLoading from "./c/[courseId]/start/loading";
 import PastLoading from "./l/[lectureId]/(past)/loading";
+import LiveLoading from "./l/[lectureId]/live/loading";
+import PresentLoading from "./l/[lectureId]/present/loading";
 import SettingsLoading from "./settings/loading";
 import TeachPage from "./page";
 import CoursePage from "./c/[courseId]/page";
 import StartPage from "./c/[courseId]/start/page";
 import PastLecturePage from "./l/[lectureId]/(past)/page";
+import LivePage from "./l/[lectureId]/live/page";
+import PresentPage from "./l/[lectureId]/present/page";
 import SettingsPage from "./settings/page";
 
 const all = [
   ["Courses", CoursesSkeleton],
   ["course", CourseSkeleton],
   ["past lecture", PastLectureSkeleton],
+  ["live data", LiveDataSkeleton],
   ["Settings", SettingsSkeleton],
   ["Start lecture", StartSkeleton],
 ] as const;
@@ -60,6 +73,8 @@ describe("teacher loading skeletons (Marko: no blank page after a click)", () =>
     expect(CourseLoading).toBe(CourseSkeleton);
     expect(StartLoading).toBe(StartSkeleton);
     expect(PastLoading).toBe(PastLectureSkeleton);
+    expect(LiveLoading).toBe(LiveDataSkeleton);
+    expect(PresentLoading).toBe(ProjectorSkeleton);
     expect(SettingsLoading).toBe(SettingsSkeleton);
   });
 
@@ -71,6 +86,8 @@ describe("teacher loading skeletons (Marko: no blank page after a click)", () =>
       [CoursePage({ params, searchParams }), CourseSkeleton],
       [StartPage({ params }), StartSkeleton],
       [PastLecturePage({ params }), PastLectureSkeleton],
+      [LivePage({ params, searchParams }), LiveDataSkeleton],
+      [PresentPage({ params }), ProjectorSkeleton],
       [SettingsPage(), SettingsSkeleton],
     ];
     for (const [page, skeleton] of pages) {
@@ -78,5 +95,17 @@ describe("teacher loading skeletons (Marko: no blank page after a click)", () =>
       expect(isValidElement(fallback)).toBe(true);
       expect((fallback as ReactElement).type).toBe(skeleton);
     }
+  });
+
+  it("the projector's is the room's view: no top bar, a slide shaped block and the slim bar, busy and quiet", () => {
+    render(<ProjectorSkeleton />);
+    const page = screen.getByTestId("teacher-skeleton");
+    expect(page).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Loading");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(page.querySelector("[data-bone].aspect-video")).not.toBeNull();
+    for (const bone of page.querySelectorAll("[data-bone]")) expect(bone.className).toContain("bg-hairline");
+    expect(page.innerHTML).not.toMatch(/animate-(spin|pulse|ping|bounce)|shimmer/);
+    expect(page.innerHTML).toContain("animate-[fade-in_var(--dur-base)_var(--ease-out)_120ms_both]");
   });
 });
