@@ -98,7 +98,10 @@ describe("CourseRow", () => {
     expect(h.eqs).toEqual([["id", "c1"]]);
     expect(h.refresh).toHaveBeenCalled();
     expect(screen.getByText("ACC 221 Financial Accounting")).toBeInTheDocument();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Rename ACC 221 Financial Accounting" }));
+    // Focus moves back in an effect after the row closes; under load that can land a moment later.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Rename ACC 221 Financial Accounting" })),
+    );
   });
 
   it("keeps one status line mounted while the row turns into the field and back, so the rename is announced", async () => {
