@@ -134,7 +134,7 @@ describe("StartForm", () => {
     expect(() => progress(2, 10)).toThrow();
   });
 
-    it("says how many slides are ready and what Start does", async () => {
+  it("says how many slides are ready and what Start does", async () => {
     renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["a", "b"] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("Week 8 slides.pdf");

@@ -115,5 +115,4 @@ describe("GET /teach/l/[lectureId]/export", () => {
       "",
     ]);
   });
-
 });
