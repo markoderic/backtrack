@@ -139,6 +139,9 @@ export function useHereCount(lectureId: string, enabled: boolean): number | null
           if (cancelled || mine !== generation) return;
           // The count is unknown until the channel is back and syncs again.
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setHere(null);
+          // realtime-js rejoins after an error or a timeout: the minute of being up starts again at
+          // the next sync, so a channel that keeps failing never counts as a working one.
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") upSince = null;
           // Closed by the server: realtime-js will not join this one again, so a new one opens.
           if (status === "CLOSED") reopenLater();
         });

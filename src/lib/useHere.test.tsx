@@ -291,6 +291,36 @@ describe("useHereCount (the projector and the data view)", () => {
     expect(waits).toEqual([1500, 3000, 6000, 12000, 24000, 45000, 45000, 45000]);
   });
 
+  it("an error or timeout and rejoin starts the minute of being up again (a flapping channel keeps the waits)", async () => {
+    renderHook(() => useHereCount(LECTURE, true));
+    await flush();
+    const latest = () => h.channels[h.channels.length - 1] as Fake;
+    const reopensAfter = async (ms: number) => {
+      const before = h.makeChannel.mock.calls.length;
+      await act(async () => vi.advanceTimersByTime(ms - 1));
+      expect(h.makeChannel.mock.calls.length).toBe(before);
+      await act(async () => vi.advanceTimersByTime(1));
+      await flush();
+      expect(h.makeChannel.mock.calls.length).toBe(before + 1);
+    };
+    act(() => latest().status!("CLOSED"));
+    await reopensAfter(1500);
+    act(() => latest().status!("CLOSED"));
+    await reopensAfter(3000);
+    // Counts, errors after 10 s, realtime-js rejoins and it counts again, then up 45 s more: 65 s
+    // since the first count but only 45 s since the rejoin.
+    act(() => latest().handlers.presence(undefined));
+    await act(async () => vi.advanceTimersByTime(10_000));
+    act(() => latest().status!("CHANNEL_ERROR"));
+    await act(async () => vi.advanceTimersByTime(10_000));
+    act(() => latest().status!("SUBSCRIBED"));
+    act(() => latest().handlers.presence(undefined));
+    await act(async () => vi.advanceTimersByTime(45_000));
+    act(() => latest().status!("CLOSED"));
+    // The waits go on growing: 8 s times 0.75, not back to 1.5 s.
+    await reopensAfter(6000);
+  });
+
   it("the wait never goes past a minute", () => {
     expect(reopenDelay(0, 1)).toBe(2000);
     expect(reopenDelay(3, 1)).toBe(16000);
