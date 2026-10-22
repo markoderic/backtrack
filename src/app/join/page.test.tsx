@@ -146,6 +146,52 @@ describe("Join page", () => {
     expect(field()).toBeNull();
   });
 
+  /** Puts a value in the field as the browser would after an edit, with the caret at `caret`, and fires input. */
+  function edit(value: string, caret: number, inputType = "insertText") {
+    const el = input();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+    el.setSelectionRange(caret, caret);
+    fireEvent.input(el, { inputType });
+  }
+
+  it("keeps the code and the caret right when a digit in the middle is fixed", async () => {
+    render(<JoinPage />);
+    input().focus();
+    type("482913");
+    // Caret after the first digit, Backspace: the browser leaves "82 913" with the caret at 0.
+    edit("82 913", 0, "deleteContentBackward");
+    expect(input().value).toBe("829 13");
+    expect(input().selectionStart).toBe(0);
+    // Type 7 there: "7829 13", caret 1.
+    edit("7829 13", 1);
+    expect(input().value).toBe("782 913");
+    expect(input().selectionStart).toBe(1);
+    // Fix the 5th digit: caret after "782 9", Backspace, then 4.
+    edit("782 13", 4, "deleteContentBackward");
+    expect(input().value).toBe("782 13");
+    expect(input().selectionStart).toBe(4);
+    edit("782 413", 5);
+    expect(input().value).toBe("782 413");
+    expect(input().selectionStart).toBe(5);
+    fireEvent.click(joinButton());
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("join_lecture", { p_code: "782413" }));
+  });
+
+  it("Backspace right after the reading space deletes the 3rd digit, Delete right before it the 4th", () => {
+    render(<JoinPage />);
+    input().focus();
+    type("482913");
+    // Caret after the space; Backspace removes only the space in the browser.
+    edit("482913", 3, "deleteContentBackward");
+    expect(input().value).toBe("489 13");
+    expect(input().selectionStart).toBe(2);
+    type("482913");
+    // Caret before the space; Delete removes only the space.
+    edit("482913", 3, "deleteContentForward");
+    expect(input().value).toBe("482 13");
+    expect(input().selectionStart).toBe(3);
+  });
+
   it("draws each typed digit in its own span so it can pop in", () => {
     const { container } = render(<JoinPage />);
     type("4829");

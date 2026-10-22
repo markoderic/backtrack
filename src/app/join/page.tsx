@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
@@ -17,6 +17,42 @@ function spaced(digits: string): string {
   return digits.length > 3 ? `${digits.slice(0, 3)} ${digits.slice(3)}` : digits;
 }
 
+/**
+ * Where the caret goes in the spaced code when it sits after this many digits. After exactly 3
+ * it stays on the side of the space it was on (after it when the 4th digit was just deleted).
+ */
+function caretAt(digitsBefore: number, afterSpace: boolean, length: number): number {
+  if (digitsBefore === 3 && afterSpace && length > 3) return 4;
+  return digitsBefore > 3 ? digitsBefore + 1 : digitsBefore;
+}
+
+/**
+ * Reads an edit of the spaced field: the new digits, and how many digits are left of the caret.
+ * Deleting only the reading space deletes the digit on that side instead, so Backspace right
+ * after the space removes the 3rd digit (and Delete right before it removes the 4th).
+ */
+function readEdit(
+  value: string,
+  caret: number,
+  before: string,
+  inputType: string | undefined,
+): { digits: string; digitsBefore: number; afterSpace: boolean } {
+  let digits = value.replace(/\D/g, "");
+  let digitsBefore = value.slice(0, caret).replace(/\D/g, "").length;
+  let afterSpace = caret > 0 && value[caret - 1] === " ";
+  if (digits === before && value.length < spaced(before).length) {
+    if (inputType === "deleteContentForward") {
+      digits = before.slice(0, digitsBefore) + before.slice(digitsBefore + 1);
+    } else if (digitsBefore > 0) {
+      digits = before.slice(0, digitsBefore - 1) + before.slice(digitsBefore);
+      digitsBefore -= 1;
+    }
+    afterSpace = false;
+  }
+  digits = digits.slice(0, 6);
+  return { digits, digitsBefore: Math.min(digitsBefore, digits.length), afterSpace };
+}
+
 class NotLiveError extends Error {}
 class TooManyTriesError extends Error {}
 
@@ -26,6 +62,12 @@ export default function JoinPage() {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Where the caret belongs after the code is re-spaced. A new object each edit, so it is set every time.
+  const [caret, setCaret] = useState<{ pos: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (caret && el && document.activeElement === el) el.setSelectionRange(caret.pos, caret.pos);
+  }, [caret]);
   // Counts wrong codes, so each one shakes the field again.
   const [wrongCount, setWrongCount] = useState(0);
 
@@ -101,8 +143,16 @@ export default function JoinPage() {
               autoFocus
               placeholder="6 digits"
               disabled={joining}
-              onChange={(e) => {
-                setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+              onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                const el = e.target;
+                const { digits, digitsBefore, afterSpace } = readEdit(
+                  el.value,
+                  el.selectionStart ?? el.value.length,
+                  code,
+                  (e.nativeEvent as InputEvent).inputType,
+                );
+                setCode(digits);
+                setCaret({ pos: caretAt(digitsBefore, afterSpace, digits.length) });
                 setError(null);
               }}
               className={
@@ -110,7 +160,7 @@ export default function JoinPage() {
                 // Empty, it is set in Body so the "6 digits" placeholder sits like the design; with digits, Number M.
                 (shown ? "type-number-m " : "type-body ") +
                 // The typed text is drawn by the layer below so each digit can pop in; the input keeps the caret.
-                "text-transparent caret-ink outline-none focus:border-[1.5px] focus:border-ink disabled:opacity-100 " +
+                "text-transparent caret-ink outline-hidden focus:border-[1.5px] focus:border-ink disabled:opacity-100 " +
                 "placeholder:text-secondary"
               }
             />

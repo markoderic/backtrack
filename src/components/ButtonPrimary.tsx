@@ -9,8 +9,9 @@ import type { ButtonHTMLAttributes, ComponentProps } from "react";
 export const buttonPrimaryClass =
   "focus-ring inline-flex h-12 w-75 max-w-full shrink-0 items-center justify-center rounded-md px-6 type-button whitespace-nowrap " +
   "bg-ink text-surface hover:bg-ink-hover disabled:cursor-default disabled:bg-strip disabled:hover:bg-strip " +
-  // Motion: hover color 120 ms; a press scales to 0.97 on the spring (not with reduced motion, not when disabled).
-  "transition-[background-color,scale] duration-(--dur-fast) ease-spring motion-safe:active:scale-97 disabled:active:scale-100";
+  // Motion: hover color 120 ms ease-out; a press scales to 0.97 on the spring (not with reduced motion, not when disabled).
+  "[transition:background-color_var(--dur-fast)_var(--ease-out),scale_var(--dur-fast)_var(--ease-spring)] " +
+  "motion-safe:active:scale-97 disabled:active:scale-100";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
 
