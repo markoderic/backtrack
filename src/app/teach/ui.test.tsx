@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { TeacherTopBar, hitAreaBelowClass, hitAreaClass, textLinkBelowClass, textLinkClass } from "./ui";
+import { TeacherTopBar, fieldClass, fieldNarrowClass, hitAreaBelowClass, hitAreaClass, textLinkBelowClass, textLinkClass } from "./ui";
 
 describe("hit areas", () => {
   it("text actions get an invisible ::after box that makes the 20 px text 44 px tall", () => {
@@ -10,6 +10,15 @@ describe("hit areas", () => {
     expect(textLinkClass).toContain(hitAreaClass);
     expect(textLinkBelowClass).toContain(hitAreaBelowClass);
     expect(textLinkClass).not.toContain("after:-bottom-5");
+  });
+});
+
+describe("fields", () => {
+  it("the narrow field is the same field at 480 px instead of full width", () => {
+    expect(fieldClass).toContain("w-full");
+    expect(fieldNarrowClass).toContain("w-120 max-w-full");
+    expect(fieldNarrowClass.split(" ")).not.toContain("w-full");
+    expect(fieldNarrowClass.replace("w-120 max-w-full", "")).toBe(fieldClass.replace("w-full", ""));
   });
 });
 
@@ -56,6 +65,15 @@ describe("TeacherTopBar", () => {
     render(<TeacherTopBar crumbs={crumbs} teacherName="Linda Carter" />);
     expect(screen.getByText("Linda Carter").className).toContain("hidden");
     expect(screen.getByText("Linda Carter").className).toContain("sm:block");
+  });
+
+  it("can give phones a back link without a parent crumb (Settings shows only its own name, as designed)", () => {
+    render(<TeacherTopBar crumbs={[{ label: "Settings" }]} back={{ label: "Courses", href: "/teach" }} onSettings />);
+    const back = screen.getByTestId("back-link");
+    expect(back).toHaveAttribute("href", "/teach");
+    expect(back).toHaveTextContent("Courses");
+    const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(nav.querySelectorAll("li")).toHaveLength(1);
   });
 
   it("has no back link on the top level", () => {

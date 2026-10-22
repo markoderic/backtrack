@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({
   select: vi.fn(),
@@ -32,6 +32,7 @@ vi.mock("@/lib/supabase/browser", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: h.refresh }) }));
 
 import { CourseRow } from "./CourseRow";
+import { STATUS_MS } from "./NameForm";
 import { hitAreaClass } from "../ui";
 
 const NAME = "ACC 221 Intro to Financial Accounting";
@@ -39,6 +40,10 @@ const renameLink = () => screen.getByRole("button", { name: `Rename ${NAME}` });
 const field = () => screen.getByLabelText(`New name for ${NAME}`) as HTMLInputElement;
 const save = () => screen.getByRole("button", { name: "Rename" });
 const type = (v: string) => fireEvent.change(field(), { target: { value: v } });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   h.updates.length = 0;
@@ -64,13 +69,39 @@ describe("CourseRow", () => {
     expect(save()).toBeDisabled();
     type("  ACC 221 Financial Accounting  ");
     fireEvent.click(save());
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed."));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed to ACC 221 Financial Accounting."));
+    expect(screen.getByText("Renamed.")).toHaveAttribute("aria-hidden");
     expect(h.tables).toEqual(["courses"]);
     expect(h.updates).toEqual([{ name: "ACC 221 Financial Accounting" }]);
     expect(h.eqs).toEqual([["id", "c1"]]);
     expect(h.refresh).toHaveBeenCalled();
     expect(screen.getByText("ACC 221 Financial Accounting")).toBeInTheDocument();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Rename ACC 221 Financial Accounting" }));
+  });
+
+  it("keeps one status line mounted while the row turns into the field and back, so the rename is announced", async () => {
+    render(<CourseRow courseId="c1" initialName={NAME} />);
+    const before = screen.getByRole("status");
+    fireEvent.click(renameLink());
+    expect(screen.getByRole("status")).toBe(before);
+    type("ACC 999");
+    fireEvent.click(save());
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed to ACC 999."));
+    expect(screen.getByRole("status")).toBe(before);
+  });
+
+  it("clears Renamed. after a few seconds", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<CourseRow courseId="c1" initialName={NAME} />);
+    fireEvent.click(renameLink());
+    type("ACC 999");
+    fireEvent.click(save());
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed to ACC 999."));
+    act(() => {
+      vi.advanceTimersByTime(STATUS_MS);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(screen.queryByText("Renamed.")).toBeNull();
   });
 
   it("says so when the rename fails, and keeps the field open", async () => {
@@ -81,6 +112,8 @@ describe("CourseRow", () => {
     fireEvent.click(save());
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not rename the course."));
     expect(field().value).toBe("ACC 999");
+    expect(field()).toHaveAttribute("aria-invalid", "true");
+    expect(field()).toHaveAttribute("aria-describedby", screen.getByRole("alert").id);
     expect(h.refresh).not.toHaveBeenCalled();
   });
 

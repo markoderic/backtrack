@@ -9,10 +9,14 @@ import { Icon } from "@/components/Icon";
  */
 
 /** A text field: 48 high, surface, 1px hairline, radius md, Body. Focus: 1.5 px ink. */
-export const fieldClass =
-  "h-12 w-full rounded-md border border-hairline bg-surface px-4 type-body text-ink placeholder:text-secondary " +
+const fieldLook =
+  "h-12 rounded-md border border-hairline bg-surface px-4 type-body text-ink placeholder:text-secondary " +
   "outline-hidden transition-[border-color,box-shadow] duration-(--dur-fast) ease-out " +
   "focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)] disabled:text-secondary";
+export const fieldClass = `${fieldLook} w-full`;
+
+/** The same field at the design's 480 px (Settings name), full width on a phone. */
+export const fieldNarrowClass = `${fieldLook} w-120 max-w-full`;
 
 /** A field label: Small strong, ink. */
 export const labelClass = "type-small-strong text-ink";
@@ -74,14 +78,17 @@ export function TeacherTopBar({
   crumbs,
   teacherName,
   onSettings = false,
+  back,
 }: {
   crumbs: Crumb[];
   teacherName?: string | null;
   /** True on the Settings page itself, where the link is marked as the current page. */
   onSettings?: boolean;
+  /** The phone back link's target when the breadcrumb has no parent to offer (Settings). */
+  back?: Crumb;
 }) {
   // On a phone the breadcrumb is hidden, so the page one level up gets a short back link instead.
-  const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2] : undefined;
+  const parent = back ?? (crumbs.length > 1 ? crumbs[crumbs.length - 2] : undefined);
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-hairline px-4 sm:gap-6 sm:px-8">
       <Link href="/teach" aria-label="backtrack, courses" className="press focus-ring shrink-0 rounded-sm">
@@ -145,16 +152,18 @@ export function TeacherPage({
   crumbs,
   teacherName,
   onSettings,
+  back,
   children,
 }: {
   crumbs: Crumb[];
   teacherName?: string | null;
   onSettings?: boolean;
+  back?: Crumb;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <TeacherTopBar crumbs={crumbs} teacherName={teacherName} onSettings={onSettings} />
+      <TeacherTopBar crumbs={crumbs} teacherName={teacherName} onSettings={onSettings} back={back} />
       {children}
     </div>
   );

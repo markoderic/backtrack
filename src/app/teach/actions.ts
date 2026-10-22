@@ -58,4 +58,5 @@ export async function addCourse(name: string) {
   if (error) throw new Error("Could not add the course.");
 
   revalidatePath("/teach");
+  revalidatePath("/teach/settings");
 }

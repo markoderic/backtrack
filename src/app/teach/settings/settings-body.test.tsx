@@ -34,7 +34,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("../add-course-form", () => ({
   AddCourseForm: ({ startOpen }: { startOpen?: boolean }) => <form data-add-course={String(!!startOpen)} />,
 }));
-vi.mock("./actions", () => ({ signOut: vi.fn() }));
+vi.mock("./actions", () => ({ signOut: vi.fn(), saveName: vi.fn() }));
 
 import { SettingsBody } from "./settings-body";
 
@@ -77,6 +77,13 @@ describe("SettingsBody", () => {
   it("marks Settings in the top bar as the current page", async () => {
     const out = await html();
     expect(out).toMatch(/<a [^>]*href="\/teach\/settings"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/teach\/settings"/);
+  });
+
+  it("shows only Settings in the breadcrumb (as designed) and gives phones a back link to Courses", async () => {
+    const out = await html();
+    expect(out).toMatch(/<a [^>]*href="\/teach"[^>]*data-testid="back-link"|<a [^>]*data-testid="back-link"[^>]*href="\/teach"/);
+    const nav = out.slice(out.indexOf('aria-label="Breadcrumb"'), out.indexOf("</nav>"));
+    expect(nav.match(/<li/g)).toHaveLength(1);
   });
 
   it("asks only for the teacher's own courses that are not archived", async () => {

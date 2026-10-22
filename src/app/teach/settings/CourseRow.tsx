@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { Icon } from "@/components/Icon";
 import { fieldClass, textLinkClass } from "../ui";
-import { saveButtonClass } from "./NameForm";
+import { STATUS_MS, saveButtonClass } from "./NameForm";
 
 const NAME_MAX = 120;
 
@@ -39,6 +39,13 @@ export function CourseRow({ courseId, initialName }: { courseId: string; initial
       renameButton.current?.focus();
     }
   }, [editing]);
+
+  // "Renamed." clears after a few seconds.
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => setSaved(false), STATUS_MS);
+    return () => clearTimeout(t);
+  }, [saved]);
 
   const trimmed = name.trim();
 
@@ -84,68 +91,85 @@ export function CourseRow({ courseId, initialName }: { courseId: string; initial
     }
   }
 
+  // The row swaps between the name and the field, so the announcement lives outside both and
+  // stays in the page; the visible "Renamed." next to the name is for the eye only.
+  const status = (
+    <p role="status" className="sr-only">
+      {saved ? `Renamed to ${current}.` : ""}
+    </p>
+  );
+
   if (!editing) {
     return (
-      <div className="flex min-w-0 items-center gap-6 py-3.5">
-        <span className="min-w-0 flex-1 truncate type-body text-ink">{current}</span>
-        {saved && (
-          <p role="status" className="shrink-0 animate-fade-in type-small text-secondary">
-            Renamed.
-          </p>
-        )}
-        <button
-          ref={renameButton}
-          type="button"
-          aria-label={`Rename ${current}`}
-          onClick={open}
-          className={`${textLinkClass} shrink-0`}
-        >
-          Rename
-        </button>
-      </div>
+      <>
+        {status}
+        <div className="flex min-w-0 items-center gap-6 py-3.5">
+          <span className="min-w-0 flex-1 truncate type-body text-ink">{current}</span>
+          {saved && (
+            <p aria-hidden className="shrink-0 animate-fade-in type-small text-secondary">
+              Renamed.
+            </p>
+          )}
+          <button
+            ref={renameButton}
+            type="button"
+            aria-label={`Rename ${current}`}
+            onClick={open}
+            className={`${textLinkClass} shrink-0`}
+          >
+            Rename
+          </button>
+        </div>
+      </>
     );
   }
 
   const fieldId = `course-name-${courseId}`;
+  const errorId = `course-name-error-${courseId}`;
   return (
-    <form onSubmit={(e) => void submit(e)} className="flex animate-pop-in flex-col gap-2 py-2">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label htmlFor={fieldId} className="sr-only">
-          New name for {current}
-        </label>
-        <input
-          id={fieldId}
-          value={name}
-          maxLength={NAME_MAX}
-          autoFocus
-          onChange={(e) => {
-            setName(e.target.value);
-            setError(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              close();
-            }
-          }}
-          className={`${fieldClass} min-w-0 flex-1 basis-64`}
-        />
-        {/* Rename and Cancel wrap together, so on a phone the field gets the whole line. */}
-        <div className="flex shrink-0 items-center gap-4">
-          <button type="submit" disabled={saving || trimmed === current.trim()} className={saveButtonClass}>
-            Rename
-          </button>
-          <button type="button" onClick={close} className={textLinkClass}>
-            Cancel
-          </button>
+    <>
+      {status}
+      <form onSubmit={(e) => void submit(e)} className="flex animate-pop-in flex-col gap-2 py-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <label htmlFor={fieldId} className="sr-only">
+            New name for {current}
+          </label>
+          <input
+            id={fieldId}
+            value={name}
+            maxLength={NAME_MAX}
+            autoFocus
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                close();
+              }
+            }}
+            className={`${fieldClass} min-w-0 flex-1 basis-64`}
+          />
+          {/* Rename and Cancel wrap together, so on a phone the field gets the whole line. */}
+          <div className="flex shrink-0 items-center gap-4">
+            <button type="submit" disabled={saving || trimmed === current.trim()} className={saveButtonClass}>
+              Rename
+            </button>
+            <button type="button" onClick={close} className={textLinkClass}>
+              Cancel
+            </button>
+          </div>
         </div>
-      </div>
-      {error && (
-        <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
-          <Icon name="alert" size={18} />
-          {error}
-        </p>
-      )}
-    </form>
+        {error && (
+          <p id={errorId} role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
+            <Icon name="alert" size={18} />
+            {error}
+          </p>
+        )}
+      </form>
+    </>
   );
 }

@@ -37,10 +37,15 @@ export async function SettingsBody() {
   const list = (courses ?? []) as { id: string; name: string }[];
 
   return (
-    <TeacherPage crumbs={[{ label: "Settings" }]} teacherName={teacher.display_name} onSettings>
+    <TeacherPage
+      crumbs={[{ label: "Settings" }]}
+      back={{ label: "Courses", href: "/teach" }}
+      teacherName={teacher.display_name}
+      onSettings
+    >
       <main className="mx-auto flex w-full max-w-[784px] animate-rise-in flex-col gap-8 px-4 py-12 sm:px-8">
         <h1 className="type-display text-ink">Settings</h1>
-        <NameForm teacherId={user.id} initialName={teacher.display_name} />
+        <NameForm initialName={teacher.display_name} />
         <section aria-labelledby="settings-courses" className="flex flex-col">
           <h2 id="settings-courses" className={labelClass}>
             Courses
