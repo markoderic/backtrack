@@ -36,7 +36,10 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
   return async (op) => {
     try {
       if (op.op === "update") {
-        return classifySend(await supabase.from("lost_taps").update(op.patch).eq("id", op.id));
+        // The rect is four columns in the database; there is no rect column.
+        const { rect, ...rest } = op.patch;
+        const patch = rect ? { ...rest, hl_x: rect.x, hl_y: rect.y, hl_w: rect.w, hl_h: rect.h } : rest;
+        return classifySend(await supabase.from("lost_taps").update(patch).eq("id", op.id));
       }
       // The session is read from the device, so a tap made offline still has its user.
       const {
@@ -55,10 +58,11 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
             id: tap.id,
             lecture_id: lectureId,
             anon_id: session.user.id,
-            kind: "lost",
+            kind: tap.kind ?? "lost",
             tapped_on_slide: tap.tappedOnSlide,
             slide_number: tap.tappedOnSlide,
             ...(tap.note ? { note: tap.note } : {}),
+            ...(tap.rect ? { hl_x: tap.rect.x, hl_y: tap.rect.y, hl_w: tap.rect.w, hl_h: tap.rect.h } : {}),
             tapped_at: tap.tappedAt,
           },
           // A resend of the same tap does nothing.

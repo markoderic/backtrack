@@ -99,6 +99,37 @@ describe("makeSend", () => {
     expect((f.upsert.mock.calls as unknown as [Record<string, unknown>][])[0][0]).toMatchObject({ note: "why" });
   });
 
+  it("sends the kind and the four hl_ values of a highlight, and never a rect column", async () => {
+    const f = fakeSupabase();
+    const rect = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+    await makeSend(f.supabase, LECTURE)({ op: "insert", tap: { ...TAP, kind: "save", rect } });
+    const row = (f.upsert.mock.calls as unknown as [Record<string, unknown>][])[0][0];
+    expect(row).toMatchObject({ kind: "save", hl_x: 0.1, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4, slide_number: 7, tapped_on_slide: 7 });
+    expect(row).not.toHaveProperty("rect");
+  });
+
+  it("sends a plain tap as kind lost with no hl_ values", async () => {
+    const f = fakeSupabase();
+    await makeSend(f.supabase, LECTURE)({ op: "insert", tap: TAP });
+    const row = (f.upsert.mock.calls as unknown as [Record<string, unknown>][])[0][0];
+    expect(row.kind).toBe("lost");
+    expect(Object.keys(row).some((k) => k.startsWith("hl_"))).toBe(false);
+  });
+
+  it("sends an update that has a rect as the four hl_ values", async () => {
+    const f = fakeSupabase();
+    const result = await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } } });
+    expect(result).toBe("ok");
+    expect(f.update).toHaveBeenCalledWith({ hl_x: 0.1, hl_y: 0.2, hl_w: 0.3, hl_h: 0.4 });
+    expect(f.eqUpdate).toHaveBeenCalledWith("id", TAP.id);
+  });
+
+  it("keeps the other patch fields next to the hl_ values", async () => {
+    const f = fakeSupabase();
+    await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { note: "x", rect: { x: 0, y: 0, w: 1, h: 1 } } });
+    expect(f.update).toHaveBeenCalledWith({ note: "x", hl_x: 0, hl_y: 0, hl_w: 1, hl_h: 1 });
+  });
+
   it("updates by id with the patch", async () => {
     const f = fakeSupabase();
     const result = await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { undone: true } });

@@ -1,14 +1,23 @@
+import { isRect, type Rect } from "./rect";
+
+/** What the patch of a queued update can change. A rect is stored as the four hl_ columns. */
+export type TapPatch = { undone?: boolean; note?: string; rect?: Rect };
+
 export type PendingTap = {
   /** A uuid made in the browser, so a resend can be ignored by the database. */
   id: string;
   tappedOnSlide: number;
   tappedAt: string;
   note?: string;
+  /** Missing means 'lost', so a tap already in someone's localStorage still loads. */
+  kind?: "lost" | "save";
+  /** A highlight on the slide, as fractions of it. */
+  rect?: Rect;
 };
 
 export type QueueOp =
   | { op: "insert"; tap: PendingTap }
-  | { op: "update"; id: string; patch: { undone?: boolean; note?: string } };
+  | { op: "update"; id: string; patch: TapPatch };
 
 export type SendResult = "ok" | "rejected" | "offline";
 
@@ -23,11 +32,13 @@ function isOp(v: unknown): v is QueueOp {
       typeof tap.id === "string" &&
       typeof tap.tappedOnSlide === "number" &&
       typeof tap.tappedAt === "string" &&
-      (tap.note === undefined || typeof tap.note === "string")
+      (tap.note === undefined || typeof tap.note === "string") &&
+      (tap.kind === undefined || tap.kind === "lost" || tap.kind === "save") &&
+      (tap.rect === undefined || isRect(tap.rect))
     );
   }
   if (v.op === "update") {
-    return typeof v.id === "string" && isRecord(v.patch);
+    return typeof v.id === "string" && isRecord(v.patch) && (v.patch.rect === undefined || isRect(v.patch.rect));
   }
   return false;
 }
@@ -56,7 +67,7 @@ export class TapQueue {
     this.save();
   }
 
-  update(id: string, patch: { undone?: boolean; note?: string }): void {
+  update(id: string, patch: TapPatch): void {
     this.ops.push({ op: "update", id, patch });
     this.save();
   }

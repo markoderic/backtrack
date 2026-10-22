@@ -267,3 +267,61 @@ describe("TapQueue", () => {
     });
   });
 });
+
+describe("TapQueue highlights", () => {
+  const RECT = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+
+  it("keeps the kind and rect of an insert, in memory and after a reload", () => {
+    const q = new TapQueue(LECTURE);
+    q.enqueue(tap(3, { kind: "save", rect: RECT }));
+    const want = [{ op: "insert", tap: tap(3, { kind: "save", rect: RECT }) }];
+    expect(q.pending()).toEqual(want);
+    expect(new TapQueue(LECTURE).pending()).toEqual(want);
+  });
+
+  it("hands the kind and rect to send", async () => {
+    const q = new TapQueue(LECTURE);
+    q.enqueue(tap(3, { kind: "save", rect: RECT }));
+    const send = sender();
+    await q.flush(send);
+    expect(send).toHaveBeenCalledWith({ op: "insert", tap: tap(3, { kind: "save", rect: RECT }) });
+  });
+
+  it("keeps an update that changes the rect, in memory and after a reload", () => {
+    const q = new TapQueue(LECTURE);
+    q.update("abc", { rect: RECT });
+    const want = [{ op: "update", id: "abc", patch: { rect: RECT } }];
+    expect(q.pending()).toEqual(want);
+    expect(new TapQueue(LECTURE).pending()).toEqual(want);
+  });
+
+  it("still loads an op saved before kind and rect existed", () => {
+    localStorage.setItem(KEY, JSON.stringify([{ op: "insert", tap: tap(3) }, { op: "update", id: "x", patch: { undone: true } }]));
+    expect(new TapQueue(LECTURE).pending()).toEqual([
+      { op: "insert", tap: tap(3) },
+      { op: "update", id: "x", patch: { undone: true } },
+    ]);
+  });
+
+  it("drops a stored op with a bad kind or a malformed rect", () => {
+    const bad = [
+      { op: "insert", tap: { ...tap(3), kind: "star" } },
+      { op: "insert", tap: { ...tap(4), rect: { x: 0.1, y: 0.2, w: 0.3 } } },
+      { op: "insert", tap: { ...tap(5), rect: { x: 0.9, y: 0.2, w: 0.3, h: 0.1 } } },
+      { op: "insert", tap: { ...tap(6), rect: "big" } },
+      { op: "update", id: "x", patch: { rect: { x: -1, y: 0, w: 0.1, h: 0.1 } } },
+      { op: "update", id: "x", patch: { rect: null } },
+    ];
+    localStorage.setItem(KEY, JSON.stringify([...bad, { op: "insert", tap: tap(7, { kind: "lost", rect: RECT }) }]));
+    expect(new TapQueue(LECTURE).pending()).toEqual([{ op: "insert", tap: tap(7, { kind: "lost", rect: RECT }) }]);
+  });
+
+  it("cancel takes out a highlight insert and its rect updates", () => {
+    const q = new TapQueue(LECTURE);
+    const t = tap(3, { kind: "save", rect: RECT });
+    q.enqueue(t);
+    q.update(t.id, { rect: { x: 0, y: 0, w: 0.5, h: 0.5 } });
+    expect(q.cancel(t.id)).toBe(true);
+    expect(q.pending()).toEqual([]);
+  });
+});
