@@ -187,13 +187,26 @@ describe("Projector", () => {
     press("Escape");
     expect(push).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
-    expect(screen.getByText("482916")).toBeInTheDocument();
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
   });
 
   it("ignores a held key", () => {
     show();
     fireEvent.keyDown(window, { key: "ArrowRight", repeat: true });
-    expect(screen.getByText("482916")).toBeInTheDocument();
+    expect(screen.getByTestId("join-card")).toBeInTheDocument();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("typing in a text box never changes the slide", () => {
+    show();
+    press("ArrowRight"); // hides the join card
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+    fireEvent.keyDown(input, { key: "n" });
+    input.remove();
+    expect(update).not.toHaveBeenCalled();
+    expect(shownSlide()).toBe("https://signed/1.webp");
   });
 
   it("the Fullscreen button asks the browser for fullscreen", () => {
