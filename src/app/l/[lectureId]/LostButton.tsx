@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { TapQueue, type QueueOp, type SendResult } from "@/lib/tapQueue";
+import { markRejected } from "@/lib/tapSync";
 
 const UNDO_WINDOW_MS = 8000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
@@ -19,6 +20,11 @@ type Props = {
   onSpots: (spots: Set<number>) => void;
   /** Goes up each time the live connection comes back. */
   reconnects?: number;
+  /**
+   * Gives the page this button's flush. flush(true) is for a lecture that is ending:
+   * a refusal then sets the rejected key for the spots page. The page may wait on it.
+   */
+  onFlushReady?: (flush: (ending?: boolean) => Promise<void>) => void;
   /** Shown in the same row, left and right of the button. */
   before?: ReactNode;
   after?: ReactNode;
@@ -53,7 +59,7 @@ function pendingTaps(ops: QueueOp[]): Map<string, number> {
  * Undo and an optional note for 8 seconds, in a row of fixed height so nothing
  * moves.
  */
-export function LostButton({ lectureId, viewing, send, loadOwn, onSpots, reconnects = 0, before, after }: Props) {
+export function LostButton({ lectureId, viewing, send, loadOwn, onSpots, reconnects = 0, onFlushReady, before, after }: Props) {
   const [taps, setTaps] = useState<ReadonlyMap<string, number>>(new Map());
   const [bar, setBar] = useState<Bar | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
@@ -91,17 +97,24 @@ export function LostButton({ lectureId, viewing, send, loadOwn, onSpots, reconne
     if (mounted.current) setFatal(e instanceof Error ? e : new Error(String(e)));
   }, []);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(async (ending = false) => {
     try {
       const { rejected: refused } = await queue().flush((op) => sendRef.current(op));
-      if (!mounted.current || refused.length === 0) return;
+      if (refused.length === 0) return;
+      // The page is going (or gone): nobody is here to show it, so leave a note for the spots page.
+      if (ending || !mounted.current) markRejected(lectureId);
+      if (!mounted.current) return;
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
       setBar((b) => (b && gone.has(b.id) ? null : b));
       setRejected(gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
     } catch (e) {
       fail(e);
     }
-  }, [queue, dropTaps, fail]);
+  }, [queue, lectureId, dropTaps, fail]);
+
+  useEffect(() => {
+    onFlushReady?.(flush);
+  }, [onFlushReady, flush]);
 
   const loadSaved = useCallback(async () => {
     if (loaded.current || loading.current) return;

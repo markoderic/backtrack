@@ -70,6 +70,7 @@ const teacherMoves = (n: number) => act(() => channel.update?.({ new: { current_
 beforeEach(() => {
   [single, insert, update, upsert, rpc, from, replace, useSlideImages, ownRows, getSession].forEach((m) => m.mockClear());
   localStorage.clear();
+  sessionStorage.clear();
   upsert.mockResolvedValue({ error: null, status: 201 });
   update.mockReturnValue({ eq: vi.fn(async () => ({ error: null, status: 204 })) });
   ownRows.mockResolvedValue({ data: [], error: null, status: 200 });
@@ -212,11 +213,11 @@ describe("StudentLecture", () => {
     }
   });
 
-  it("goes to the lecture's spot when the lecture ends", () => {
+  it("goes to the lecture's spot when the lecture ends", async () => {
     show();
     expect(replace).not.toHaveBeenCalled();
     act(() => channel.update?.({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
-    expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
   });
 
   it("reads the lecture again on SUBSCRIBED and goes to the spot if it ended meanwhile", async () => {
@@ -356,6 +357,89 @@ describe("StudentLecture", () => {
       fireEvent.click(lost());
       expect(container.textContent ?? "").not.toMatch(/10/);
       expect(container.textContent ?? "").not.toMatch(/\bof\b/i);
+    });
+  });
+  describe("when the lecture ends", () => {
+    const offlineOnce = () => upsert.mockResolvedValueOnce({ error: { code: "", message: "TypeError: Failed to fetch" }, status: 0 });
+    const ends = () => act(() => channel.update?.({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
+
+    it("sends a tap that was waiting offline before it goes to the spot", async () => {
+      offlineOnce();
+      show(7);
+      await act(async () => {});
+      fireEvent.click(lost());
+      await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+      ends();
+      await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
+      expect(upsert).toHaveBeenCalledTimes(2);
+      expect(upsert.mock.invocationCallOrder[1]).toBeLessThan(replace.mock.invocationCallOrder[0]);
+      expect(JSON.parse(localStorage.getItem(`backtrack:queue:${LECTURE}`) ?? "[]")).toEqual([]);
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
+    });
+
+    it("also sends it when the end is found by the read after a reconnect", async () => {
+      offlineOnce();
+      show(7);
+      await act(async () => {});
+      fireEvent.click(lost());
+      await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+      act(() => channel.status?.("CHANNEL_ERROR"));
+      single.mockResolvedValue({ data: { current_slide: 7, status: "ended", slide_count: 10 }, error: null });
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
+      expect(upsert).toHaveBeenCalledTimes(2);
+    });
+
+    it("sets backtrack:rejected:<lectureId> when that flush is rejected, and still goes to the spot", async () => {
+      offlineOnce();
+      show(7);
+      await act(async () => {});
+      fireEvent.click(lost());
+      await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+      upsert.mockResolvedValue({ error: { code: "42501", message: "new row violates row-level security policy" }, status: 403 });
+      ends();
+      await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
+    });
+
+    it("goes to the spot anyway after 3 seconds if the flush hangs", async () => {
+      vi.useFakeTimers();
+      try {
+        upsert.mockReturnValue(new Promise(() => {}));
+        show(7);
+        await act(async () => {});
+        fireEvent.click(lost());
+        await act(async () => {});
+        expect(upsert).toHaveBeenCalledTimes(1);
+        ends();
+        await act(async () => vi.advanceTimersByTimeAsync(2999));
+        expect(replace).not.toHaveBeenCalled();
+        await act(async () => vi.advanceTimersByTimeAsync(1));
+        expect(replace).toHaveBeenCalledTimes(1);
+        expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+        // The tap is still queued for the spots page to send.
+        expect(JSON.parse(localStorage.getItem(`backtrack:queue:${LECTURE}`) ?? "[]")).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("goes to the spot once, not again when the flush finishes after the bound", async () => {
+      vi.useFakeTimers();
+      try {
+        let finish: (v: unknown) => void = () => {};
+        upsert.mockReturnValue(new Promise((r) => (finish = r)));
+        show(7);
+        await act(async () => {});
+        fireEvent.click(lost());
+        await act(async () => {});
+        ends();
+        await act(async () => vi.advanceTimersByTimeAsync(3000));
+        await act(async () => finish({ error: null, status: 201 }));
+        expect(replace).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

@@ -378,6 +378,43 @@ describe("LostButton", () => {
     });
   });
 
+  describe("when the page goes away", () => {
+    it("sets backtrack:rejected:<lectureId> when a send is rejected after it unmounted", async () => {
+      sessionStorage.clear();
+      let finish: (r: SendResult) => void = () => {};
+      const send = vi.fn<Send>(() => new Promise<SendResult>((r) => (finish = r)));
+      const { unmount } = setup({ send });
+      await settle();
+      press();
+      await settle();
+      unmount();
+      await act(async () => finish("rejected"));
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
+    });
+
+    it("hands its flush to the page, which can wait on it, and a rejection then sets the key", async () => {
+      sessionStorage.clear();
+      let flush: ((ending?: boolean) => Promise<void>) | undefined;
+      const send = vi.fn<Send>().mockResolvedValueOnce("offline").mockResolvedValue("rejected");
+      setup({ send, onFlushReady: (f) => (flush = f) });
+      await settle();
+      press();
+      await settle();
+      await act(async () => flush?.(true));
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBe("1");
+    });
+
+    it("does not set the key for a rejection while the page is still open", async () => {
+      sessionStorage.clear();
+      setup({ send: vi.fn<Send>(async () => "rejected") });
+      await settle();
+      press();
+      await settle();
+      expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
+    });
+  });
+
   describe("spots", () => {
     it("reports the rows the student already has, from loadOwn", async () => {
       const { lastSpots } = setup({ loadOwn: vi.fn(async () => [{ id: "a", slide: 3 }, { id: "b", slide: 5 }]) });

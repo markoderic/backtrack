@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { InfoButton } from "@/components/InfoButton";
 import { loadOwnTaps, makeSend } from "@/lib/lostTapApi";
@@ -10,6 +10,8 @@ import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { LostButton } from "./LostButton";
 import { SlideStrip } from "./SlideStrip";
+
+const END_FLUSH_MS = 3000;
 
 type Props = {
   lectureId: string;
@@ -41,9 +43,29 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     if (lastConn === "reconnecting" && conn === "live") setReconnects((n) => n + 1);
   }
 
+  // A tap still waiting (made offline, or just before the end) is sent before leaving,
+  // so it is not lost with this screen. If that takes over 3 seconds, leave anyway:
+  // what is left stays in the queue for the spots page.
+  const flushRef = useRef<((ending?: boolean) => Promise<void>) | null>(null);
+  const onFlushReady = useCallback((flush: (ending?: boolean) => Promise<void>) => {
+    flushRef.current = flush;
+  }, []);
   const ended = state?.ended ?? false;
   useEffect(() => {
-    if (ended) router.replace(`/spots/${lectureId}`);
+    if (!ended) return;
+    let left = false;
+    const leave = () => {
+      if (left) return;
+      left = true;
+      clearTimeout(bound);
+      router.replace(`/spots/${lectureId}`);
+    };
+    const bound = setTimeout(leave, END_FLUSH_MS);
+    void (flushRef.current?.(true) ?? Promise.resolve()).then(leave);
+    return () => {
+      left = true;
+      clearTimeout(bound);
+    };
   }, [ended, lectureId, router]);
 
   const viewing = state?.viewing ?? initialSlide;
@@ -94,6 +116,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           loadOwn={loadOwn}
           onSpots={setSpots}
           reconnects={reconnects}
+          onFlushReady={onFlushReady}
           before={
             <>
               <button
