@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 
 vi.mock("../actions", () => ({ saveSetup: vi.fn(), addCourse: vi.fn() }));
 
 import { SetupForm } from "./setup-form";
+import { saveSetup } from "../actions";
 
 const submit = () => screen.getByRole("button", { name: "Done" });
 const name = () => screen.getByLabelText("Your name, as students see it");
@@ -53,5 +54,26 @@ describe("SetupForm", () => {
     expect(submit()).toBeEnabled();
     fireEvent.change(name(), { target: { value: "" } });
     expect(submit()).toBeDisabled();
+  });
+
+  it("sends once on a double click and keeps Done disabled while it saves", async () => {
+    vi.mocked(saveSetup).mockReset().mockImplementation(() => new Promise<never>(() => {}));
+    const { container } = render(<SetupForm defaultName="Marko" />);
+    fireEvent.change(firstCourse(), { target: { value: "IMS 452" } });
+    const form = container.querySelector("form")!;
+    await act(async () => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+    await waitFor(() => expect(submit()).toBeDisabled());
+    expect(submit()).toHaveAttribute("aria-busy", "true");
+    expect(saveSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops offering Add another course at 20 courses", () => {
+    render(<SetupForm />);
+    for (let i = 1; i < 20; i++) fireEvent.click(screen.getByRole("button", { name: "Add another course" }));
+    expect(screen.getAllByLabelText("Course")).toHaveLength(20);
+    expect(screen.queryByRole("button", { name: "Add another course" })).not.toBeInTheDocument();
   });
 });

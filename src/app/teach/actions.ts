@@ -6,6 +6,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 
 const NAME_MAX = 80;
 const COURSE_MAX = 120;
+const COURSES_MAX = 20;
 
 async function signedInUser() {
   const supabase = await createServerSupabase();
@@ -16,8 +17,10 @@ async function signedInUser() {
   return { supabase, user };
 }
 
-// Saves the teacher's name and their first courses. Runs as the signed in user,
-// so row level security decides what is allowed.
+// Saves the teacher's name and their first courses in one database call (save_setup,
+// migration 0015): both or neither, and only the first time, so a double click on Done
+// or a re-run can't add the courses twice. Runs as the signed in user, so row level
+// security decides what is allowed.
 export async function saveSetup(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const courses = formData
@@ -26,24 +29,21 @@ export async function saveSetup(formData: FormData) {
     .map((c) => c.trim())
     .filter(Boolean);
 
-  if (!name || name.length > NAME_MAX || courses.length === 0 || courses.some((c) => c.length > COURSE_MAX)) {
+  if (
+    !name ||
+    name.length > NAME_MAX ||
+    courses.length === 0 ||
+    courses.length > COURSES_MAX ||
+    courses.some((c) => c.length > COURSE_MAX)
+  ) {
     redirect("/teach/setup");
   }
 
-  const { supabase, user } = await signedInUser();
+  const { supabase } = await signedInUser();
 
-  const { data: updated, error: nameError } = await supabase
-    .from("teachers")
-    .update({ display_name: name })
-    .eq("id", user.id)
-    .select("id");
-  if (nameError) throw new Error("Could not save your name.");
-  if (!updated || updated.length === 0) redirect("/teach");
-
-  const { error: coursesError } = await supabase
-    .from("courses")
-    .insert(courses.map((course) => ({ teacher_id: user.id, name: course })));
-  if (coursesError) throw new Error("Could not save your courses.");
+  // false: not a teacher, or setup was already done (a second click). Either way /teach decides.
+  const { error } = await supabase.rpc("save_setup", { p_name: name, p_courses: courses });
+  if (error) throw new Error("Could not save your name and courses.");
 
   revalidatePath("/teach");
   redirect("/teach");
