@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
 type Handler = (payload: { new: Record<string, unknown> }) => void;
@@ -25,8 +25,10 @@ const select = vi.fn(() => ({ eq }));
 const from = vi.fn(() => ({ select }));
 const makeChannel = vi.fn(() => channel);
 const removeChannel = vi.fn();
+// Realtime getting the user's token; resolves at once unless a test holds it.
+const setAuth = vi.fn(async () => {});
 vi.mock("@/lib/supabase/browser", () => ({
-  createBrowserSupabase: () => ({ from, channel: makeChannel, removeChannel }),
+  createBrowserSupabase: () => ({ from, channel: makeChannel, removeChannel, realtime: { setAuth } }),
 }));
 
 import { useLiveLecture } from "./useLiveLecture";
@@ -38,9 +40,15 @@ beforeEach(() => {
   channel.filter = null;
   channel.update = null;
   channel.status = null;
-  [single, eq, select, from, makeChannel, removeChannel].forEach((m) => m.mockClear());
+  [single, eq, select, from, makeChannel, removeChannel, setAuth].forEach((m) => m.mockClear());
+  setAuth.mockImplementation(async () => {});
   single.mockResolvedValue(row(3));
+  setVisibility("visible");
 });
+
+function setVisibility(v: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => v });
+}
 
 describe("useLiveLecture", () => {
   it("reads the lecture and follows its current slide", async () => {
@@ -56,6 +64,27 @@ describe("useLiveLecture", () => {
     const { result } = renderHook(() => useLiveLecture(LECTURE, 5));
     expect(result.current.state).toMatchObject({ live: 5, viewing: 5 });
     await waitFor(() => expect(single).toHaveBeenCalled());
+  });
+
+  it("opens the channel only once Realtime has the user's token", async () => {
+    let giveToken: () => void = () => {};
+    setAuth.mockImplementation(() => new Promise<void>((r) => (giveToken = r)));
+    renderHook(() => useLiveLecture(LECTURE, 3));
+    await act(async () => {});
+    expect(setAuth).toHaveBeenCalled();
+    expect(makeChannel).not.toHaveBeenCalled();
+    await act(async () => giveToken());
+    expect(makeChannel).toHaveBeenCalledTimes(1);
+    expect(makeChannel).toHaveBeenCalledWith(`lecture-${LECTURE}`);
+  });
+
+  it("opens no channel when it unmounts before the token arrives", async () => {
+    let giveToken: () => void = () => {};
+    setAuth.mockImplementation(() => new Promise<void>((r) => (giveToken = r)));
+    const { unmount } = renderHook(() => useLiveLecture(LECTURE, 3));
+    unmount();
+    await act(async () => giveToken());
+    expect(makeChannel).not.toHaveBeenCalled();
   });
 
   it("listens for updates of this lecture row only", async () => {
@@ -197,10 +226,12 @@ describe("useLiveLecture", () => {
         await wait(4000);
         expect(result.current.state).toEqual({ live: 8, viewing: 8, following: true, conn: "live", ended: false });
 
-        // Nothing is left to retry.
+        // Nothing is left to retry: the next read is the 20 second check.
         const done = single.mock.calls.length;
-        await wait(60000);
+        await wait(19999);
         expect(single.mock.calls.length).toBe(done);
+        await wait(1);
+        expect(single.mock.calls.length).toBe(done + 1);
       } finally {
         vi.useRealTimers();
       }
@@ -263,6 +294,151 @@ describe("useLiveLecture", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("while the lecture is live, it checks again", () => {
+    const wait = (ms: number) => act(async () => vi.advanceTimersByTimeAsync(ms));
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    async function started() {
+      const hook = renderHook(() => useLiveLecture(LECTURE, 3));
+      await wait(0);
+      return { ...hook, reads: single.mock.calls.length };
+    }
+
+    it("every 20 seconds, and ends when that read finds the lecture ended", async () => {
+      const { result, reads } = await started();
+      await wait(19999);
+      expect(single.mock.calls.length).toBe(reads);
+      single.mockResolvedValue(row(3, "ended"));
+      await wait(1);
+      expect(single.mock.calls.length).toBe(reads + 1);
+      expect(result.current.state?.ended).toBe(true);
+    });
+
+    it("every 20 seconds, with one small read of current_slide and status, following a slide the channel missed", async () => {
+      const { result, reads } = await started();
+      single.mockResolvedValue(row(5));
+      await wait(20000);
+      expect(single.mock.calls.length).toBe(reads + 1);
+      expect(select).toHaveBeenLastCalledWith("current_slide, status");
+      expect(result.current.state).toMatchObject({ live: 5, viewing: 5, ended: false });
+      await wait(20000);
+      expect(single.mock.calls.length).toBe(reads + 2);
+    });
+
+    it("counts the 20 seconds from the last read", async () => {
+      const { reads } = await started();
+      await wait(15000);
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      expect(single.mock.calls.length).toBe(reads + 1);
+      await wait(19999);
+      expect(single.mock.calls.length).toBe(reads + 1);
+      await wait(1);
+      expect(single.mock.calls.length).toBe(reads + 2);
+    });
+
+    it("when the page becomes visible, and ends when that read finds the lecture ended", async () => {
+      const { result, reads } = await started();
+      single.mockResolvedValue(row(3, "ended"));
+      setVisibility("hidden");
+      await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+      expect(single.mock.calls.length).toBe(reads);
+      setVisibility("visible");
+      await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+      expect(single.mock.calls.length).toBe(reads + 1);
+      expect(result.current.state?.ended).toBe(true);
+    });
+
+    it.each(["focus", "online"])("on window %s", async (event) => {
+      const { result, reads } = await started();
+      single.mockResolvedValue(row(3, "ended"));
+      await act(async () => window.dispatchEvent(new Event(event)));
+      expect(single.mock.calls.length).toBe(reads + 1);
+      expect(result.current.state?.ended).toBe(true);
+    });
+
+    it("once only when focus and visible come together", async () => {
+      const { reads } = await started();
+      let finish: (v: unknown) => void = () => {};
+      single.mockReturnValue(new Promise((r) => (finish = r)));
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(single.mock.calls.length).toBe(reads + 1);
+      await act(async () => finish(row(3)));
+    });
+
+    it("when asked to (recheck), and ends when that read finds the lecture ended", async () => {
+      const { result, reads } = await started();
+      single.mockResolvedValue(row(3, "ended"));
+      await act(async () => result.current.recheck());
+      expect(single.mock.calls.length).toBe(reads + 1);
+      expect(result.current.state?.ended).toBe(true);
+    });
+
+    it("never once it has ended", async () => {
+      const { result } = await started();
+      act(() => channel.update?.({ new: { current_slide: 3, status: "ended" } }));
+      expect(result.current.state?.ended).toBe(true);
+      const reads = single.mock.calls.length;
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event("focus"));
+        window.dispatchEvent(new Event("online"));
+        result.current.recheck();
+      });
+      await wait(60000);
+      expect(single.mock.calls.length).toBe(reads);
+    });
+
+    it("never after it unmounts", async () => {
+      const { unmount } = await started();
+      unmount();
+      const reads = single.mock.calls.length;
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event("focus"));
+        window.dispatchEvent(new Event("online"));
+      });
+      await wait(60000);
+      expect(single.mock.calls.length).toBe(reads);
+    });
+
+    it("keeps checking when a read never comes back", async () => {
+      const { result, reads } = await started();
+      single.mockReturnValueOnce(new Promise(() => {}));
+      await wait(20000);
+      expect(single.mock.calls.length).toBe(reads + 1);
+      // Focus a few seconds later waits for that read; 20 seconds on, a new read goes out.
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(single.mock.calls.length).toBe(reads + 1);
+      single.mockResolvedValue(row(3, "ended"));
+      await wait(20000);
+      expect(single.mock.calls.length).toBe(reads + 2);
+      expect(result.current.state?.ended).toBe(true);
+    });
+
+    it("keeps the newest read when an older one comes back last", async () => {
+      const { result } = await started();
+      let older: (v: unknown) => void = () => {};
+      let newer: (v: unknown) => void = () => {};
+      single.mockReturnValueOnce(new Promise((r) => (older = r))).mockReturnValueOnce(new Promise((r) => (newer = r)));
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      await act(async () => channel.status?.("SUBSCRIBED"));
+      await act(async () => newer(row(6)));
+      await act(async () => older(row(4)));
+      expect(result.current.state).toMatchObject({ live: 6, viewing: 6 });
+    });
+
+    it("adds no second channel", async () => {
+      await started();
+      await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+      await wait(40000);
+      expect(makeChannel).toHaveBeenCalledTimes(1);
     });
   });
 });

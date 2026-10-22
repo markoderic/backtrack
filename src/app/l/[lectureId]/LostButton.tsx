@@ -38,6 +38,11 @@ type Props = {
    * on the slide on screen. It goes through the same queue, bar and Undo as the button.
    */
   onAddReady?: (add: (highlight: { kind: "lost" | "save"; rect: Rect; note?: string }) => void) => void;
+  /**
+   * Called when the database refuses a send while the page is open (not in the flush
+   * the page runs while leaving). Usually the lecture ended, so the page checks.
+   */
+  onRejected?: () => void;
   /** Shown in the saved row while it has nothing else to say (the page puts Reconnecting… here). */
   idle?: ReactNode;
 };
@@ -86,6 +91,7 @@ export function LostButton({
   onAddReady,
   onTap,
   onBarChange,
+  onRejected,
   idle,
 }: Props) {
   const [taps, setTaps] = useState<ReadonlyMap<string, Spot>>(new Map());
@@ -103,6 +109,7 @@ export function LostButton({
   const loadOwnRef = useRef(loadOwn);
   const onSpotsRef = useRef(onSpots);
   const onBarChangeRef = useRef(onBarChange);
+  const onRejectedRef = useRef(onRejected);
   const mounted = useRef(false);
   const loaded = useRef(false);
   const loading = useRef(false);
@@ -112,6 +119,7 @@ export function LostButton({
     loadOwnRef.current = loadOwn;
     onSpotsRef.current = onSpots;
     onBarChangeRef.current = onBarChange;
+    onRejectedRef.current = onRejected;
   });
 
   // Made on first use, in the browser, never while rendering: the queue reads localStorage.
@@ -142,6 +150,7 @@ export function LostButton({
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
       setBar((b) => (b && gone.has(b.id) ? null : b));
       setRejected(gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
+      if (!ending) onRejectedRef.current?.();
     } catch (e) {
       fail(e);
     }

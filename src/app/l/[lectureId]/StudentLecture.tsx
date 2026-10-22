@@ -35,7 +35,7 @@ type Props = {
 // No keyboard shortcuts, I'm lost included: it is only the button.
 export function StudentLecture({ lectureId, lectureName, courseName, initialSlide }: Props) {
   const router = useRouter();
-  const { state, back, forward, jumpToLive, goTo } = useLiveLecture(lectureId, initialSlide);
+  const { state, back, forward, jumpToLive, goTo, recheck } = useLiveLecture(lectureId, initialSlide);
   const { urlFor } = useSlideImages(lectureId, state?.viewing);
 
   // The client is made when a tap is sent, not while rendering.
@@ -264,6 +264,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
               reconnects={reconnects}
               onFlushReady={onFlushReady}
               onAddReady={onAddReady}
+              // A refused tap usually means the lecture ended: read the status now, and
+              // if it did, leave the same way as when Realtime says so.
+              onRejected={recheck}
               idle={
                 reconnecting ? (
                   <p role="status" className="animate-fade-in type-small text-secondary">

@@ -32,7 +32,14 @@ const from = vi.fn((table: string) =>
     : { select: () => ({ eq: () => ({ single }) }), insert, update, upsert },
 );
 vi.mock("@/lib/supabase/browser", () => ({
-  createBrowserSupabase: () => ({ from, rpc, auth: { getSession }, channel: () => channel, removeChannel: vi.fn() }),
+  createBrowserSupabase: () => ({
+    from,
+    rpc,
+    auth: { getSession },
+    realtime: { setAuth: async () => {} },
+    channel: () => channel,
+    removeChannel: vi.fn(),
+  }),
 }));
 
 const replace = vi.fn();
@@ -65,7 +72,24 @@ const numberShown = (n: string) => screen.getAllByText(n).filter((el) => !el.clo
 const strip = () => screen.getByRole("navigation", { name: "Slides" });
 const stripItems = () => within(strip()).getAllByRole("listitem");
 const lost = () => screen.getByRole("button", { name: "I'm lost" });
-const teacherMoves = (n: number) => act(() => channel.update?.({ new: { current_slide: n, status: "live", slide_count: 10 } }));
+// Runs every queued promise (and any timer already due) inside act, with fake or real timers.
+// The channel opens a step after the first render (once Realtime has the token), so a
+// test settles before it drives the channel.
+const settle = () =>
+  act(async () => {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    else await new Promise((r) => setTimeout(r, 0));
+  });
+// What Realtime sends. Throws if the page has not opened its channel yet.
+function channelUpdate(payload: { new: Record<string, unknown> }) {
+  if (!channel.update) throw new Error("The channel is not open yet: settle first.");
+  channel.update(payload);
+}
+function channelStatus(status: string) {
+  if (!channel.status) throw new Error("The channel is not open yet: settle first.");
+  channel.status(status);
+}
+const teacherMoves = (n: number) => act(() => channelUpdate({ new: { current_slide: n, status: "live", slide_count: 10 } }));
 
 beforeEach(() => {
   [single, insert, update, upsert, rpc, from, replace, useSlideImages, ownRows, getSession].forEach((m) => m.mockClear());
@@ -137,7 +161,7 @@ describe("StudentLecture", () => {
   it("shows no total even after the lecture row and a realtime update carried slide_count 10", async () => {
     const { container } = show(7);
     await waitFor(() => expect(single).toHaveBeenCalled());
-    await act(async () => channel.status?.("SUBSCRIBED"));
+    await act(async () => channelStatus("SUBSCRIBED"));
     expect(numberShown("7")).toHaveLength(1);
     expect(container.textContent ?? "").not.toMatch(/10/);
     teacherMoves(8);
@@ -194,15 +218,17 @@ describe("StudentLecture", () => {
     expect(back()).toBeDisabled();
   });
 
-  it("follows the teacher forward", () => {
+  it("follows the teacher forward", async () => {
     show();
+    await settle();
     teacherMoves(8);
     expect(shownSrc()).toBe("https://signed/8.webp");
     expect(numberShown("8")).toHaveLength(1);
   });
 
-  it("stays on the slide the student went back to and updates the jump button", () => {
+  it("stays on the slide the student went back to and updates the jump button", async () => {
     show();
+    await settle();
     fireEvent.click(back());
     teacherMoves(9);
     expect(shownSrc()).toBe("https://signed/6.webp");
@@ -213,15 +239,16 @@ describe("StudentLecture", () => {
 
   it("shows Reconnecting… while the channel is down and clears it when it is back", async () => {
     const { container } = show();
+    await settle();
     expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
-    act(() => channel.status?.("CHANNEL_ERROR"));
+    act(() => channelStatus("CHANNEL_ERROR"));
     expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
     // In the saved row, and the word next to the slide number says so too.
     expect(container.querySelector("[data-bar]")).toContainElement(screen.getByText("Reconnecting…"));
     expect(screen.getByText("reconnecting")).toBeInTheDocument();
     expect(screen.queryByText("live")).not.toBeInTheDocument();
     single.mockResolvedValue({ data: { current_slide: 9, status: "live", slide_count: 10 }, error: null });
-    await act(async () => channel.status?.("SUBSCRIBED"));
+    await act(async () => channelStatus("SUBSCRIBED"));
     await waitFor(() => expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument());
     expect(shownSrc()).toBe("https://signed/9.webp");
   });
@@ -232,9 +259,9 @@ describe("StudentLecture", () => {
       show();
       await act(async () => {});
       fireEvent.click(back());
-      act(() => channel.status?.("CHANNEL_ERROR"));
+      act(() => channelStatus("CHANNEL_ERROR"));
       single.mockResolvedValue({ data: null, error: { message: "Failed to fetch" } });
-      await act(async () => channel.status?.("SUBSCRIBED"));
+      await act(async () => channelStatus("SUBSCRIBED"));
       expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
       expect(shownSrc()).toBe("https://signed/6.webp");
 
@@ -249,15 +276,17 @@ describe("StudentLecture", () => {
 
   it("goes to the lecture's spot when the lecture ends", async () => {
     show();
+    await settle();
     expect(replace).not.toHaveBeenCalled();
-    act(() => channel.update?.({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
+    act(() => channelUpdate({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
   });
 
   it("reads the lecture again on SUBSCRIBED and goes to the spot if it ended meanwhile", async () => {
     show();
+    await settle();
     single.mockResolvedValue({ data: { current_slide: 7, status: "ended", slide_count: 10 }, error: null });
-    await act(async () => channel.status?.("SUBSCRIBED"));
+    await act(async () => channelStatus("SUBSCRIBED"));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
   });
 
@@ -314,16 +343,18 @@ describe("StudentLecture", () => {
     }
   });
 
-  it("has no total anywhere in its markup, even for the jump button", () => {
+  it("has no total anywhere in its markup, even for the jump button", async () => {
     const { container } = show(7);
+    await settle();
     fireEvent.click(back());
     teacherMoves(9);
     expect(container.textContent ?? "").not.toMatch(/\bof\b/i);
     expect(within(container).queryByText(/10/)).not.toBeInTheDocument();
   });
   describe("slide strip", () => {
-    it("runs from 1 to the live slide and no further", () => {
+    it("runs from 1 to the live slide and no further", async () => {
       const { container } = show(7);
+      await settle();
       expect(stripItems()).toHaveLength(7);
       expect(within(strip()).queryByRole("button", { name: /^Slide 8\b/ })).not.toBeInTheDocument();
       expect(container.textContent ?? "").not.toMatch(/10/);
@@ -438,20 +469,29 @@ describe("StudentLecture", () => {
       await act(async () => {});
       fireEvent.click(lost());
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
-      act(() => channel.status?.("CHANNEL_ERROR"));
-      await act(async () => channel.status?.("SUBSCRIBED"));
+      act(() => channelStatus("CHANNEL_ERROR"));
+      await act(async () => channelStatus("SUBSCRIBED"));
       await waitFor(() => expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument());
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(2));
       expect(upsert.mock.calls[1][0]).toEqual(upsert.mock.calls[0][0]);
     });
 
     it("shows the lecture-ended message and takes the dot away when the tap is rejected", async () => {
-      upsert.mockResolvedValue({ error: { code: "42501", message: "new row violates row-level security policy" }, status: 403 });
-      show(7);
-      await act(async () => {});
-      fireEvent.click(lost());
-      await waitFor(() => expect(screen.getByText("This one didn't save because the lecture had ended.")).toBeInTheDocument());
-      expect(within(strip()).getByRole("button", { name: "Slide 7, live, viewing" })).toBeInTheDocument();
+      // Fake timers and a settled queue instead of waitFor's one second of wall clock,
+      // which a busy machine could run out of.
+      vi.useFakeTimers();
+      try {
+        upsert.mockResolvedValue({ error: { code: "42501", message: "new row violates row-level security policy" }, status: 403 });
+        show(7);
+        await settle();
+        fireEvent.click(lost());
+        await settle();
+        expect(upsert).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("This one didn't save because the lecture had ended.")).toBeInTheDocument();
+        expect(within(strip()).getByRole("button", { name: "Slide 7, live, viewing" })).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("never shows the slide count while tapping", async () => {
@@ -464,7 +504,86 @@ describe("StudentLecture", () => {
   });
   describe("when the lecture ends", () => {
     const offlineOnce = () => upsert.mockResolvedValueOnce({ error: { code: "", message: "TypeError: Failed to fetch" }, status: 0 });
-    const ends = () => act(() => channel.update?.({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
+    const ends = () => act(() => channelUpdate({ new: { current_slide: 7, status: "ended", slide_count: 10 } }));
+    const endedRow = { data: { current_slide: 7, status: "ended", slide_count: 10 }, error: null };
+    const refused = { error: { code: "42501", message: "new row violates row-level security policy" }, status: 403 };
+
+    it("goes to the spot when Realtime says it ended", async () => {
+      show(7);
+      await settle();
+      expect(channel.update).not.toBeNull();
+      ends();
+      await settle();
+      expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+    });
+
+    it("goes to the spot when the 20 second check finds it ended, though Realtime said nothing", async () => {
+      vi.useFakeTimers();
+      try {
+        show(7);
+        await settle();
+        single.mockResolvedValue(endedRow);
+        await act(async () => vi.advanceTimersByTimeAsync(19999));
+        expect(replace).not.toHaveBeenCalled();
+        await act(async () => vi.advanceTimersByTimeAsync(1));
+        expect(replace).toHaveBeenCalledTimes(1);
+        expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("goes to the spot when the page becomes visible and the lecture had ended", async () => {
+      vi.useFakeTimers();
+      try {
+        show(7);
+        await settle();
+        single.mockResolvedValue(endedRow);
+        await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+        await settle();
+        expect(replace).toHaveBeenCalledTimes(1);
+        expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("goes to the spot after a tap is refused and the read it sets off finds the lecture ended", async () => {
+      vi.useFakeTimers();
+      try {
+        show(7);
+        await settle();
+        upsert.mockResolvedValue(refused);
+        single.mockResolvedValue(endedRow);
+        const reads = single.mock.calls.length;
+        fireEvent.click(lost());
+        await settle();
+        expect(screen.getByText("This one didn't save because the lecture had ended.")).toBeInTheDocument();
+        expect(single.mock.calls.length).toBe(reads + 1);
+        expect(replace).toHaveBeenCalledTimes(1);
+        expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stays on the live view when a tap is refused but the lecture is still live", async () => {
+      vi.useFakeTimers();
+      try {
+        show(7);
+        await settle();
+        upsert.mockResolvedValue(refused);
+        const reads = single.mock.calls.length;
+        fireEvent.click(lost());
+        await settle();
+        expect(single.mock.calls.length).toBe(reads + 1);
+        await act(async () => vi.advanceTimersByTimeAsync(5000));
+        expect(replace).not.toHaveBeenCalled();
+        expect(screen.getByText("live")).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
 
     it("sends a tap that was waiting offline before it goes to the spot", async () => {
       offlineOnce();
@@ -486,9 +605,9 @@ describe("StudentLecture", () => {
       await act(async () => {});
       fireEvent.click(lost());
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
-      act(() => channel.status?.("CHANNEL_ERROR"));
+      act(() => channelStatus("CHANNEL_ERROR"));
       single.mockResolvedValue({ data: { current_slide: 7, status: "ended", slide_count: 10 }, error: null });
-      await act(async () => channel.status?.("SUBSCRIBED"));
+      await act(async () => channelStatus("SUBSCRIBED"));
       await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
       expect(upsert).toHaveBeenCalledTimes(2);
     });

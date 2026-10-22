@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
+import { openChannel } from "@/lib/supabase/realtime";
 
 const RETRY_FIRST_MS = 1000;
 const RETRY_MAX_MS = 10000;
@@ -43,23 +44,27 @@ export function useJoinedCount(lectureId: string): number | null {
       }
     };
 
-    const channel = supabase
-      .channel(`participants-${lectureId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "participants", filter: `lecture_id=eq.${lectureId}` },
-        () => setCount((c) => (c ?? 0) + 1),
-      )
-      // Counts again on every SUBSCRIBED, which also covers a reconnect that missed inserts.
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") void refetch();
-      });
+    // Opened once Realtime has the teacher's token (see openChannel), so the
+    // database lets this channel see the participant rows.
+    const close = openChannel(supabase, () =>
+      supabase
+        .channel(`participants-${lectureId}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "participants", filter: `lecture_id=eq.${lectureId}` },
+          () => setCount((c) => (c ?? 0) + 1),
+        )
+        // Counts again on every SUBSCRIBED, which also covers a reconnect that missed inserts.
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED") void refetch();
+        }),
+    );
     void refetch();
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      void supabase.removeChannel(channel);
+      close();
     };
   }, [lectureId]);
 

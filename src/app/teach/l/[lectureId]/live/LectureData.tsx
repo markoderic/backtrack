@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
+import { openChannel } from "@/lib/supabase/realtime";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { ButtonPrimary } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
@@ -217,52 +218,56 @@ export function LectureData({
       setTaps((prev) => new Map(prev).set(row.id, row));
     };
 
-    let channel: ReturnType<Supabase["channel"]> | undefined;
+    // Opened once Realtime has the teacher's token (see openChannel), so the
+    // database lets this channel see the rows it listens to.
+    let close: (() => void) | undefined;
     if (live) {
-      channel = supabase
-        .channel(`lecture-data-${lectureId}`)
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "lost_taps", filter: `lecture_id=eq.${lectureId}` },
-          put,
-        )
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "lost_taps", filter: `lecture_id=eq.${lectureId}` },
-          put,
-        )
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "participants", filter: `lecture_id=eq.${lectureId}` },
-          () => setJoined((n) => (n ?? 0) + 1),
-        )
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "lectures", filter: `id=eq.${lectureId}` },
-          (payload) => {
-            const row = payload.new as { current_slide: number; status: string };
-            touch("lecture");
-            if (row.status === "ended") {
-              setLive(false);
-              setJustEnded(true);
-            } else {
-              setCurrent(row.current_slide);
-            }
-          },
-        )
-        // Reads everything again on every SUBSCRIBED, which also covers a reconnect that missed rows.
-        .subscribe((status) => {
-          if (cancelled) return;
-          if (status === "SUBSCRIBED") void refetch();
-          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") retry();
-        });
+      close = openChannel(supabase, () =>
+        supabase
+          .channel(`lecture-data-${lectureId}`)
+          .on(
+            "postgres_changes",
+            { event: "INSERT", schema: "public", table: "lost_taps", filter: `lecture_id=eq.${lectureId}` },
+            put,
+          )
+          .on(
+            "postgres_changes",
+            { event: "UPDATE", schema: "public", table: "lost_taps", filter: `lecture_id=eq.${lectureId}` },
+            put,
+          )
+          .on(
+            "postgres_changes",
+            { event: "INSERT", schema: "public", table: "participants", filter: `lecture_id=eq.${lectureId}` },
+            () => setJoined((n) => (n ?? 0) + 1),
+          )
+          .on(
+            "postgres_changes",
+            { event: "UPDATE", schema: "public", table: "lectures", filter: `id=eq.${lectureId}` },
+            (payload) => {
+              const row = payload.new as { current_slide: number; status: string };
+              touch("lecture");
+              if (row.status === "ended") {
+                setLive(false);
+                setJustEnded(true);
+              } else {
+                setCurrent(row.current_slide);
+              }
+            },
+          )
+          // Reads everything again on every SUBSCRIBED, which also covers a reconnect that missed rows.
+          .subscribe((status) => {
+            if (cancelled) return;
+            if (status === "SUBSCRIBED") void refetch();
+            else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") retry();
+          }),
+      );
     }
     void refetch();
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      if (channel) void supabase.removeChannel(channel);
+      close?.();
     };
   }, [lectureId, live]);
 

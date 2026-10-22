@@ -24,8 +24,9 @@ const select = vi.fn(() => ({ eq }));
 const from = vi.fn(() => ({ select }));
 const makeChannel = vi.fn(() => channel);
 const removeChannel = vi.fn();
+const setAuth = vi.fn(async () => {});
 vi.mock("@/lib/supabase/browser", () => ({
-  createBrowserSupabase: () => ({ from, channel: makeChannel, removeChannel }),
+  createBrowserSupabase: () => ({ from, channel: makeChannel, removeChannel, realtime: { setAuth } }),
 }));
 
 import { useJoinedCount } from "./useJoinedCount";
@@ -36,11 +37,23 @@ beforeEach(() => {
   channel.filters = [];
   channel.insert = null;
   channel.status = null;
-  [eq, select, from, makeChannel, removeChannel].forEach((m) => m.mockClear());
+  [eq, select, from, makeChannel, removeChannel, setAuth].forEach((m) => m.mockClear());
+  setAuth.mockImplementation(async () => {});
   eq.mockResolvedValue({ count: 4, error: null });
 });
 
 describe("useJoinedCount", () => {
+  it("opens its channel only once Realtime has the user's token, so row level security sees the teacher", async () => {
+    let giveToken: () => void = () => {};
+    setAuth.mockImplementation(() => new Promise<void>((r) => (giveToken = r)));
+    renderHook(() => useJoinedCount(LECTURE));
+    await act(async () => {});
+    expect(setAuth).toHaveBeenCalled();
+    expect(makeChannel).not.toHaveBeenCalled();
+    await act(async () => giveToken());
+    expect(makeChannel).toHaveBeenCalledTimes(1);
+  });
+
   it("counts the participants of the lecture", async () => {
     const { result } = renderHook(() => useJoinedCount(LECTURE));
     expect(result.current).toBeNull();
@@ -52,6 +65,7 @@ describe("useJoinedCount", () => {
 
   it("listens for participant inserts of this lecture only", async () => {
     renderHook(() => useJoinedCount(LECTURE));
+    await act(async () => {});
     expect(channel.on).toHaveBeenCalledWith(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "participants", filter: `lecture_id=eq.${LECTURE}` },

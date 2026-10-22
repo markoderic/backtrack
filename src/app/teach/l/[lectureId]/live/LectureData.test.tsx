@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
   replace: vi.fn(),
   removeChannel: vi.fn(),
   slideUrls: vi.fn(),
+  setAuth: vi.fn(async () => {}),
+  makeChannel: vi.fn(),
 }));
 
 const channel = {
@@ -62,9 +64,13 @@ function from(table: string) {
 vi.mock("@/lib/supabase/browser", () => ({
   createBrowserSupabase: () => ({
     from,
-    channel: () => channel,
+    channel: (name: string) => {
+      h.makeChannel(name);
+      return channel;
+    },
     removeChannel: h.removeChannel,
     rpc: h.rpc,
+    realtime: { setAuth: h.setAuth },
   }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, replace: h.replace }) }));
@@ -116,7 +122,9 @@ beforeEach(() => {
   h.handlers = {};
   h.filters = {};
   h.status = null;
-  [h.push, h.replace, h.removeChannel, channel.on, channel.subscribe].forEach((m) => m.mockClear());
+  [h.push, h.replace, h.removeChannel, h.makeChannel, h.setAuth].forEach((m) => m.mockClear());
+  [channel.on, channel.subscribe].forEach((m) => m.mockClear());
+  h.setAuth.mockImplementation(async () => {});
   h.tapsQuery.mockReset().mockResolvedValue({
     data: [row("a", { slide_number: 2 }), row("b", { slide_number: 2, anon_id: "s2" }), row("c", { slide_number: 4 })],
     error: null,
@@ -128,6 +136,18 @@ beforeEach(() => {
 });
 
 describe("LectureData live", () => {
+  it("opens its channel only once Realtime has the teacher's token, so row level security sees the teacher", async () => {
+    let giveToken: () => void = () => {};
+    h.setAuth.mockImplementation(() => new Promise<void>((r) => (giveToken = r)));
+    renderLive();
+    await act(async () => {});
+    expect(h.setAuth).toHaveBeenCalled();
+    expect(h.makeChannel).not.toHaveBeenCalled();
+    await act(async () => giveToken());
+    expect(h.makeChannel).toHaveBeenCalledTimes(1);
+    expect(h.makeChannel).toHaveBeenCalledWith(`lecture-data-${LECTURE}`);
+  });
+
   it("shows one bar per slide with people and taps, the joined count and the current slide", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));

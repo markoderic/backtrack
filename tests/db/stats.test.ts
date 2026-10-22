@@ -187,6 +187,34 @@ describe("end_lecture", () => {
     expect(second.ended_at).toEqual(first);
   });
 
+  // Realtime sends a postgres_changes UPDATE to a subscriber only if that
+  // subscriber may SELECT the new row, checked with the role and claims the
+  // channel joined with. This is that check, for the row end_lecture leaves.
+  it("leaves the ended row readable by a joined student and the owner, and by no one as anon", async () => {
+    await end(marko);
+    const read = (claims: Claims | null) =>
+      as(db, claims, async () =>
+        (
+          await db.query<{ status: string; current_slide: number; code: string | null }>(
+            "select status, current_slide, code from public.lectures where id = $1",
+            [LECTURE_A],
+          )
+        ).rows,
+      );
+    const ended = [{ status: "ended", current_slide: 2, code: null }];
+    expect(await read(s1)).toEqual(ended);
+    expect(await read(marko)).toEqual(ended);
+    // A channel that joined with only the anon key (no user token) runs as anon,
+    // which sees no lecture at all, live or ended: such a channel hears nothing.
+    expect(await read(null)).toEqual([]);
+    expect(await read(stranger)).toEqual([]);
+    await db.query("update public.lectures set status = 'live', code = $2, ended_at = null where id = $1", [
+      LECTURE_A,
+      CODE_A,
+    ]);
+    expect(await read(null)).toEqual([]);
+  });
+
   it("makes join_lecture with the old code return null", async () => {
     await end(marko);
     const res = await join(stranger, CODE_A);

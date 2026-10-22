@@ -382,6 +382,43 @@ describe("LostButton", () => {
       await settle();
       expect(screen.getByText("That change didn't save.")).toBeInTheDocument();
     });
+
+    it("tells the page each time the database refuses a send, so it can check whether the lecture ended", async () => {
+      const onRejected = vi.fn();
+      setup({ send: vi.fn<Send>(async () => "rejected"), onRejected });
+      await settle();
+      expect(onRejected).not.toHaveBeenCalled();
+      press();
+      await settle();
+      expect(onRejected).toHaveBeenCalledTimes(1);
+      press();
+      await settle();
+      expect(onRejected).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not tell the page about a send that went through or is only offline", async () => {
+      const onRejected = vi.fn();
+      setup({ send: vi.fn<Send>().mockResolvedValueOnce("ok").mockResolvedValue("offline"), onRejected });
+      await settle();
+      press();
+      await settle();
+      press();
+      await settle();
+      expect(onRejected).not.toHaveBeenCalled();
+    });
+
+    it("does not tell the page about a refusal in the flush it runs while leaving", async () => {
+      const onRejected = vi.fn();
+      let flush: ((ending?: boolean) => Promise<void>) | undefined;
+      const send = vi.fn<Send>().mockResolvedValueOnce("offline").mockResolvedValue("rejected");
+      setup({ send, onRejected, onFlushReady: (f) => (flush = f) });
+      await settle();
+      press();
+      await settle();
+      await act(async () => flush?.(true));
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(onRejected).not.toHaveBeenCalled();
+    });
   });
 
   describe("offline queue", () => {
