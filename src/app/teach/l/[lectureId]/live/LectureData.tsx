@@ -6,12 +6,21 @@ import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { openChannel } from "@/lib/supabase/realtime";
 import { createJoinedCounter } from "@/lib/joinedCounter";
-import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { ButtonPrimary, buttonPrimaryClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
-import { highlightsBySlide, notesBySlide, slideStats, topThree, type TapRow } from "@/lib/stats";
+import {
+  highlightsBySlide,
+  marksBySlide,
+  notesBySlide,
+  redSlides,
+  slideStats,
+  studentsWhoTapped,
+  topThree,
+  type TapRow,
+} from "@/lib/stats";
 import { useSlideUrls } from "@/lib/useSlideUrls";
-import { textLinkClass } from "../../../ui";
+import { useHereCount } from "@/lib/useHere";
+import { SlideFocus } from "./SlideFocus";
 
 const RETRY_FIRST_MS = 1000;
 const RETRY_MAX_MS = 10000;
@@ -145,6 +154,27 @@ const spacedCode = (code: string) => (code.length === 6 ? `${code.slice(0, 3)} $
 const backToSlidesClass = `${buttonPrimaryClass} w-auto! px-6`;
 const endButtonClass = `${buttonSecondaryClass} h-12! shrink-0 px-5`;
 
+/** "3 marked the spot", or null when nobody did. */
+const marked = (n: number) => (n > 0 ? `${n} marked the spot` : null);
+
+/** One number in the summary row: a quiet label over a Geist Light number. */
+function Figure({ label, value, extra, testId }: { label: string; value: React.ReactNode; extra?: React.ReactNode; testId: string }) {
+  return (
+    <div data-testid={testId} className="flex min-w-0 flex-col gap-1">
+      <dt className="type-small text-secondary">{label}</dt>
+      <dd className="flex min-w-0 items-baseline gap-2">
+        <span className={typeof value === "number" ? "type-number-s text-ink" : "type-body text-secondary"}>{value}</span>
+        {extra}
+      </dd>
+    </div>
+  );
+}
+
+/** Where the hover/focus card over a bar sits, in px inside the chart box. */
+type Tip = { n: number; left: number; top: number };
+/** Half the card's widest width: its middle never comes closer than this to the chart's sides. */
+const TIP_HALF = 100;
+
 export function LectureData({
   lectureId,
   mode,
@@ -180,6 +210,10 @@ export function LectureData({
     setNotesHidden(next);
     writeNotesHidden(notesKey, next);
   };
+  // Who has the lecture open right now (Realtime Presence, as the projector counts it).
+  const here = useHereCount(lectureId, live);
+  const [tip, setTip] = useState<Tip | null>(null);
+  const chartBox = useRef<HTMLDivElement>(null);
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const backLink = useRef<HTMLAnchorElement>(null);
@@ -386,26 +420,68 @@ export function LectureData({
 
   const rows = useMemo(() => Array.from(taps.values()), [taps]);
   const stats = useMemo(() => slideStats(rows, slides.length), [rows, slides.length]);
+  // The three slides that lost the most people (ties broken by taps, then the lower slide): the
+  // default selection and the labels that always show in a dense chart.
   const ranked = useMemo(() => topThree(stats), [stats]);
   const top = useMemo(() => new Set(ranked), [ranked]);
+  // Red bars: the three highest different counts, ties all red (see redSlides).
+  const red = useMemo(() => redSlides(stats), [stats]);
   const most = Math.max(0, ...stats.map((s) => s.students));
-  // Only slides someone highlighted get an image, so a lecture with no highlights loads none.
-  // All of them are asked for at once, so clicking from bar to bar shows each one right away.
   const boxes = useMemo(() => highlightsBySlide(rows), [rows]);
-  const highlighted = useMemo(
-    () => Array.from(boxes.keys()).filter((n) => n >= 1 && n <= slides.length).sort((a, b) => a - b),
-    [boxes, slides.length],
-  );
-  const slideUrls = useSlideUrls(lectureId, highlighted);
+  const marks = useMemo(() => marksBySlide(rows), [rows]);
+  const noteMap = useMemo(() => notesBySlide(rows), [rows]);
 
   const liveSlide = Math.min(Math.max(current, 1), Math.max(slides.length, 1));
   const selected =
     picked !== null && picked >= 1 && picked <= slides.length ? picked : (ranked[0] ?? (live ? liveSlide : 1));
   const selectedSlide = slides[selected - 1];
   const selectedStat = stats[selected - 1];
-  const selectedRects = boxes.get(selected);
-  const noteMap = useMemo(() => notesBySlide(rows), [rows]);
+  const selectedRects = boxes.get(selected) ?? [];
   const selectedNotes = noteMap.get(selected) ?? [];
+
+  // The panel shows the selected slide's image. Urls are asked for the slides someone is lost on
+  // or marked, plus the selected one, all at once, so clicking from bar to bar has each url on
+  // hand (an image itself downloads only when it is shown, or when its bar is hovered).
+  const wanted = useMemo(() => {
+    const set = new Set<number>([selected]);
+    for (const s of stats) if (s.students > 0) set.add(s.slide_number);
+    for (const n of boxes.keys()) set.add(n);
+    return Array.from(set)
+      .filter((n) => n >= 1 && n <= slides.length)
+      .sort((a, b) => a - b);
+  }, [selected, stats, boxes, slides.length]);
+  const slideUrls = useSlideUrls(lectureId, loaded ? wanted : []);
+
+  // The summary row.
+  const totalTaps = stats.reduce((n, s) => n + s.taps, 0);
+  const tappers = useMemo(() => studentsWhoTapped(rows, slides.length), [rows, slides.length]);
+  const noteCount = Array.from(noteMap.entries()).reduce(
+    (n, [slide, list]) => (slide >= 1 && slide <= slides.length ? n + list.length : n),
+    0,
+  );
+  const markCount = Array.from(marks.entries()).reduce(
+    (n, [slide, m]) => (slide >= 1 && slide <= slides.length ? n + m : n),
+    0,
+  );
+  const mostLost = ranked[0];
+  // A student with two tabs open is one person: never more here than joined.
+  const hereNow = live && here !== null ? (joined !== null ? Math.min(here, joined) : here) : null;
+
+  // The card over a hovered or focused bar sits just above that bar's count, kept inside the chart.
+  const showTip = (n: number, button: HTMLElement) => {
+    const box = chartBox.current;
+    if (!box) return;
+    const b = box.getBoundingClientRect();
+    const r = button.getBoundingClientRect();
+    const count = button.querySelector("[data-count]")?.getBoundingClientRect() ?? r;
+    const mid = r.left + r.width / 2 - b.left;
+    const left = b.width > 2 * TIP_HALF ? Math.min(Math.max(mid, TIP_HALF), b.width - TIP_HALF) : b.width / 2;
+    setTip({ n, left: Math.round(left), top: Math.round(count.top - b.top - 6) });
+    // Warm the image, so a click shows it at once.
+    const url = slideUrls[n];
+    if (url && typeof Image !== "undefined") new Image().src = url;
+  };
+  const tipStat = tip ? stats[tip.n - 1] : undefined;
 
   // The live page has this heading; the past page passes its own (children) instead.
   const ownHeading = mode === "live";
@@ -431,7 +507,6 @@ export function LectureData({
                   </span>
                 )
               )}
-              {joined !== null && <span>{joined} joined</span>}
               {live && code && <span>Code {spacedCode(code)}</span>}
             </p>
             {endError && (
@@ -523,6 +598,40 @@ export function LectureData({
         children && <div className="px-4 pt-8 pb-6 sm:px-12">{children}</div>
       )}
 
+      {/* The lecture in numbers. Joined and here also stand for the header's old "N joined". */}
+      {loaded && (
+        <dl
+          data-testid="summary"
+          className="grid animate-fade-in grid-cols-2 gap-x-8 gap-y-5 border-t border-hairline px-4 py-6 sm:grid-cols-3 sm:px-12 lg:flex lg:flex-wrap lg:gap-x-12"
+        >
+          <Figure testId="sum-joined" label="Joined" value={joined ?? "–"} />
+          {hereNow !== null && <Figure testId="sum-here" label="Here now" value={hereNow} />}
+          <Figure
+            testId="sum-tapped"
+            label="Students who tapped"
+            value={tappers}
+            extra={
+              joined ? (
+                <span className="type-small text-secondary">{Math.round((Math.min(tappers, joined) / joined) * 100)}% of joined</span>
+              ) : null
+            }
+          />
+          <Figure testId="sum-taps" label="Lost taps" value={totalTaps} />
+          <Figure testId="sum-notes" label="Notes" value={noteCount} />
+          <Figure testId="sum-marks" label="Marked spots" value={markCount} />
+          <Figure
+            testId="sum-most"
+            label="Most lost slide"
+            value={mostLost ?? "None yet"}
+            extra={
+              mostLost && slides[mostLost - 1]?.first_line ? (
+                <span className="min-w-0 truncate type-small text-ink lg:max-w-60">{slides[mostLost - 1].first_line}</span>
+              ) : null
+            }
+          />
+        </dl>
+      )}
+
       <div className="flex flex-1 flex-col border-t border-hairline lg:flex-row">
         <section aria-labelledby="chart-title" className="flex min-w-0 flex-1 flex-col gap-4 px-4 py-8 sm:px-12">
           <h2 id="chart-title" className="type-small-strong text-secondary">
@@ -547,114 +656,132 @@ export function LectureData({
                * is the click target) and at least 24 px. Past that the chart scrolls inside itself.
                * -mx-3 + px-1.5 line the first bar up with the heading and leave room for its ring.
                */}
-              <ol
-                ref={bars}
-                data-testid="bars"
-                data-dense={dense ? "true" : "false"}
-                className="-mx-3 -my-2 flex h-[396px] animate-fade-in items-end overflow-x-auto overflow-y-hidden px-1.5 py-2"
-              >
-                {slides.map((slide) => {
-                  const stat = stats[slide.number - 1];
-                  const isTop = top.has(slide.number);
-                  const isNow = live && slide.number === liveSlide;
-                  // A slide the lecture has not reached yet, and nobody is lost on, is grayed out.
-                  const ahead = live && slide.number > liveSlide && stat.students === 0;
-                  const isSelected = slide.number === selected;
-                  const share = most === 0 ? 0 : stat.students / most;
-                  const scale = Math.round(Math.max(share, BAR_MIN / BAR_MAX) * 1e4) / 1e4;
-                  const step = slides.length > 99 ? 10 : 5;
-                  const labelShown =
-                    !dense || slide.number === 1 || slide.number % step === 0 || isTop || isNow || isSelected;
-                  return (
-                    <li
-                      key={slide.number}
-                      data-testid={`slide-${slide.number}`}
-                      className="flex h-full max-w-[76px] min-w-6 flex-1 basis-0"
-                    >
-                      <button
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => setPicked(slide.number)}
-                        className="group press focus-ring relative flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm px-[8%]"
+              <div ref={chartBox} className="relative">
+                <ol
+                  ref={bars}
+                  data-testid="bars"
+                  data-dense={dense ? "true" : "false"}
+                  onScroll={() => setTip(null)}
+                  className="-mx-3 -my-2 flex h-[396px] animate-fade-in items-end overflow-x-auto overflow-y-hidden px-1.5 py-2"
+                >
+                  {slides.map((slide) => {
+                    const stat = stats[slide.number - 1];
+                    const isTop = top.has(slide.number);
+                    const isRed = red.has(slide.number);
+                    const markN = marks.get(slide.number) ?? 0;
+                    const isNow = live && slide.number === liveSlide;
+                    // A slide the lecture has not reached yet, and nobody is lost on, is grayed out.
+                    const ahead = live && slide.number > liveSlide && stat.students === 0;
+                    const isSelected = slide.number === selected;
+                    const share = most === 0 ? 0 : stat.students / most;
+                    const scale = Math.round(Math.max(share, BAR_MIN / BAR_MAX) * 1e4) / 1e4;
+                    const step = slides.length > 99 ? 10 : 5;
+                    const labelShown =
+                      !dense || slide.number === 1 || slide.number % step === 0 || isTop || isNow || isSelected;
+                    return (
+                      <li
+                        key={slide.number}
+                        data-testid={`slide-${slide.number}`}
+                        className="flex h-full max-w-[76px] min-w-6 flex-1 basis-0"
                       >
-                        {/* What a screen reader hears; the drawing below is hidden from it. */}
-                        <span className="sr-only">
-                          Slide {slide.number}
-                          {slide.first_line && (
-                            <>
-                              {", "}
-                              <span>{slide.first_line}</span>
-                            </>
-                          )}
-                          {": "}
-                          <span data-testid="counts">
-                            {plural(stat.students, "person", "people")}, {plural(stat.taps, "tap", "taps")}
+                        <button
+                          type="button"
+                          aria-pressed={isSelected}
+                          onClick={() => setPicked(slide.number)}
+                          onPointerEnter={(e) => showTip(slide.number, e.currentTarget)}
+                          onPointerLeave={() => setTip(null)}
+                          onFocus={(e) => showTip(slide.number, e.currentTarget)}
+                          onBlur={() => setTip(null)}
+                          className="group press focus-ring relative flex h-full w-full flex-col items-center justify-end gap-2 rounded-sm px-[8%]"
+                        >
+                          {/* What a screen reader hears; the drawing below is hidden from it. */}
+                          <span className="sr-only">
+                            Slide {slide.number}
+                            {slide.first_line && (
+                              <>
+                                {", "}
+                                <span>{slide.first_line}</span>
+                              </>
+                            )}
+                            {": "}
+                            <span data-testid="counts">
+                              {stat.students} lost, {plural(stat.taps, "tap", "taps")}
+                            </span>
+                            {markN > 0 && <span>{`, ${marked(markN)}`}</span>}
+                            {isRed && (
+                              <>
+                                {", "}
+                                <span>among the most lost</span>
+                              </>
+                            )}
+                            {isNow && (
+                              <>
+                                {", "}
+                                <span>Current slide</span>
+                              </>
+                            )}
                           </span>
-                          {isTop && (
-                            <>
-                              {", "}
-                              <span>Top 3</span>
-                            </>
-                          )}
-                          {isNow && (
-                            <>
-                              {", "}
-                              <span>Current slide</span>
-                            </>
-                          )}
-                        </span>
-                        {/*
-                         * The count rides on top of its bar. Both move with transform only: the bar is a
-                         * fixed 260 px scaled from the bottom, the count slides down by what the bar is not.
-                         */}
-                        <span
-                          aria-hidden
-                          className={`type-small-strong whitespace-nowrap text-ink transition-transform duration-(--dur-base) ease-out motion-reduce:transition-none ${ahead ? "invisible" : ""}`}
-                          style={{ transform: `translateY(${Math.round((1 - scale) * BAR_MAX * 100) / 100}px)` }}
-                        >
-                          {stat.students}
-                        </span>
-                        <span aria-hidden className="relative block h-[260px] w-full max-w-9">
+                          {/*
+                           * The count rides on top of its bar. Both move with transform only: the bar is a
+                           * fixed 260 px scaled from the bottom, the count slides down by what the bar is not.
+                           */}
                           <span
-                            data-testid="bar"
-                            className={`absolute inset-0 origin-bottom rounded-t-[3px] transition-[transform,background-color] duration-(--dur-base) ease-out motion-reduce:transition-none ${
-                              isTop ? "bg-lost" : "bg-strip"
-                            } ${ahead ? "opacity-40" : ""}`}
-                            style={{ transform: `scaleY(${scale})` }}
+                            aria-hidden
+                            data-count=""
+                            className={`type-small-strong whitespace-nowrap text-ink transition-transform duration-(--dur-base) ease-out motion-reduce:transition-none ${ahead ? "invisible" : ""}`}
+                            style={{ transform: `translateY(${Math.round((1 - scale) * BAR_MAX * 100) / 100}px)` }}
+                          >
+                            {stat.students}
+                          </span>
+                          <span aria-hidden className="relative block h-[260px] w-full max-w-9">
+                            <span
+                              data-testid="bar"
+                              className={`absolute inset-0 origin-bottom rounded-t-[3px] transition-[transform,background-color] duration-(--dur-base) ease-out motion-reduce:transition-none ${
+                                isRed ? "bg-lost" : "bg-strip"
+                              } ${ahead ? "opacity-40" : ""}`}
+                              style={{ transform: `scaleY(${scale})` }}
+                            />
+                          </span>
+                          {/* Every column keeps its label line, so bars stay aligned when labels thin out. */}
+                          <span
+                            aria-hidden
+                            data-testid="label"
+                            data-shown={labelShown ? "true" : "false"}
+                            className={`flex whitespace-nowrap ${dense ? "h-9 flex-col items-center" : "items-baseline"} ${
+                              isSelected ? "type-small-strong" : "type-small"
+                            } ${ahead ? "text-secondary" : "text-ink"} ${labelShown ? "" : "invisible"} group-hover:text-ink`}
+                          >
+                            <span>{slide.number}</span>
+                            {isNow && <span className={dense ? "type-caption" : ""}>{dense ? "now" : "\u00a0now"}</span>}
+                          </span>
+                          <span
+                            aria-hidden
+                            className={`h-0.5 w-6 max-w-full shrink-0 bg-ink transition-opacity duration-(--dur-fast) ease-out ${
+                              isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-30"
+                            }`}
                           />
-                        </span>
-                        {/* Every column keeps its label line, so bars stay aligned when labels thin out. */}
-                        <span
-                          aria-hidden
-                          data-testid="label"
-                          data-shown={labelShown ? "true" : "false"}
-                          className={`flex whitespace-nowrap ${dense ? "h-9 flex-col items-center" : "items-baseline"} ${
-                            isSelected ? "type-small-strong" : "type-small"
-                          } ${ahead ? "text-secondary" : "text-ink"} ${labelShown ? "" : "invisible"} group-hover:text-ink`}
-                        >
-                          <span>{slide.number}</span>
-                          {isNow && <span className={dense ? "type-caption" : ""}>{dense ? "now" : "\u00a0now"}</span>}
-                        </span>
-                        <span
-                          aria-hidden
-                          className={`h-0.5 w-6 max-w-full shrink-0 bg-ink transition-opacity duration-(--dur-fast) ease-out ${
-                            isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-30"
-                          }`}
-                        />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ol>
-              <div aria-hidden className="flex flex-wrap items-center gap-x-6 gap-y-2 type-small text-secondary">
-                <span className="flex items-center gap-2">
-                  <span className="size-3 rounded-xs bg-lost" />
-                  Top 3
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="size-3 rounded-xs bg-strip" />
-                  Other slides
-                </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+                {/* The hover and focus card: the same words a screen reader hears in the bar's name. */}
+                {tip && tipStat && (
+                  <div
+                    aria-hidden
+                    data-testid="bar-tip"
+                    className="pointer-events-none absolute z-10 flex w-max max-w-[200px] -translate-x-1/2 -translate-y-full animate-fade-in flex-col rounded-md border border-hairline bg-surface px-3 py-2 shadow-popover"
+                    style={{ left: tip.left, top: tip.top }}
+                  >
+                    <span className="type-small-strong text-ink">Slide {tip.n}</span>
+                    <span className="type-small text-ink">
+                      {tipStat.students} lost, {plural(tipStat.taps, "tap", "taps")}
+                    </span>
+                    {(marks.get(tip.n) ?? 0) > 0 && (
+                      <span className="type-small text-secondary">{marked(marks.get(tip.n)!)}</span>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -668,12 +795,7 @@ export function LectureData({
           >
             {/* Swapping slides fades the panel in (opacity only). */}
             <div key={selected} className="flex animate-fade-in flex-col gap-4">
-              <div className="flex items-baseline justify-between gap-4">
-                <p className="type-small text-secondary">Slide {selected}</p>
-                <button type="button" onClick={toggleNotes} className={textLinkClass}>
-                  {notesHidden ? "Show notes" : "Hide notes"}
-                </button>
-              </div>
+              <p className="type-small text-secondary">Slide {selected}</p>
               {selectedSlide.first_line && <h2 className="type-title break-words text-ink">{selectedSlide.first_line}</h2>}
               <p className="flex flex-wrap items-baseline gap-x-3">
                 <span className={`type-number-m ${selectedStat.students > 0 ? "text-lost" : "text-secondary"}`}>
@@ -682,41 +804,47 @@ export function LectureData({
                 <span className="type-body text-ink">{selectedStat.students === 1 ? "person" : "people"} got lost</span>
                 <span className="type-small text-secondary">{plural(selectedStat.taps, "tap", "taps")}</span>
               </p>
-              {selectedRects && (
-                <>
-                  <h3 className="type-small-strong text-ink">Where they highlighted</h3>
-                  <div
-                    data-testid={`highlights-${selected}`}
-                    className="relative w-full max-w-[416px] overflow-hidden rounded-sm bg-surface shadow-slide"
+              {/* The slide itself, at the panel's full width, with every Mark the spot box on it. */}
+              <div className="flex flex-col gap-2">
+                <SlideFocus
+                  number={selected}
+                  firstLine={selectedSlide.first_line}
+                  url={slideUrls[selected]}
+                  rects={selectedRects}
+                  marksLabel={marked(marks.get(selected) ?? 0)}
+                />
+                <p data-testid="panel-marks" className="type-small text-secondary">
+                  {marked(marks.get(selected) ?? 0) ?? "Nobody marked the spot"}
+                </p>
+              </div>
+              {/* Notes: a heading over a hairline, then one row per note, hairlines between. */}
+              <section aria-labelledby="notes-title" className="flex flex-col pt-2">
+                <div className="flex items-center justify-between gap-4 border-b border-hairline pb-2">
+                  <h3 id="notes-title" className="flex items-baseline gap-2 type-body-strong text-ink">
+                    Notes
+                    {selectedNotes.length > 0 && <span className="type-small text-secondary">{selectedNotes.length}</span>}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={toggleNotes}
+                    className={`${buttonSecondaryClass} h-9! px-3`}
                   >
-                    {slideUrls[selected] ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={slideUrls[selected]} alt={`Slide ${selected}`} className="block h-auto w-full" />
-                    ) : (
-                      <div className="aspect-video w-full bg-surface" />
-                    )}
-                    {/* Every student's box, translucent: where most people pointed comes out darkest. */}
-                    <HighlightBoxes rects={selectedRects} boxClassName="rounded-xs bg-lost/20" />
-                  </div>
-                </>
-              )}
-              {selectedNotes.length > 0 && notesHidden && (
-                <>
-                  <h3 className="type-small-strong text-ink">Notes</h3>
-                  <p data-testid="notes-hidden" className="type-small text-secondary">
+                    {notesHidden ? "Show notes" : "Hide notes"}
+                  </button>
+                </div>
+                {selectedNotes.length === 0 ? (
+                  <p className="py-3 type-small text-secondary">No notes on this slide.</p>
+                ) : notesHidden ? (
+                  <p data-testid="notes-hidden" className="py-3 type-small text-secondary">
                     {plural(selectedNotes.length, "note", "notes")} hidden
                   </p>
-                </>
-              )}
-              {selectedNotes.length > 0 && !notesHidden && (
-                <>
-                  <h3 className="type-small-strong text-ink">Notes</h3>
-                  <ul data-testid="notes" className="flex flex-col gap-4">
+                ) : (
+                  <ul data-testid="notes" className="flex flex-col divide-y divide-hairline">
                     {selectedNotes.map((note) => {
                       const at = noteTime(note.at);
                       return (
-                        <li key={note.id} className="flex items-baseline gap-3 border-t border-hairline py-2.5">
-                          <span data-testid="note" className="min-w-0 flex-1 type-note break-words text-ink">
+                        <li key={note.id} className="flex items-baseline gap-4 py-3">
+                          <span data-testid="note" className="min-w-0 flex-1 type-body break-words whitespace-pre-line text-ink">
                             {note.text}
                           </span>
                           {at && <span className="shrink-0 type-caption text-secondary">{at}</span>}
@@ -724,8 +852,8 @@ export function LectureData({
                       );
                     })}
                   </ul>
-                </>
-              )}
+                )}
+              </section>
             </div>
           </aside>
         )}

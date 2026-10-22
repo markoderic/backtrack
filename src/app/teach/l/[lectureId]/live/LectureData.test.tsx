@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   replace: vi.fn(),
   removeChannel: vi.fn(),
   slideUrls: vi.fn(),
+  here: vi.fn(),
   setAuth: vi.fn(async () => {}),
   makeChannel: vi.fn(),
 }));
@@ -77,6 +78,9 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, replace: h
 vi.mock("@/lib/useSlideUrls", () => ({
   useSlideUrls: (lectureId: string, wanted: number[]) => h.slideUrls(lectureId, wanted),
 }));
+vi.mock("@/lib/useHere", () => ({
+  useHereCount: (lectureId: string, enabled: boolean) => h.here(lectureId, enabled),
+}));
 
 import { LectureData, hideNotesKey } from "./LectureData";
 
@@ -116,6 +120,9 @@ const key = (k: string, target: Element | Window = window) => fireEvent.keyDown(
 /** Clicks a slide's bar, which shows that slide in the panel on the right. */
 const select = (n: number) => fireEvent.click(within(slideRow(n)).getByRole("button"));
 const panel = () => screen.getByTestId("slide-panel");
+/** A number in the summary row at the top ("sum-joined", "sum-here", ...). */
+const figure = (id: string) => screen.getByTestId(id).querySelector("dd")!.textContent;
+const joinedShown = () => figure("sum-joined");
 const barScale = (n: number) => Number(/scaleY\(([\d.]+)\)/.exec(within(slideRow(n)).getByTestId("bar").style.transform)![1]);
 
 beforeEach(() => {
@@ -133,6 +140,7 @@ beforeEach(() => {
   h.lectureQuery.mockReset().mockResolvedValue({ data: { current_slide: 3, status: "live" }, error: null });
   h.rpc.mockReset().mockResolvedValue({ data: null, error: null });
   h.slideUrls.mockReset().mockReturnValue({});
+  h.here.mockReset().mockReturnValue(null);
   localStorage.clear();
 });
 
@@ -151,12 +159,12 @@ describe("LectureData live", () => {
 
   it("shows one bar per slide with people and taps, the joined count and the current slide", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.getAllByTestId(/^slide-\d+$/)).toHaveLength(5);
-    expect(counts(1)).toBe("0 people, 0 taps");
-    expect(counts(4)).toBe("1 person, 1 tap");
+    expect(counts(1)).toBe("0 lost, 0 taps");
+    expect(counts(4)).toBe("1 lost, 1 tap");
     expect(within(slideRow(2)).getByText("Heading 2")).toBeInTheDocument();
-    expect(screen.getByText("7 joined")).toBeInTheDocument();
+    expect(joinedShown()).toBe("7");
     expect(screen.getByRole("heading", { level: 1, name: "Lecture 1, Oct 26" })).toBeInTheDocument();
     expect(within(slideRow(3)).getByText("Current slide")).toBeInTheDocument();
     expect(within(slideRow(3)).getByTestId("label").textContent).toBe("3\u00a0now");
@@ -166,13 +174,13 @@ describe("LectureData live", () => {
 
   it("shows the join code in the heading as two groups of three", async () => {
     renderLive({ code: "482916" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.getByText("Code 482 916")).toBeInTheDocument();
   });
 
   it("sizes each bar against the slide with the most people, with transform only, and a 2 px bar for nobody", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(barScale(2)).toBe(1);
     expect(barScale(4)).toBe(0.5);
     // 2 px of the 260 px bar.
@@ -182,15 +190,43 @@ describe("LectureData live", () => {
 
   it("draws the top 3 bars red and the others in the strip gray", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(within(slideRow(2)).getByTestId("bar").className).toContain("bg-lost");
     expect(within(slideRow(4)).getByTestId("bar").className).toContain("bg-lost");
     expect(within(slideRow(1)).getByTestId("bar").className).toContain("bg-strip");
   });
 
+  it("makes every bar red whose count is one of the three highest different counts (ties all red), zero never", async () => {
+    // People per slide: 4, 2, 2, 1, 0, 2. The different counts 4, 2 and 1 are the top three.
+    const people = [4, 2, 2, 1, 0, 2];
+    h.tapsQuery.mockResolvedValue({
+      data: people.flatMap((n, i) =>
+        Array.from({ length: n }, (_, k) => row(`${i}-${k}`, { slide_number: i + 1, anon_id: `p${k}` })),
+      ),
+      error: null,
+    });
+    renderLive({ slides: Array.from({ length: 6 }, (_, i) => ({ number: i + 1, first_line: "" })) });
+    await waitFor(() => expect(counts(1)).toBe("4 lost, 4 taps"));
+    const isRed = (n: number) => within(slideRow(n)).getByTestId("bar").className.includes("bg-lost");
+    expect([1, 2, 3, 4, 5, 6].map(isRed)).toEqual([true, true, true, true, false, true]);
+    expect(within(slideRow(6)).getByRole("button")).toHaveAccessibleName("Slide 6: 2 lost, 2 taps, among the most lost");
+    expect(within(slideRow(5)).getByRole("button")).toHaveAccessibleName("Slide 5: 0 lost, 0 taps");
+    // A fourth different count (3) drops the lowest one (1) to gray.
+    insert(row("x", { slide_number: 2, anon_id: "p9" }));
+    expect(isRed(4)).toBe(false);
+    expect(isRed(2)).toBe(true);
+  });
+
+  it("has no legend under the chart", async () => {
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(screen.queryByText("Top 3")).not.toBeInTheDocument();
+    expect(screen.queryByText("Other slides")).not.toBeInTheDocument();
+  });
+
   it("grays out a slide the lecture has not reached when nobody is lost on it", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(within(slideRow(5)).getByTestId("bar").className).toContain("opacity-40");
     // Slide 4 is ahead too, but someone is lost on it, so it shows normally.
     expect(within(slideRow(4)).getByTestId("bar").className).not.toContain("opacity-40");
@@ -207,7 +243,7 @@ describe("LectureData live", () => {
       error: null,
     });
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(within(panel()).getByText("Slide 2")).toBeInTheDocument();
     expect(within(panel()).getByRole("heading", { name: "Heading 2" })).toBeInTheDocument();
     expect(within(panel()).getByText("people got lost")).toBeInTheDocument();
@@ -229,21 +265,23 @@ describe("LectureData live", () => {
   it("shows the live slide in the panel while nobody is lost", async () => {
     h.tapsQuery.mockResolvedValue({ data: [], error: null });
     renderLive();
-    await waitFor(() => expect(counts(1)).toBe("0 people, 0 taps"));
+    await waitFor(() => expect(counts(1)).toBe("0 lost, 0 taps"));
     expect(within(panel()).getByText("Slide 3")).toBeInTheDocument();
     expect(within(panel()).getByText("0")).toBeInTheDocument();
   });
 
   it("names each bar for a screen reader: slide, first line, people and taps", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    expect(within(slideRow(2)).getByRole("button")).toHaveAccessibleName("Slide 2, Heading 2: 2 people, 2 taps, Top 3");
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(within(slideRow(2)).getByRole("button")).toHaveAccessibleName(
+      "Slide 2, Heading 2: 2 lost, 2 taps, among the most lost",
+    );
     expect(within(slideRow(3)).getByRole("button")).toHaveAccessibleName(
-      "Slide 3, Heading 3: 0 people, 0 taps, Current slide",
+      "Slide 3, Heading 3: 0 lost, 0 taps, Current slide",
     );
   });
 
-  it("marks the top slides with Top 3 and nobody else", async () => {
+  it("says among the most lost on the red slides and nobody else", async () => {
     h.tapsQuery.mockResolvedValue({
       data: [
         row("a", { slide_number: 1 }),
@@ -256,18 +294,18 @@ describe("LectureData live", () => {
       error: null,
     });
     renderLive();
-    await waitFor(() => expect(counts(4)).toBe("3 people, 3 taps"));
-    expect(within(screen.getByTestId("bars")).getAllByText("Top 3")).toHaveLength(3);
-    expect(within(slideRow(4)).getByText("Top 3")).toBeInTheDocument();
-    expect(within(slideRow(2)).getByText("Top 3")).toBeInTheDocument();
-    expect(within(slideRow(1)).getByText("Top 3")).toBeInTheDocument();
-    expect(within(slideRow(3)).queryByText("Top 3")).not.toBeInTheDocument();
-    expect(within(slideRow(5)).queryByText("Top 3")).not.toBeInTheDocument();
+    await waitFor(() => expect(counts(4)).toBe("3 lost, 3 taps"));
+    expect(within(screen.getByTestId("bars")).getAllByText("among the most lost")).toHaveLength(3);
+    expect(within(slideRow(4)).getByText("among the most lost")).toBeInTheDocument();
+    expect(within(slideRow(2)).getByText("among the most lost")).toBeInTheDocument();
+    expect(within(slideRow(1)).getByText("among the most lost")).toBeInTheDocument();
+    expect(within(slideRow(3)).queryByText("among the most lost")).not.toBeInTheDocument();
+    expect(within(slideRow(5)).queryByText("among the most lost")).not.toBeInTheDocument();
   });
 
   it("reads only the lost rows of this lecture, and the participants and lecture row", async () => {
     renderLive();
-    await waitFor(() => expect(screen.getByText("7 joined")).toBeInTheDocument());
+    await waitFor(() => expect(joinedShown()).toBe("7"));
     const q = h.tapsQuery.mock.calls[0][0] as Query;
     expect(q.eqs).toContainEqual(["lecture_id", LECTURE]);
     expect(q.eqs).toContainEqual(["kind", "lost"]);
@@ -284,7 +322,7 @@ describe("LectureData live", () => {
       q.range?.[0] === 0 ? { data: page(0, 1000), error: null } : { data: page(1000, 5), error: null },
     );
     renderLive();
-    await waitFor(() => expect(counts(1)).toBe("1005 people, 1005 taps"));
+    await waitFor(() => expect(counts(1)).toBe("1005 lost, 1005 taps"));
     expect(h.tapsQuery.mock.calls.map((c) => (c[0] as Query).range)).toEqual([
       [0, 999],
       [1000, 1999],
@@ -323,46 +361,46 @@ describe("LectureData live", () => {
 
   it("updates a bar from a Realtime insert without reloading", async () => {
     renderLive();
-    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
+    await waitFor(() => expect(counts(4)).toBe("1 lost, 1 tap"));
     const reads = h.tapsQuery.mock.calls.length;
     insert(row("new1", { slide_number: 4, anon_id: "s9" }));
-    expect(counts(4)).toBe("2 people, 2 taps");
+    expect(counts(4)).toBe("2 lost, 2 taps");
     insert(row("new2", { slide_number: 4, anon_id: "s9" }));
-    expect(counts(4)).toBe("2 people, 3 taps");
+    expect(counts(4)).toBe("2 lost, 3 taps");
     expect(barScale(4)).toBe(1);
     expect(h.tapsQuery.mock.calls.length).toBe(reads);
   });
 
   it("does not count the same row twice when its insert arrives again", async () => {
     renderLive();
-    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
+    await waitFor(() => expect(counts(4)).toBe("1 lost, 1 tap"));
     insert(row("c", { slide_number: 4 }));
-    expect(counts(4)).toBe("1 person, 1 tap");
+    expect(counts(4)).toBe("1 lost, 1 tap");
   });
 
   it("ignores a row that is not a lost tap", async () => {
     renderLive();
-    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
+    await waitFor(() => expect(counts(4)).toBe("1 lost, 1 tap"));
     insert(row("save1", { slide_number: 4, kind: "save", anon_id: "s5" }));
-    expect(counts(4)).toBe("1 person, 1 tap");
+    expect(counts(4)).toBe("1 lost, 1 tap");
   });
 
   it("lowers the bar when an update sets undone", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     update(row("a", { slide_number: 2, undone: true }));
-    expect(counts(2)).toBe("1 person, 1 tap");
+    expect(counts(2)).toBe("1 lost, 1 tap");
     update(row("b", { slide_number: 2, anon_id: "s2", undone: true }));
-    expect(counts(2)).toBe("0 people, 0 taps");
-    expect(within(slideRow(2)).queryByText("Top 3")).not.toBeInTheDocument();
+    expect(counts(2)).toBe("0 lost, 0 taps");
+    expect(within(slideRow(2)).queryByText("among the most lost")).not.toBeInTheDocument();
   });
 
   it("moves a tap to its new slide when an update changes slide_number", async () => {
     renderLive();
-    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
+    await waitFor(() => expect(counts(4)).toBe("1 lost, 1 tap"));
     update(row("c", { slide_number: 1 }));
-    expect(counts(4)).toBe("0 people, 0 taps");
-    expect(counts(1)).toBe("1 person, 1 tap");
+    expect(counts(4)).toBe("0 lost, 0 taps");
+    expect(counts(1)).toBe("1 lost, 1 tap");
   });
 
   it("lists the notes of the shown slide with their time and no names, and drops the note of an undone tap", async () => {
@@ -375,20 +413,43 @@ describe("LectureData live", () => {
       error: null,
     });
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     select(2);
     const notes = () => within(panel()).getAllByTestId("note").map((n) => n.textContent);
-    expect(within(panel()).getByText("Notes")).toBeInTheDocument();
+    expect(within(panel()).getByRole("heading", { name: /^Notes\s*2$/ })).toBeInTheDocument();
     expect(notes()).toEqual(["what is a join?", "too fast"]);
     // 14:42 UTC is 10:42 in Oxford, Ohio (EDT), shown without AM or PM.
     expect(within(panel()).getByText("10:42")).toBeInTheDocument();
     select(4);
     expect(within(panel()).queryByTestId("notes")).not.toBeInTheDocument();
-    expect(within(panel()).queryByText("Notes")).not.toBeInTheDocument();
+    expect(within(panel()).getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+    expect(within(panel()).getByText("No notes on this slide.")).toBeInTheDocument();
     expect(screen.queryByText(/student-secret-id/)).not.toBeInTheDocument();
     select(2);
     update(row("b", { slide_number: 2, note: "too fast", undone: true }));
     expect(notes()).toEqual(["what is a join?"]);
+  });
+
+  it("sets the notes in Geist (not Newsreader), one row each under a Notes heading with a hairline", async () => {
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 2, note: "what is a join?" }),
+        row("b", { slide_number: 2, note: "too fast", anon_id: "s2" }),
+      ],
+      error: null,
+    });
+    renderLive();
+    await waitFor(() => expect(within(panel()).getAllByTestId("note")).toHaveLength(2));
+    for (const n of within(panel()).getAllByTestId("note")) {
+      expect(n.className).toContain("type-body");
+      expect(n.className).not.toContain("type-note");
+    }
+    const heading = within(panel()).getByRole("heading", { name: /^Notes\s*2$/ });
+    expect(heading.parentElement!.className).toContain("border-b");
+    expect(heading.parentElement!.className).toContain("border-hairline");
+    expect(within(panel()).getByTestId("notes").className).toContain("divide-hairline");
+    // Hide notes is a white button now, not an underlined link.
+    expect(within(panel()).getByRole("button", { name: "Hide notes" }).className).toContain("bg-surface");
   });
 
   describe("Hide notes", () => {
@@ -469,9 +530,9 @@ describe("LectureData live", () => {
 
   it("adds one to the joined count for every participant insert", async () => {
     renderLive();
-    await waitFor(() => expect(screen.getByText("7 joined")).toBeInTheDocument());
+    await waitFor(() => expect(joinedShown()).toBe("7"));
     act(() => h.handlers["participants:INSERT"]({ new: { lecture_id: LECTURE } }));
-    expect(screen.getByText("8 joined")).toBeInTheDocument();
+    expect(joinedShown()).toBe("8");
   });
 
   it("does not stay one too high when a participant insert was already in the count", async () => {
@@ -480,13 +541,13 @@ describe("LectureData live", () => {
       renderLive();
       await act(async () => {});
       await act(async () => {});
-      expect(screen.getByText("7 joined")).toBeInTheDocument();
+      expect(joinedShown()).toBe("7");
       // The read that showed 7 already counted this student.
       act(() => h.handlers["participants:INSERT"]({ new: { lecture_id: LECTURE } }));
-      expect(screen.getByText("8 joined")).toBeInTheDocument();
+      expect(joinedShown()).toBe("8");
       const taps = h.tapsQuery.mock.calls.length;
       await act(async () => vi.advanceTimersByTimeAsync(800));
-      expect(screen.getByText("7 joined")).toBeInTheDocument();
+      expect(joinedShown()).toBe("7");
       // Only the count is read again, not every tap.
       expect(h.tapsQuery.mock.calls.length).toBe(taps);
     } finally {
@@ -496,7 +557,7 @@ describe("LectureData live", () => {
 
   it("moves the current slide marker when the lecture row updates", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     act(() => h.handlers["lectures:UPDATE"]({ new: { current_slide: 5, status: "live" } }));
     expect(within(slideRow(5)).getByText("Current slide")).toBeInTheDocument();
     expect(within(slideRow(3)).queryByText("Current slide")).not.toBeInTheDocument();
@@ -504,22 +565,22 @@ describe("LectureData live", () => {
 
   it("reads everything again on every SUBSCRIBED", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     const before = h.tapsQuery.mock.calls.length;
     h.tapsQuery.mockResolvedValue({ data: [row("z", { slide_number: 5 })], error: null });
     h.participantsQuery.mockResolvedValue({ count: 12, error: null });
     h.lectureQuery.mockResolvedValue({ data: { current_slide: 4, status: "live" }, error: null });
     await act(async () => h.status?.("SUBSCRIBED"));
-    await waitFor(() => expect(counts(5)).toBe("1 person, 1 tap"));
+    await waitFor(() => expect(counts(5)).toBe("1 lost, 1 tap"));
     expect(h.tapsQuery.mock.calls.length).toBe(before + 1);
-    expect(counts(2)).toBe("0 people, 0 taps");
-    expect(screen.getByText("12 joined")).toBeInTheDocument();
+    expect(counts(2)).toBe("0 lost, 0 taps");
+    expect(joinedShown()).toBe("12");
     expect(within(slideRow(4)).getByText("Current slide")).toBeInTheDocument();
   });
 
   it("keeps a row that arrived by Realtime while a read was running", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     let release!: (v: unknown) => void;
     h.tapsQuery.mockReturnValueOnce(new Promise((r) => (release = r)));
     await act(async () => h.status?.("SUBSCRIBED"));
@@ -528,8 +589,8 @@ describe("LectureData live", () => {
     await act(async () =>
       release({ data: [row("a", { slide_number: 2 }), row("b", { slide_number: 2, anon_id: "s2" })], error: null }),
     );
-    expect(counts(5)).toBe("1 person, 1 tap");
-    expect(counts(2)).toBe("1 person, 1 tap");
+    expect(counts(5)).toBe("1 lost, 1 tap");
+    expect(counts(2)).toBe("1 lost, 1 tap");
   });
 
   it("removes the channel when it unmounts", async () => {
@@ -553,7 +614,7 @@ describe("LectureData live", () => {
         expect(screen.queryByTestId("slide-1")).not.toBeInTheDocument();
         h.tapsQuery.mockResolvedValue({ data: [row("a", { slide_number: 1 })], error: null });
         await wait(1000);
-        expect(counts(1)).toBe("1 person, 1 tap");
+        expect(counts(1)).toBe("1 lost, 1 tap");
         expect(screen.queryByText("Could not load the data. Trying again.")).not.toBeInTheDocument();
       } finally {
         vi.useRealTimers();
@@ -565,12 +626,12 @@ describe("LectureData live", () => {
       try {
         renderLive();
         await act(async () => {});
-        expect(counts(2)).toBe("2 people, 2 taps");
+        expect(counts(2)).toBe("2 lost, 2 taps");
 
         h.tapsQuery.mockRejectedValue(new TypeError("Failed to fetch"));
         await act(async () => h.status?.("SUBSCRIBED"));
         const calls = h.tapsQuery.mock.calls.length;
-        expect(counts(2)).toBe("2 people, 2 taps");
+        expect(counts(2)).toBe("2 lost, 2 taps");
 
         await wait(999);
         expect(h.tapsQuery.mock.calls.length).toBe(calls);
@@ -578,11 +639,11 @@ describe("LectureData live", () => {
         expect(h.tapsQuery.mock.calls.length).toBe(calls + 1);
         await wait(2000);
         expect(h.tapsQuery.mock.calls.length).toBe(calls + 2);
-        expect(counts(2)).toBe("2 people, 2 taps");
+        expect(counts(2)).toBe("2 lost, 2 taps");
 
         h.tapsQuery.mockResolvedValue({ data: [row("q", { slide_number: 3 })], error: null });
         await wait(4000);
-        expect(counts(3)).toBe("1 person, 1 tap");
+        expect(counts(3)).toBe("1 lost, 1 tap");
         const done = h.tapsQuery.mock.calls.length;
         await wait(60000);
         expect(h.tapsQuery.mock.calls.length).toBe(done);
@@ -616,12 +677,12 @@ describe("LectureData live", () => {
         await act(async () => {});
         const calls = h.tapsQuery.mock.calls.length;
         await act(async () => h.status?.("CHANNEL_ERROR"));
-        expect(counts(2)).toBe("2 people, 2 taps");
+        expect(counts(2)).toBe("2 lost, 2 taps");
         await wait(999);
         expect(h.tapsQuery.mock.calls.length).toBe(calls);
         await wait(1);
         expect(h.tapsQuery.mock.calls.length).toBe(calls + 1);
-        expect(counts(2)).toBe("2 people, 2 taps");
+        expect(counts(2)).toBe("2 lost, 2 taps");
       } finally {
         vi.useRealTimers();
       }
@@ -655,7 +716,7 @@ const keepGoing = () => fireEvent.click(within(screen.getByRole("dialog")).getBy
 describe("End class", () => {
   async function open() {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     fireEvent.click(endButton());
   }
 
@@ -671,7 +732,7 @@ describe("End class", () => {
 
   it("shows no confirm until End lecture is pressed, then asks with the exact words", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(endButton()).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(endButton());
@@ -767,8 +828,8 @@ describe("End class", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "End class" })).not.toBeInTheDocument();
     expect(h.removeChannel).toHaveBeenCalledWith(channel);
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
-    expect(screen.getByText("7 joined")).toBeInTheDocument();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(joinedShown()).toBe("7");
     expect(screen.queryByText("Current slide")).not.toBeInTheDocument();
     expect(screen.queryByText(/Live, on slide/)).not.toBeInTheDocument();
     // The name stays, once, and there is a way back to the course.
@@ -804,7 +865,7 @@ describe("End class", () => {
 
   it("switches to past mode when the lecture row says ended, whoever ended it", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     const bar = within(slideRow(2)).getByRole("button");
     act(() => bar.focus());
     act(() => h.handlers["lectures:UPDATE"]({ new: { current_slide: 3, status: "ended" } }));
@@ -822,18 +883,18 @@ describe("End class from ?end=1", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText(DIALOG_TEXT)).toBeInTheDocument();
     expect(h.rpc).not.toHaveBeenCalled();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
   });
 
   it("does not open without the flag", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("ignores the flag for an ended lecture", async () => {
     renderLive({ mode: "past", confirmEndOnLoad: true });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -843,7 +904,7 @@ describe("End class from ?end=1", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.replace).toHaveBeenCalledWith(`/teach/l/${LECTURE}/live`);
     expect(h.rpc).not.toHaveBeenCalled();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
   });
 
   it("Escape closes it the same way", async () => {
@@ -852,7 +913,7 @@ describe("End class from ?end=1", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(h.replace).toHaveBeenCalledWith(`/teach/l/${LECTURE}/live`);
     expect(h.push).not.toHaveBeenCalled();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
   });
 
   it("End class in it ends the lecture", async () => {
@@ -864,7 +925,7 @@ describe("End class from ?end=1", () => {
 
   it("a Keep going on a confirm opened by the button leaves the url alone", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     fireEvent.click(endButton());
     keepGoing();
     expect(h.replace).not.toHaveBeenCalled();
@@ -874,7 +935,7 @@ describe("End class from ?end=1", () => {
 describe("Live header buttons", () => {
   it("Back to slides is the primary black button (as Home's Join a class) and End class a white secondary one", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     const back = screen.getByRole("link", { name: "Back to slides" });
     expect(back.className).toContain("bg-ink");
     expect(back.className).toContain("text-surface");
@@ -888,7 +949,7 @@ describe("Live header buttons", () => {
 
   it("the confirm says End class with a white Keep going button, no underlined link", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     fireEvent.click(endButton());
     const dialog = screen.getByRole("dialog", { name: "End class?" });
     expect(dialog).toHaveTextContent("The code stops working and students land on My spots.");
@@ -902,7 +963,7 @@ describe("Live header buttons", () => {
 describe("No key binds", () => {
   it("Escape no longer leaves for the projector; Back to slides is a link instead", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     key("Escape");
     expect(h.push).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "Back to slides" })).toHaveAttribute("href", `/teach/l/${LECTURE}/present`);
@@ -910,7 +971,7 @@ describe("No key binds", () => {
 
   it("closes the confirm when it is open (closing a dialog), and leaves nothing", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     fireEvent.click(endButton());
     key("Escape");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -919,7 +980,7 @@ describe("No key binds", () => {
 
   it("an Escape typed in an input leaves the confirm open", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     fireEvent.click(endButton());
     const input = document.createElement("input");
     document.body.appendChild(input);
@@ -930,7 +991,7 @@ describe("No key binds", () => {
 
   it("has no shortcuts at all", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     for (const k of ["d", "D", "n", " ", "ArrowRight", "e", "Enter", "Escape"]) key(k);
     expect(h.push).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -938,7 +999,7 @@ describe("No key binds", () => {
 
   it("has no Back to slides in past mode", async () => {
     renderLive({ mode: "past" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.queryByRole("link", { name: "Back to slides" })).not.toBeInTheDocument();
   });
 });
@@ -946,7 +1007,7 @@ describe("No key binds", () => {
 describe("LectureData past", () => {
   it("loads once, subscribes to nothing and has no End button", async () => {
     renderLive({ mode: "past" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(channel.on).not.toHaveBeenCalled();
     expect(channel.subscribe).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "End class" })).not.toBeInTheDocument();
@@ -954,11 +1015,11 @@ describe("LectureData past", () => {
     expect(h.tapsQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the bars, Top 3 and notes, with no current slide marker and nothing grayed out", async () => {
+  it("shows the bars, the red ones and notes, with no current slide marker and nothing grayed out", async () => {
     h.tapsQuery.mockResolvedValue({ data: [row("a", { slide_number: 4, note: "ask again" })], error: null });
     renderLive({ mode: "past" });
-    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
-    expect(within(slideRow(4)).getByText("Top 3")).toBeInTheDocument();
+    await waitFor(() => expect(counts(4)).toBe("1 lost, 1 tap"));
+    expect(within(slideRow(4)).getByText("among the most lost")).toBeInTheDocument();
     expect(within(panel()).getByText("Slide 4")).toBeInTheDocument();
     expect(within(panel()).getByText("ask again")).toBeInTheDocument();
     expect(screen.queryByText("Current slide")).not.toBeInTheDocument();
@@ -968,27 +1029,29 @@ describe("LectureData past", () => {
 
   it("has no heading of its own: the page's heading (children) shows the name once, above the chart", async () => {
     renderLive({ mode: "past", children: <h1>Lecture 1, Oct 26</h1> });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.getAllByText("Lecture 1, Oct 26")).toHaveLength(1);
     const heading = screen.getByRole("heading", { level: 1, name: "Lecture 1, Oct 26" });
     const chart = screen.getByTestId("bars");
     expect(heading.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The page heading has when, joined and lost taps; this view adds no second set.
-    expect(screen.queryByText("7 joined")).not.toBeInTheDocument();
+    // The joined count shows once, in the summary row.
+    expect(screen.queryByText(/^\d+ joined$/)).not.toBeInTheDocument();
+    expect(joinedShown()).toBe("7");
     expect(screen.queryByRole("link", { name: "Back to the course" })).not.toBeInTheDocument();
   });
 
   it("shows no heading at all in past mode without children", async () => {
     renderLive({ mode: "past" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
     expect(screen.queryByText("Lecture 1, Oct 26")).not.toBeInTheDocument();
   });
 
-  it("does not need slide images: it reads taps and the joined count only, so a missing image object can not break it", async () => {
+  it("a missing slide image can not break it: the panel shows a blank slide with its first line", async () => {
     renderLive({ mode: "past" });
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect(document.querySelector("img")).toBeNull();
+    expect(within(panel()).getByTestId("highlights-2")).toHaveTextContent("Heading 2");
     expect(h.lectureQuery).not.toHaveBeenCalled();
   });
 
@@ -1000,7 +1063,7 @@ describe("LectureData past", () => {
       await act(async () => {});
       expect(screen.getByText("Could not load the data. Trying again.")).toBeInTheDocument();
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(counts(2)).toBe("2 people, 2 taps");
+      expect(counts(2)).toBe("2 lost, 2 taps");
     } finally {
       vi.useRealTimers();
     }
@@ -1027,7 +1090,7 @@ describe("LectureData highlights", () => {
 
   it("reads the four hl_ columns with the taps", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     expect((h.tapsQuery.mock.calls[0][0] as Query).cols).toMatch(/hl_x, hl_y, hl_w, hl_h/);
   });
 
@@ -1036,8 +1099,8 @@ describe("LectureData highlights", () => {
     h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp", 5: "https://signed/5.webp" });
     renderLive();
     await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
-    expect(within(panel()).getByText("Where they highlighted")).toBeInTheDocument();
-    const copy = within(panel()).getByRole("img");
+    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("2 marked the spot");
+    const copy = within(panel()).getByTestId("highlights-2").querySelector("img")!;
     expect(copy).toHaveAttribute("src", "https://signed/2.webp");
     expect(copy.parentElement?.contains(boxesOn(2)[0])).toBe(true);
     expect(boxesOn(2)[0].style.left).toBe("10%");
@@ -1045,40 +1108,49 @@ describe("LectureData highlights", () => {
     expect(boxesOn(2)[0].className).toMatch(/\/\d+/);
     expect(boxesOn(2)[0].className).toContain("bg-lost");
     expect(boxesOn(5)).toHaveLength(1);
-    expect(within(panel()).getByRole("img")).toHaveAttribute("src", "https://signed/5.webp");
+    expect(within(panel()).getByTestId("highlights-5").querySelector("img")).toHaveAttribute(
+      "src",
+      "https://signed/5.webp",
+    );
   });
 
-  it("shows nothing extra on a slide with taps but no highlight, and asks for images of highlighted slides only", async () => {
+  it("shows the slide with no boxes when nobody marked it, and says so", async () => {
+    withBoxes();
+    h.slideUrls.mockReturnValue({ 4: "https://signed/4.webp" });
+    renderLive();
+    await waitFor(() => expect(counts(4)).toBe("1 lost, 1 tap"));
+    expect(boxesOn(4)).toHaveLength(0);
+    expect(within(panel()).getByTestId("highlights-4").querySelector("img")).toHaveAttribute(
+      "src",
+      "https://signed/4.webp",
+    );
+    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("Nobody marked the spot");
+    expect(boxesOn(1)).toHaveLength(0);
+  });
+
+  it("asks for the images of the slides someone is lost on or marked, plus the selected one, and none before the data", async () => {
     withBoxes();
     renderLive();
-    await waitFor(() => expect(counts(4)).toBe("1 person, 1 tap"));
-    expect(boxesOn(4)).toHaveLength(0);
-    expect(within(panel()).queryByRole("img")).not.toBeInTheDocument();
-    expect(within(panel()).queryByText("Where they highlighted")).not.toBeInTheDocument();
-    expect(boxesOn(1)).toHaveLength(0);
-    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 5]);
-  });
-
-  it("asks for no images at all when nobody highlighted, so a seeded lecture with missing images is never asked", async () => {
-    renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
     expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, []);
-    expect(document.querySelector("img")).toBeNull();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 4, 5]);
+    select(1);
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [1, 2, 4, 5]);
   });
 
   it("draws the boxes on a blank slide until the image arrives", async () => {
     withBoxes();
     renderLive();
     await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
-    expect(within(panel()).queryByRole("img")).not.toBeInTheDocument();
+    expect(panel().querySelector("img")).toBeNull();
   });
 
   it("adds a box from a Realtime insert and asks for that slide's image", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     insert(row("n", { slide_number: 3, anon_id: "s9", ...HL(0.4) }));
     await waitFor(() => expect(boxesOn(3)).toHaveLength(1));
-    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [3]);
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 3, 4]);
   });
 
   it("moves a box when the student changes their highlight (a Realtime update)", async () => {
@@ -1098,23 +1170,25 @@ describe("LectureData highlights", () => {
     await waitFor(() => expect(boxesOn(5)).toHaveLength(1));
     update(row("d", { slide_number: 5, undone: true, ...HL(0.5) }));
     await waitFor(() => expect(boxesOn(5)).toHaveLength(0));
-    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2]);
+    expect(within(slideRow(5)).getByRole("button")).toHaveAccessibleName("Slide 5, Heading 5: 0 lost, 0 taps");
   });
 
   it("never draws a save", async () => {
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
     insert(row("s", { kind: "save", slide_number: 3, ...HL(0.4) }));
     await act(async () => {});
     expect(boxesOn(3)).toHaveLength(0);
-    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, []);
+    expect(within(slideRow(3)).getByRole("button")).toHaveAccessibleName(
+      "Slide 3, Heading 3: 0 lost, 0 taps, Current slide",
+    );
   });
 
   it("shows the highlights of a lecture that has ended", async () => {
     withBoxes();
     renderLive({ mode: "past" });
     await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
-    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 5]);
+    expect(h.slideUrls).toHaveBeenLastCalledWith(LECTURE, [2, 4, 5]);
   });
 
   it("ignores a box that is not a valid rectangle", async () => {
@@ -1123,7 +1197,7 @@ describe("LectureData highlights", () => {
       error: null,
     });
     renderLive();
-    await waitFor(() => expect(counts(2)).toBe("1 person, 2 taps"));
+    await waitFor(() => expect(counts(2)).toBe("1 lost, 2 taps"));
     expect(boxesOn(2)).toHaveLength(0);
   });
 });
@@ -1165,7 +1239,7 @@ describe("LectureData with many slides", () => {
 
   async function renderMany(width: number) {
     renderLive({ slides: many, initialCurrentSlide: 23 });
-    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    await waitFor(() => expect(counts(17)).toBe("3 lost, 3 taps"));
     await waitFor(() => expect(within(slideRow(23)).getByText("Current slide")).toBeInTheDocument());
     act(() => resize?.(width));
   }
@@ -1203,10 +1277,10 @@ describe("LectureData with many slides", () => {
 
   it("keeps the full name on every bar, numbers shown or not", async () => {
     await renderMany(876);
-    expect(within(slideRow(2)).getByRole("button")).toHaveAccessibleName("Slide 2, Heading 2: 0 people, 0 taps");
-    expect(within(slideRow(17)).getByRole("button")).toHaveAccessibleName("Slide 17, Heading 17: 3 people, 3 taps, Top 3");
+    expect(within(slideRow(2)).getByRole("button")).toHaveAccessibleName("Slide 2, Heading 2: 0 lost, 0 taps");
+    expect(within(slideRow(17)).getByRole("button")).toHaveAccessibleName("Slide 17, Heading 17: 3 lost, 3 taps, among the most lost");
     expect(within(slideRow(23)).getByRole("button")).toHaveAccessibleName(
-      "Slide 23, Heading 23: 0 people, 0 taps, Current slide",
+      "Slide 23, Heading 23: 0 lost, 0 taps, Current slide",
     );
   });
 
@@ -1230,14 +1304,14 @@ describe("LectureData with many slides", () => {
   it("99 slides thin to every 5th, 100 slides to every 10th", async () => {
     const deck = (n: number) => Array.from({ length: n }, (_, i) => ({ number: i + 1, first_line: "" }));
     const { unmount } = renderLive({ slides: deck(99), initialCurrentSlide: 1 });
-    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    await waitFor(() => expect(counts(17)).toBe("3 lost, 3 taps"));
     act(() => resize?.(876));
     expect(shown(95)).toBe(true);
     expect(shown(15)).toBe(true);
     expect(shown(96)).toBe(false);
     unmount();
     renderLive({ slides: deck(100), initialCurrentSlide: 1 });
-    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    await waitFor(() => expect(counts(17)).toBe("3 lost, 3 taps"));
     act(() => resize?.(876));
     expect(shown(90)).toBe(true);
     expect(shown(100)).toBe(true);
@@ -1248,7 +1322,7 @@ describe("LectureData with many slides", () => {
   it("thins to every 10th past 99 slides", async () => {
     const hundred = Array.from({ length: 120 }, (_, i) => ({ number: i + 1, first_line: "" }));
     renderLive({ slides: hundred, initialCurrentSlide: 1 });
-    await waitFor(() => expect(counts(17)).toBe("3 people, 3 taps"));
+    await waitFor(() => expect(counts(17)).toBe("3 lost, 3 taps"));
     act(() => resize?.(876));
     expect(shown(10)).toBe(true);
     expect(shown(100)).toBe(true);
