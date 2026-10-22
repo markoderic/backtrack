@@ -372,7 +372,7 @@ export function LectureData({
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       {ownHeading ? (
-        <div className="flex animate-page-in flex-wrap items-center gap-x-8 gap-y-4 px-4 pt-8 pb-6 sm:px-12">
+        <div className="relative z-20 flex animate-page-in flex-wrap items-center gap-x-8 gap-y-4 px-4 pt-8 pb-6 sm:px-12">
           <div className="flex min-w-0 flex-col gap-1.5">
             <h1 className="type-lecture-l break-words text-ink">{lectureName}</h1>
             <p className="flex flex-wrap items-center gap-x-4 gap-y-1 type-small text-secondary">

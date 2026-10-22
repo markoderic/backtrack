@@ -542,6 +542,16 @@ describe("End lecture", () => {
     fireEvent.click(endButton());
   }
 
+  it("the header row that holds the confirm sits above the chart and the panel (its animation makes a stacking context)", async () => {
+    await open();
+    // jsdom can't hit-test. The confirm's z-30 only counts inside the header's own stacking context, so the
+    // header itself must be positioned and above the later, animated chart and panel, or they swallow the clicks.
+    const header = screen.getByRole("dialog").closest(".animate-page-in");
+    expect(header).not.toBeNull();
+    expect(header!.className).toContain("relative");
+    expect(header!.className).toContain("z-20");
+  });
+
   it("shows no confirm until End lecture is pressed, then asks with the exact words", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 people, 2 taps"));
