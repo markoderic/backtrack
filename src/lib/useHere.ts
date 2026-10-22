@@ -23,7 +23,9 @@ const FREE_TRIES = 20;
 /**
  * After the server closes the count's channel (one moment over a presence limit, say), it opens
  * again after 2 s, then 4, 8 ... up to a minute between tries, each wait 50 to 100% of that so
- * two screens never retry in step. A count that comes back (a sync) starts the waits over.
+ * two screens never retry in step. The waits start over only after a channel stayed up (counting)
+ * for at least a minute: a server that lets the channel join and sync, then closes it at once,
+ * still gets the growing waits instead of a rejoin every 1 to 2 s.
  */
 export const REOPEN_BASE_MS = 2000;
 export const REOPEN_MAX_MS = 60_000;
@@ -107,8 +109,13 @@ export function useHereCount(lectureId: string, enabled: boolean): number | null
     // Each opened channel gets a number; callbacks of a channel that was replaced are ignored.
     let generation = 0;
     let attempt = 0;
+    // When the current channel first counted (its first sync), or null before that.
+    let upSince: number | null = null;
 
     const reopenLater = () => {
+      // Up and counting for a minute or more: that was a working channel, so the waits start over.
+      if (upSince !== null && Date.now() - upSince >= REOPEN_MAX_MS) attempt = 0;
+      upSince = null;
       generation++;
       const dead = close;
       close = undefined;
@@ -120,11 +127,12 @@ export function useHereCount(lectureId: string, enabled: boolean): number | null
 
     const open = () => {
       const mine = ++generation;
+      upSince = null;
       close = openChannel(supabase, () => {
         const channel: RealtimeChannel = supabase.channel(hereChannel(lectureId));
         channel.on("presence", { event: "sync" }, () => {
           if (cancelled || mine !== generation) return;
-          attempt = 0;
+          if (upSince === null) upSince = Date.now();
           setHere(Object.keys(channel.presenceState()).length);
         });
         return channel.subscribe((status) => {

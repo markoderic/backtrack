@@ -240,10 +240,11 @@ describe("useHereCount (the projector and the data view)", () => {
     expect(result.current).toBe(3);
   });
 
-  it("waits longer after each close in a row, at most a minute, and starts over after a count", async () => {
+  it("waits longer after each close in a row, at most a minute, and starts over after a minute of counting", async () => {
     renderHook(() => useHereCount(LECTURE, true));
     await flush();
-    const closeLatest = () => act(() => (h.channels[h.channels.length - 1] as Fake).status!("CLOSED"));
+    const latest = () => h.channels[h.channels.length - 1] as Fake;
+    const closeLatest = () => act(() => latest().status!("CLOSED"));
     const waitFor = async (ms: number) => {
       const before = h.makeChannel.mock.calls.length;
       await act(async () => vi.advanceTimersByTime(ms - 1));
@@ -258,11 +259,36 @@ describe("useHereCount (the projector and the data view)", () => {
     await waitFor(3000);
     closeLatest();
     await waitFor(6000);
-    // A sync: the next close waits 2 s (times 0.75) again.
-    const latest = h.channels[h.channels.length - 1] as Fake;
-    act(() => latest.handlers.presence(undefined));
+    // A count that stays up for a minute: the next close waits 2 s (times 0.75) again.
+    act(() => latest().handlers.presence(undefined));
+    await act(async () => vi.advanceTimersByTime(60_000));
     closeLatest();
     await waitFor(1500);
+  });
+
+  it("a server that lets it join and count, then closes it at once, still gets the growing waits", async () => {
+    renderHook(() => useHereCount(LECTURE, true));
+    await flush();
+    const latest = () => h.channels[h.channels.length - 1] as Fake;
+    const waits: number[] = [];
+    // Eight open, sync, close cycles: each sync comes in, then the server closes 100 ms later.
+    for (let i = 0; i < 8; i++) {
+      act(() => latest().status!("SUBSCRIBED"));
+      act(() => latest().handlers.presence(undefined));
+      await act(async () => vi.advanceTimersByTime(100));
+      const before = h.makeChannel.mock.calls.length;
+      act(() => latest().status!("CLOSED"));
+      let waited = 0;
+      while (h.makeChannel.mock.calls.length === before) {
+        await act(async () => vi.advanceTimersByTime(100));
+        await flush();
+        waited += 100;
+        expect(waited).toBeLessThanOrEqual(60_000);
+      }
+      waits.push(waited);
+    }
+    // 2 s, 4, 8, 16, 32, then a minute (times 0.75), never back to 1.5 s.
+    expect(waits).toEqual([1500, 3000, 6000, 12000, 24000, 45000, 45000, 45000]);
   });
 
   it("the wait never goes past a minute", () => {
