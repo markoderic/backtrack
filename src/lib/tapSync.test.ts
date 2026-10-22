@@ -39,6 +39,21 @@ describe("flushLeftoverTaps", () => {
     expect(JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "null")).toEqual([]);
   });
 
+  it.each(["limited", "capped"] as const)("drops a %s tap without the lecture had ended note", async (r) => {
+    leave({ op: "insert", tap: tap(3) });
+    const result = await flushLeftoverTaps(LECTURE, send(r));
+    expect(result.rejected).toHaveLength(1);
+    expect(sessionStorage.getItem(rejectedKey(LECTURE))).toBeNull();
+    expect(JSON.parse(localStorage.getItem(QUEUE_KEY) ?? "null")).toEqual([]);
+  });
+
+  it("still notes a real refusal next to a limited one", async () => {
+    leave({ op: "insert", tap: tap(3) }, { op: "insert", tap: tap(4) });
+    const s = vi.fn<(op: QueueOp) => Promise<SendResult>>().mockResolvedValueOnce("limited").mockResolvedValueOnce("rejected");
+    await flushLeftoverTaps(LECTURE, s);
+    expect(sessionStorage.getItem(rejectedKey(LECTURE))).toBe("1");
+  });
+
   it("leaves the ops queued when still offline", async () => {
     leave({ op: "insert", tap: tap(3) });
     expect(await flushLeftoverTaps(LECTURE, send("offline"))).toEqual({ sent: 0, rejected: [] });

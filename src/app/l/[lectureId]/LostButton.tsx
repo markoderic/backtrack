@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Reac
 import { Icon } from "@/components/Icon";
 import { ImLostButton } from "@/components/ImLostButton";
 import type { Rect } from "@/lib/rect";
-import { TapQueue, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
+import { TapQueue, isTapLimit, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
 
 /** The saved line (and with it Undo) stays this long, or until the next slide. Typing a note holds it open. */
@@ -12,6 +12,7 @@ export const UNDO_WINDOW_MS = 10000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
 const TOO_MANY = "Too many taps. Try again in a minute.";
+const TOO_MANY_LECTURE = "Too many taps in this lecture.";
 
 type Props = {
   lectureId: string;
@@ -118,9 +119,9 @@ export function LostButton({
   // A tap the database refused while the page was open. It is gone from the queue,
   // so the flush on leaving must still tell the spots page.
   const refusedTap = useRef(false);
-  // The ops the database refused for the tap limit (send said "limited"). Shared by every
-  // caller of a flush run, as two flushes at once get the same run and the same refusals.
-  const limitedOps = useRef(new WeakSet<QueueOp>());
+  // The ops the database refused for the tap limit (send said "limited" or "capped"), and which
+  // one. Shared by every caller of a flush run, as two flushes at once get the same run and refusals.
+  const limitedOps = useRef(new WeakMap<QueueOp, "limited" | "capped">());
   useEffect(() => {
     sendRef.current = send;
     loadOwnRef.current = loadOwn;
@@ -154,9 +155,9 @@ export function LostButton({
     try {
       const { rejected: refused } = await queue().flush(async (op) => {
         const result = await sendRef.current(op);
-        if (result !== "limited") return result;
+        if (!isTapLimit(result)) return result;
         // Dropped like any refusal (never retried); remembered so the message can say why.
-        limitedOps.current.add(op);
+        limitedOps.current.set(op, result);
         return "rejected";
       });
       if (refused.length === 0) return;
@@ -169,7 +170,8 @@ export function LostButton({
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
       if (gone.size > 0 && !tooMany) refusedTap.current = true;
       setBar((b) => (b && gone.has(b.id) ? null : b));
-      setRejected(tooMany ? TOO_MANY : gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
+      const capped = refused.some((op) => limitedOps.current.get(op) === "capped");
+      setRejected(tooMany ? (capped ? TOO_MANY_LECTURE : TOO_MANY) : gone.size > 0 ? LECTURE_ENDED : CHANGE_FAILED);
       if (!ending && !tooMany) onRejectedRef.current?.();
     } catch (e) {
       fail(e);

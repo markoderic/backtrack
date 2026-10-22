@@ -454,6 +454,16 @@ describe("LostButton", () => {
       expect(sessionStorage.getItem(`backtrack:rejected:${LECTURE}`)).toBeNull();
     });
 
+    it("says so differently for the 300 taps a lecture limit", async () => {
+      setup({ send: vi.fn<Send>(async () => "capped") });
+      await settle();
+      press();
+      await settle();
+      expect(screen.getByRole("alert")).toHaveTextContent("Too many taps in this lecture.");
+      expect(screen.queryByText(TOO_MANY)).not.toBeInTheDocument();
+      expect(screen.queryByText(REJECTED)).not.toBeInTheDocument();
+    });
+
     it("a later tap that saves clears the message", async () => {
       const send = vi.fn<Send>().mockResolvedValueOnce("limited").mockResolvedValue("ok");
       setup({ send });

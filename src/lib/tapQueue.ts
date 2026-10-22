@@ -21,10 +21,14 @@ export type QueueOp =
 
 /**
  * ok: saved. offline: try again later. rejected: the database said no, retrying will not
- * help. limited: the database said no because this student made too many taps (the
- * 0012 limit); the queue drops it like a rejection, and the page says why.
+ * help. limited: the database said no because this student made too many taps in a minute
+ * (the 0012 limit); capped: the same for 300 taps in the lecture. The queue drops both like a
+ * rejection, and the page says why.
  */
-export type SendResult = "ok" | "rejected" | "offline" | "limited";
+export type SendResult = "ok" | "rejected" | "offline" | "limited" | "capped";
+
+/** A refusal for the 0012 tap limit, not because the lecture ended. */
+export const isTapLimit = (r: SendResult): r is "limited" | "capped" => r === "limited" || r === "capped";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 

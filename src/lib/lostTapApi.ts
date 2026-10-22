@@ -27,10 +27,11 @@ export function classifyError(error: ErrorLike, status?: number): "offline" | "r
  */
 export const TAP_LIMIT_CODE = "BT429";
 
-/** The result of one supabase-js call, as ok, rejected, limited or offline. */
+/** The result of one supabase-js call, as ok, rejected, limited, capped or offline. */
 export function classifySend(res: { error: ErrorLike | null; status?: number }): SendResult {
   if (!res.error) return "ok";
-  if (res.error.code === TAP_LIMIT_CODE) return "limited";
+  // Same code for both limits; the 300 a lecture one says "in this lecture".
+  if (res.error.code === TAP_LIMIT_CODE) return /in this lecture/i.test(res.error.message ?? "") ? "capped" : "limited";
   return classifyError(res.error, res.status);
 }
 

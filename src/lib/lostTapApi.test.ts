@@ -41,6 +41,7 @@ describe("classifySend", () => {
   it("is limited for the tap limit error, whatever the status, so it is dropped and never retried", () => {
     expect(classifySend({ error: { code: "BT429", message: "Too many taps. Try again in a minute." }, status: 400 })).toBe("limited");
     expect(classifySend({ error: { code: "BT429", message: "Too many taps." }, status: 500 })).toBe("limited");
+    expect(classifySend({ error: { code: "BT429", message: "Too many taps in this lecture." }, status: 400 })).toBe("capped");
   });
 
   it("is rejected for a 4xx with no code", () => {
