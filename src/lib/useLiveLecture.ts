@@ -30,6 +30,15 @@ function isMissingVersionColumn(error: { code?: string; message?: string }): boo
 }
 
 /**
+ * Who shows up in the lecture's "here" count (Realtime Presence on the lecture channel).
+ * "track" (the default, every student page that follows a lecture: the lecture screen and
+ * its My spots view): this tab is counted while it has the lecture open, under a random key
+ * made for this tab. Nothing else is sent: no name, no anonymous id, no device details.
+ * "count" (the projector): not counted itself, and it hears the count.
+ */
+export type LivePresenceOptions = { presence?: "track" | "count" };
+
+/**
  * Follows a lecture's live slide for a student. `state` is null until the
  * first read arrives, unless `initialLive` (the slide the server already read)
  * is given. Reads only current_slide and status, never the slide count.
@@ -54,8 +63,15 @@ function isMissingVersionColumn(error: { code?: string; message?: string }): boo
 export function useLiveLecture(
   lectureId: string,
   initialLive?: number,
+  options: LivePresenceOptions = {},
 ): {
   state: FollowState | null;
+  /**
+   * With presence "count": how many students have the lecture open right now (Realtime
+   * Presence on the lecture's channel), null until the first count or while the channel is
+   * down. Always null with presence "track".
+   */
+  here: number | null;
   back(): void;
   forward(): void;
   jumpToLive(): void;
@@ -63,7 +79,9 @@ export function useLiveLecture(
   /** Reads the slide and status again now, unless the lecture ended or a read is already running. */
   recheck(): void;
 } {
+  const counting = options.presence === "count";
   const [state, dispatch] = useReducer(followReducer, initialFollowState(initialLive ?? 1));
+  const [here, setHere] = useState<number | null>(null);
   const [ready, setReady] = useState(initialLive !== undefined);
   const readyRef = useRef(initialLive !== undefined);
   const droppedRef = useRef(false);
@@ -192,9 +210,28 @@ export function useLiveLecture(
 
     // Opened once Realtime has the user's token (see openChannel), so the
     // database lets this channel see the row it listens to.
-    const close = openChannel(supabase, () =>
-      supabase
-        .channel(`lecture-${lectureId}`)
+    const close = openChannel(supabase, () => {
+      // The projector listens to presence (that alone turns presence on for its channel) and
+      // is not counted. A student tracks under a random key for this tab and does not listen,
+      // so no student's browser hears who else is there.
+      const channel = counting
+        ? supabase.channel(`lecture-${lectureId}`)
+        : supabase.channel(`lecture-${lectureId}`, { config: { presence: { key: crypto.randomUUID() } } });
+      if (counting) {
+        channel.on("presence", { event: "sync" }, () => {
+          if (cancelled) return;
+          setHere(Object.keys(channel.presenceState()).length);
+        });
+      }
+      // Being counted is a hint for the teacher, never a reason for the page to fail.
+      const trackHere = () => {
+        try {
+          void Promise.resolve(channel.track({})).catch(() => {});
+        } catch {
+          // A client without presence: this tab just isn't counted.
+        }
+      };
+      return channel
         .on(
           "postgres_changes",
           { event: "UPDATE", schema: "public", table: "lectures", filter: `id=eq.${lectureId}` },
@@ -218,14 +255,18 @@ export function useLiveLecture(
           if (cancelled || ended) return;
           if (status === "SUBSCRIBED") {
             channelDown = false;
+            // Again after every rejoin: the server forgets a tab whose connection dropped.
+            if (!counting) trackHere();
             void load();
           } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
             channelDown = true;
             droppedRef.current = true;
+            // The count is unknown until the channel is back and syncs again.
+            if (counting) setHere(null);
             dispatch({ type: "disconnected" });
           }
-        }),
-    );
+        });
+    });
     void load();
 
     return () => {
@@ -237,7 +278,7 @@ export function useLiveLecture(
       window.removeEventListener("online", check);
       close();
     };
-  }, [lectureId]);
+  }, [lectureId, counting]);
 
   const back = useCallback(() => dispatch({ type: "back" }), []);
   const forward = useCallback(() => dispatch({ type: "forward" }), []);
@@ -245,5 +286,5 @@ export function useLiveLecture(
   const goTo = useCallback((n: number) => dispatch({ type: "goTo", n }), []);
   const recheck = useCallback(() => checkRef.current(), []);
 
-  return { state: ready ? state : null, back, forward, jumpToLive, goTo, recheck };
+  return { state: ready ? state : null, here, back, forward, jumpToLive, goTo, recheck };
 }

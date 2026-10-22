@@ -418,7 +418,8 @@ describe("SpotsView: opening a spot", () => {
   it("during a live lecture, a later live slide raises the cap, and the end reads the page again", async () => {
     show({ liveSlide: 4 });
     await ready();
-    expect(makeChannel).toHaveBeenCalledWith(`lecture-${LECTURE}`);
+    // The lecture's channel (its second argument is the here count's presence key).
+    expect((makeChannel.mock.calls[0] as unknown[])[0]).toBe(`lecture-${LECTURE}`);
     fireEvent.click(screen.getByRole("button", { name: /Slide 3/ }));
     const next = () => screen.getByRole("button", { name: "Next slide" });
     fireEvent.click(next());
@@ -469,7 +470,8 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
     expect(screen.queryByText("Induction")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "My spots" })).toHaveFocus();
+    // Focus moves in an effect after the list renders: wait for it rather than race it.
+    await waitFor(() => expect(screen.getByRole("heading", { name: "My spots" })).toHaveFocus());
     await act(async () => answer({ data: allStats({ 3: 4, 5: 2 }), error: null }));
   });
 
