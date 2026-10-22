@@ -18,13 +18,16 @@ create policy teachers_update_own on public.teachers
   with check (id = auth.uid());
 
 -- The database checks the Miami address itself, so a forged client call cannot
--- add a gmail or anonymous account as a teacher.
+-- add a gmail or anonymous account as a teacher. The token must also come from a
+-- Google sign in: an email and password account (or an anonymous one that changed
+-- its email) can carry a Miami address without proving it owns it.
 create policy teachers_insert_own_miami on public.teachers
   for insert to authenticated
   with check (
     id = auth.uid()
     and coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) = false
     and lower(auth.jwt() ->> 'email') like '%@miamioh.edu'
+    and auth.jwt() -> 'app_metadata' ->> 'provider' = 'google'
   );
 
 -- True when the signed in user has a teachers row. security definer so other

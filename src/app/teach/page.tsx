@@ -4,7 +4,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { isMiamiEmail } from "@/lib/email";
 import { SignInButton } from "./sign-in-button";
 
-async function TeachBody() {
+async function TeachBody({ searchParams }: { searchParams: Promise<{ error?: string | string[] }> }) {
   const supabase = await createServerSupabase();
   const {
     data: { user },
@@ -20,10 +20,20 @@ async function TeachBody() {
     if (teacher) return <p>{teacher.display_name}</p>;
   }
 
-  return <SignInButton />;
+  const { error } = await searchParams;
+  return (
+    <>
+      {error === "signin" && <p>Sign in didn&apos;t finish. Try again.</p>}
+      <SignInButton />
+    </>
+  );
 }
 
-export default function TeachPage() {
+export default function TeachPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string | string[] }>;
+}) {
   return (
     <main
       style={{
@@ -38,7 +48,7 @@ export default function TeachPage() {
     >
       <h1 style={{ fontSize: "2.5rem", fontWeight: 600 }}>Backtrack</h1>
       <Suspense fallback={null}>
-        <TeachBody />
+        <TeachBody searchParams={searchParams} />
       </Suspense>
     </main>
   );

@@ -98,6 +98,14 @@ describe("GET /auth/callback", () => {
     expect(supabase.auth.signOut).not.toHaveBeenCalled();
   });
 
+  it("signs out and goes to /teach?error=signin when the teachers upsert fails", async () => {
+    signedInAs({ id: "u1", email: "dericm@miamioh.edu" });
+    single.mockResolvedValue({ data: null, error: { message: "new row violates row-level security policy" } });
+    const res = await call();
+    expect(res.headers.get("location")).toBe("https://backtrack.test/teach?error=signin");
+    expect(supabase.auth.signOut).toHaveBeenCalled();
+  });
+
   it("goes back to /teach without a code, and does not sign anyone in", async () => {
     const res = await call("https://backtrack.test/auth/callback");
     expect(res.headers.get("location")).toBe("https://backtrack.test/teach");

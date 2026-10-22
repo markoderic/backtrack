@@ -49,11 +49,17 @@ export async function GET(request: NextRequest) {
 
   // Insert the row on first sign in. display_name is left out so a returning
   // teacher keeps theirs.
-  const { data: teacher } = await supabase
+  const { data: teacher, error: upsertError } = await supabase
     .from("teachers")
     .upsert({ id: user.id, email: user.email }, { onConflict: "id" })
     .select("display_name")
     .single();
 
-  return go(teacher?.display_name ? "/teach" : "/teach/setup");
+  // No teachers row means nothing later can work, so do not leave them signed in.
+  if (upsertError || !teacher) {
+    await supabase.auth.signOut();
+    return go("/teach?error=signin");
+  }
+
+  return go(teacher.display_name ? "/teach" : "/teach/setup");
 }

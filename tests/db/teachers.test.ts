@@ -8,6 +8,9 @@ const OTHER = "22222222-2222-2222-2222-222222222222";
 const GMAIL = "33333333-3333-3333-3333-333333333333";
 const ANON = "44444444-4444-4444-4444-444444444444";
 
+// What Supabase puts in the token after a Google sign in.
+const google = { provider: "google", providers: ["google"] };
+
 let db: PGlite;
 
 beforeEach(async () => {
@@ -26,7 +29,7 @@ const insertTeacher = (id: string, email: string) =>
 
 describe("teachers RLS", () => {
   it("lets a Miami account insert its own row", async () => {
-    await as(db, { sub: MARKO, email: "dericm@miamioh.edu" }, () =>
+    await as(db, { sub: MARKO, email: "dericm@miamioh.edu", app_metadata: google }, () =>
       insertTeacher(MARKO, "dericm@miamioh.edu"),
     );
     const rows = await db.query<{ email: string; display_name: string | null }>(
@@ -36,7 +39,7 @@ describe("teachers RLS", () => {
   });
 
   it("accepts a mixed case Miami email in the token", async () => {
-    await as(db, { sub: MARKO, email: "DericM@MiamiOH.edu" }, () =>
+    await as(db, { sub: MARKO, email: "DericM@MiamiOH.edu", app_metadata: google }, () =>
       insertTeacher(MARKO, "dericm@miamioh.edu"),
     );
     expect((await db.query("select 1 from public.teachers")).rows).toHaveLength(1);
@@ -44,13 +47,13 @@ describe("teachers RLS", () => {
 
   it("rejects a gmail account", async () => {
     await expect(
-      as(db, { sub: GMAIL, email: "someone@gmail.com" }, () => insertTeacher(GMAIL, "someone@gmail.com")),
+      as(db, { sub: GMAIL, email: "someone@gmail.com", app_metadata: google }, () => insertTeacher(GMAIL, "someone@gmail.com")),
     ).rejects.toThrow(/row-level security/i);
   });
 
   it("rejects an email that only contains miamioh.edu", async () => {
     await expect(
-      as(db, { sub: GMAIL, email: "x@miamioh.edu.evil.com" }, () =>
+      as(db, { sub: GMAIL, email: "x@miamioh.edu.evil.com", app_metadata: google }, () =>
         insertTeacher(GMAIL, "x@miamioh.edu.evil.com"),
       ),
     ).rejects.toThrow(/row-level security/i);
@@ -58,7 +61,29 @@ describe("teachers RLS", () => {
 
   it("rejects an anonymous session, even with a Miami looking email claim", async () => {
     await expect(
-      as(db, { sub: ANON, email: "anon@miamioh.edu", is_anonymous: true }, () =>
+      as(db, { sub: ANON, email: "anon@miamioh.edu", is_anonymous: true, app_metadata: google }, () =>
+        insertTeacher(ANON, "anon@miamioh.edu"),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("rejects a Miami email that signed in with email and password", async () => {
+    await expect(
+      as(db, { sub: MARKO, email: "dericm@miamioh.edu", app_metadata: { provider: "email", providers: ["email"] } }, () =>
+        insertTeacher(MARKO, "dericm@miamioh.edu"),
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("rejects a Miami email with no provider in the token", async () => {
+    await expect(
+      as(db, { sub: MARKO, email: "dericm@miamioh.edu" }, () => insertTeacher(MARKO, "dericm@miamioh.edu")),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("rejects an anonymous token that changed its email to a Miami one", async () => {
+    await expect(
+      as(db, { sub: ANON, email: "anon@miamioh.edu", is_anonymous: true, app_metadata: { provider: "anonymous", providers: ["anonymous"] } }, () =>
         insertTeacher(ANON, "anon@miamioh.edu"),
       ),
     ).rejects.toThrow(/row-level security/i);
@@ -70,7 +95,7 @@ describe("teachers RLS", () => {
 
   it("rejects inserting a row for somebody else", async () => {
     await expect(
-      as(db, { sub: MARKO, email: "dericm@miamioh.edu" }, () => insertTeacher(OTHER, "other@miamioh.edu")),
+      as(db, { sub: MARKO, email: "dericm@miamioh.edu", app_metadata: google }, () => insertTeacher(OTHER, "other@miamioh.edu")),
     ).rejects.toThrow(/row-level security/i);
   });
 
@@ -99,7 +124,7 @@ describe("teachers RLS", () => {
 
   it("keeps display_name when the callback upserts an existing row", async () => {
     await db.query("insert into public.teachers (id, email, display_name) values ($1, 'dericm@miamioh.edu', 'Marko')", [MARKO]);
-    await as(db, { sub: MARKO, email: "dericm@miamioh.edu" }, () =>
+    await as(db, { sub: MARKO, email: "dericm@miamioh.edu", app_metadata: google }, () =>
       db.query(
         `insert into public.teachers (id, email) values ($1, 'dericm@miamioh.edu')
          on conflict (id) do update set email = excluded.email`,

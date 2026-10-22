@@ -70,7 +70,12 @@ export async function newDb(): Promise<PGlite> {
   return db;
 }
 
-export type Claims = { sub: string; email?: string; is_anonymous?: boolean };
+export type Claims = {
+  sub: string;
+  email?: string;
+  is_anonymous?: boolean;
+  app_metadata?: Record<string, unknown>;
+};
 
 /**
  * Runs fn as role `authenticated` with the given JWT claims, or as `anon` when
