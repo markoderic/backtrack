@@ -128,6 +128,10 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
       <ol
         ref={listRef}
         onScroll={() => setTip(null)}
+        // Esc puts the tooltip away (WCAG 1.4.13); the dot keeps its focus.
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setTip(null);
+        }}
         className="flex max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {numbers.map((n) => {

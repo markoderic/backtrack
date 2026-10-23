@@ -96,6 +96,15 @@ describe("SlideStrip", () => {
       expect(tip()).toBeNull();
     });
 
+    it("Esc puts the tooltip away and leaves focus on the dot", () => {
+      strip({ live: 12, viewing: 12 });
+      act(() => item(4).focus());
+      expect(tip()).not.toBeNull();
+      fireEvent.keyDown(item(4), { key: "Escape" });
+      expect(tip()).toBeNull();
+      expect(item(4)).toHaveFocus();
+    });
+
     it("a finger tap does not leave a tooltip behind", () => {
       strip({ live: 12, viewing: 12 });
       fireEvent.pointerEnter(item(4), { pointerType: "touch" });

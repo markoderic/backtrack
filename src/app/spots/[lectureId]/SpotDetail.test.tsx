@@ -170,6 +170,18 @@ describe("SpotDetail: every button on screen", () => {
     for (const room of ["[--spot-room:352px]", "sm:[--spot-room:300px]", "lg:[--spot-room:236px]"]) expect(main.className).toContain(room);
   });
 
+  it("while a note is being written, keeps more room under the slide so Save note and Cancel stay on screen", () => {
+    show();
+    const main = screen.getByRole("main");
+    expect(main).not.toHaveAttribute("data-editing");
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+    expect(main).toHaveAttribute("data-editing");
+    for (const room of ["data-editing:[--spot-room:532px]", "sm:data-editing:[--spot-room:488px]", "lg:data-editing:[--spot-room:236px]"])
+      expect(main.className).toContain(room);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(main).not.toHaveAttribute("data-editing");
+  });
+
   it("puts the buttons right after the slide (beside it on a wide screen), before the note", () => {
     const { container } = show({ spot: { ...lostSpot, note: "a long note" } });
     const actions = container.querySelector("[data-spot-actions]") as HTMLElement;

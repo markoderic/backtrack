@@ -90,8 +90,12 @@ const NO_HIGHLIGHT = { hl_x: null, hl_y: null, hl_w: null, hl_h: null };
  * screen (header 64, top 8, the number and title 76, gaps, the arrows row 44, the buttons, bottom 24).
  * Phone: the buttons take two rows (352). From 640: one row (300). From 1024 the buttons sit beside
  * the slide, so only the header, title and arrows count (236).
+ * While a note is being written, its label, 3 line field and Save note / Cancel row (about 180 px)
+ * come under the slide too, so the slide gets smaller and Save note stays on screen.
  */
-const SPOT_ROOM = "[--spot-room:352px] sm:[--spot-room:300px] lg:[--spot-room:236px]";
+const SPOT_ROOM =
+  "[--spot-room:352px] sm:[--spot-room:300px] lg:[--spot-room:236px] " +
+  "data-editing:[--spot-room:532px] sm:data-editing:[--spot-room:488px] lg:data-editing:[--spot-room:236px]";
 const WIDE = 16 / 9;
 
 /** 36 px icon buttons (a 44 px hit area on a touch screen), for browsing the slides. */
@@ -355,7 +359,10 @@ export function SpotDetail({
         </button>
       </header>
 
-      <main className={`mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-6 pt-2 lg:max-w-300 ${SPOT_ROOM}`}>
+      <main
+        data-editing={editing ? "" : undefined}
+        className={`mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-6 pt-2 lg:max-w-300 ${SPOT_ROOM}`}
+      >
         <div className="flex min-w-0 items-center gap-4">
           <span aria-hidden data-spot-number="" className={`shrink-0 type-number-l ${lost ? "text-lost" : "text-ink"}`}>
             {spot.slideNumber}
