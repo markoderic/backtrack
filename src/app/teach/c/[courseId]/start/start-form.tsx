@@ -9,6 +9,7 @@ import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary"
 import { Icon } from "@/components/Icon";
 import { fieldClass, labelClass } from "../../../ui";
 import { cleanupOrphanUploads } from "../../../lecture-actions";
+import { SlideUploads } from "./slideUploads";
 
 const NAME_MAX = 120;
 const UPLOAD_PARALLEL = 4;
@@ -19,9 +20,11 @@ class StartError extends Error {}
 
 /**
  * One picked PDF. Its pages are turned into images as soon as it is picked (Figma 33:1014, "so
- * the progress is real"); Start lecture waits until every PDF is ready, then only uploads those
- * same images (nothing is rendered twice) and creates the lecture in one database call (D5). A
- * second PDF ("Add another PDF") adds its pages after the first one's, in the order shown.
+ * the progress is real"), and each image is uploaded in the background as soon as it is made
+ * (Marko, hand test 2), with the progress on the file's card. Start lecture then only waits for
+ * any upload still running (and shows it) and creates the lecture in one database call (D5: no
+ * live lecture with a missing slide). A second PDF ("Add another PDF") adds its pages after the
+ * first one's, in the order shown.
  */
 type Part = {
   key: number;
@@ -30,8 +33,6 @@ type Part = {
     | { status: "preparing"; done: number; total: number }
     | { status: "ready"; blobs: Blob[]; firstLines: string[] };
 };
-
-type Upload = { done: number; total: number } | null;
 
 /** Where the next file the picker hands back goes: after the others, or in place of one. */
 type PickTarget = { mode: "add" } | { mode: "replace"; key: number };
@@ -44,10 +45,24 @@ function fileSize(bytes: number): string {
 
 const slidesWord = (n: number) => `${n} ${n === 1 ? "slide" : "slides"}`;
 
-function ProgressBar({ done, total, label, className = "w-full" }: { done: number; total: number; label: string; className?: string }) {
+function ProgressBar({
+  done,
+  total,
+  label,
+  text,
+  className = "w-full",
+}: {
+  done: number;
+  total: number;
+  label: string;
+  /** The words for the value, when the numbers alone are not what it means. */
+  text?: string;
+  className?: string;
+}) {
   const part = total > 0 ? Math.min(1, done / total) : 0;
   // Indeterminate (no value) until the page count is known.
-  const value = total > 0 ? { "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done } : {};
+  const value =
+    total > 0 ? { "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done, "aria-valuetext": text } : {};
   return (
     <div
       role="progressbar"
@@ -85,8 +100,31 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const [parts, setParts] = useState<Part[]>([]);
   const [name, setName] = useState("");
   const [starting, setStarting] = useState(false);
-  const [upload, setUpload] = useState<Upload>(null);
   const [error, setError] = useState<string | null>(null);
+  // The background uploads. They live in state (made once), and tell the form to draw again.
+  const [, setUploadTick] = useState(0);
+  const [uploads] = useState(
+    () =>
+      new SlideUploads(
+        {
+          upload: async (path, image) => {
+            const { error: uploadError } = await createBrowserSupabase()
+              .storage.from("slides")
+              .upload(path, image, { contentType: image.type, upsert: false });
+            if (uploadError) throw new UploadError(uploadError.message);
+          },
+          remove: (paths) => {
+            try {
+              void Promise.resolve(createBrowserSupabase().storage.from("slides").remove(paths)).catch(() => {});
+            } catch {
+              // Left for the day old cleanup.
+            }
+          },
+        },
+        () => setUploadTick((n) => n + 1),
+        UPLOAD_PARALLEL,
+      ),
+  );
   const [dragging, setDragging] = useState(false);
   const touchedName = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -124,15 +162,15 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     started.current = false;
     alive.current.clear();
     replaced.current.clear();
+    uploads.reset();
     touchedName.current = false;
     setParts([]);
     setStarting(false);
-    setUpload(null);
     setError(null);
     setDragging(false);
     setName(defaultLectureName(existingCount, new Date()));
     router.refresh();
-  }, [existingCount, router]);
+  }, [existingCount, router, uploads]);
 
   // Hidden (Next keeps the page alive) or gone: every render still going stops at its next page,
   // so a long PDF does not keep the laptop busy for a page nobody sees. Shown again with a PDF that
@@ -154,19 +192,38 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     setParts((list) => list.map((p) => (p.key === key ? { ...p, prep } : p)));
 
   async function prepare(key: number, file: File) {
+    // A fresh run: anything an earlier run of this PDF put up (a render stopped when the page was
+    // hidden) goes, and its pages go up again as they are made.
+    uploads.begin(key);
     try {
-      const result = await renderPdf(file, (done, total) => {
-        // Throwing here stops the render at this page (renderPdf cleans up in its finally).
-        if (!alive.current.has(key)) throw new Error("cancelled");
-        update(key, { status: "preparing", done, total });
-      });
+      const result = await renderPdf(
+        file,
+        (done, total) => {
+          // Throwing here stops the render at this page (renderPdf cleans up in its finally).
+          if (!alive.current.has(key)) throw new Error("cancelled");
+          uploads.setTotal(key, total);
+          update(key, { status: "preparing", done, total });
+        },
+        // Each page uploads as soon as it is made, while the next one renders.
+        (image, index) => {
+          if (alive.current.has(key)) uploads.add(key, index, image);
+        },
+      );
       if (!alive.current.has(key)) return;
       alive.current.delete(key);
+      uploads.setTotal(key, result.blobs.length);
+      // Any page not handed over yet goes up now (added once; the rest are already on their way).
+      result.blobs.forEach((image, index) => uploads.add(key, index, image));
       update(key, { status: "ready", blobs: result.blobs, firstLines: result.firstLines });
+      // A Replace that worked: the PDF it replaced, and its images, go.
+      const before = replaced.current.get(key);
+      if (before) uploads.discard(before.key);
       replaced.current.delete(key);
     } catch (e) {
       if (!alive.current.has(key)) return;
       alive.current.delete(key);
+      // A file that could not be read: whatever it put up goes.
+      uploads.discard(key);
       // A Replace that could not be read puts the PDF it was replacing back in its place
       // (batch A review M3), instead of leaving the teacher with neither.
       const old = replaced.current.get(key);
@@ -214,7 +271,11 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
 
   function removePart(key: number) {
     alive.current.delete(key);
+    // Its images go, and so do those of the PDF it was replacing, if that one was still waiting.
+    const before = replaced.current.get(key);
+    if (before) uploads.discard(before.key);
     replaced.current.delete(key);
+    uploads.discard(key);
     setParts((list) => list.filter((p) => p.key !== key));
     setError(null);
   }
@@ -223,56 +284,59 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const readyParts = ready ? (parts.map((p) => p.prep) as Extract<Part["prep"], { status: "ready" }>[]) : [];
   const totalSlides = readyParts.reduce((n, p) => n + p.blobs.length, 0);
   const thumbs = readyParts.flatMap((p) => p.blobs).slice(0, THUMBS);
+  const keys = parts.map((p) => p.key);
+  // Every page of every PDF is in storage: Start lecture only has to create the lecture.
+  const uploaded = ready && uploads.complete(keys);
+  // All the uploads together, for the line next to Start lecture while it waits for them.
+  const sent = parts.reduce(
+    (sum, p) => {
+      const u = uploads.progress(p.key);
+      const total = p.prep.status === "ready" ? p.prep.blobs.length : u.total;
+      return { done: sum.done + Math.min(u.done, total), total: sum.total + total };
+    },
+    { done: 0, total: 0 },
+  );
+
+  /** One D5 start: the slides in the order shown, each with the path its image went to. */
+  function slidesForStart() {
+    return readyParts
+      .flatMap((p, i) => {
+        const paths = uploads.paths(keys[i]);
+        return p.blobs.map((_, page) => ({ image_path: paths[page], first_line: p.firstLines[page] ?? "" }));
+      })
+      .map((slide, i) => ({ number: i + 1, ...slide }));
+  }
 
   async function start() {
     if (!ready || starting) return;
     const lectureName = name.trim();
     if (!lectureName) return;
-    // The images made when the PDFs were picked, in order: nothing is rendered again here.
-    const blobs = readyParts.flatMap((p) => p.blobs);
-    const firstLines = readyParts.flatMap((p) => p.blobs.map((_, i) => p.firstLines[i] ?? ""));
+    const startKeys = keys;
 
     setStarting(true);
     setError(null);
     const supabase = createBrowserSupabase();
-    // The images that reached storage, so a start that fails can take them back out.
-    const uploadedPaths: string[] = [];
-    try {
-      const lectureId = crypto.randomUUID();
-      const slides = blobs.map((blob, i) => ({
-        number: i + 1,
-        image_path: `${lectureId}/${i + 1}.${blob.type === "image/webp" ? "webp" : "jpg"}`,
-        first_line: firstLines[i] ?? "",
-      }));
-
-      let next = 0;
-      let uploaded = 0;
-      setUpload({ done: 0, total: blobs.length });
-      const worker = async () => {
-        while (next < blobs.length) {
-          const i = next++;
-          const { error: uploadError } = await supabase.storage
-            .from("slides")
-            .upload(slides[i].image_path, blobs[i], { contentType: blobs[i].type, upsert: false });
-          if (uploadError) throw new UploadError(uploadError.message);
-          uploadedPaths.push(slides[i].image_path);
-          setUpload({ done: ++uploaded, total: blobs.length });
-        }
-      };
-      // One failure stops the others from picking up more work.
-      try {
-        await Promise.all(Array.from({ length: Math.min(UPLOAD_PARALLEL, blobs.length) }, worker));
-      } catch (e) {
-        next = blobs.length;
-        throw e;
-      }
-
-      const { error: rpcError } = await supabase.rpc("start_lecture", {
+    const lectureId = uploads.lectureId;
+    const create = () =>
+      supabase.rpc("start_lecture", {
         p_lecture_id: lectureId,
         p_course_id: courseId,
         p_name: lectureName,
-        p_slides: slides,
+        p_slides: slidesForStart(),
       });
+    try {
+      // The images were made when the PDFs were picked and went up in the background: nothing
+      // is rendered again. Any upload still running is waited for (shown next to the button),
+      // and any that failed is tried once more.
+      if (!(await uploads.settle(startKeys))) throw new UploadError("Some slides did not upload.");
+      let { error: rpcError } = await create();
+      if (rpcError && /missing_images/.test(rpcError.message ?? "")) {
+        // The images are gone from storage (the day old cleanup ran while this form was left
+        // open): they go up again, once, and the lecture is created with those.
+        uploads.redo(startKeys);
+        if (!(await uploads.settle(startKeys))) throw new UploadError("Some slides did not upload.");
+        ({ error: rpcError } = await create());
+      }
       if (rpcError) throw new StartError(rpcError.message);
 
       // Replace, not push: Back from the projector goes to the course (with the live lecture
@@ -280,34 +344,34 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       started.current = true;
       router.replace(`/teach/l/${lectureId}/present`);
     } catch (e) {
-      // No lecture uses these images (start_lecture never made one), so they go back out. Best
-      // effort: anything left is removed by the cleanup a day later. Workers still uploading stop
-      // at their next image; one that lands after this is left for that cleanup too.
-      if (uploadedPaths.length > 0) {
-        void supabase.storage
-          .from("slides")
-          .remove([...uploadedPaths])
-          .catch(() => {});
-      }
+      // The images stay in storage for the next try (Start again only creates the lecture).
+      // A form that is never started is cleared by the day old cleanup.
       if (e instanceof UploadError) setError("Could not upload your slides. Try again.");
-      else if (e instanceof StartError) setError("Could not start the lecture. Try again.");
       else setError("Could not start the lecture. Try again.");
       setStarting(false);
-      setUpload(null);
     }
   }
 
   const preparing = parts.find((p) => p.prep.status === "preparing");
   const preparingText = (prep: { done: number; total: number }) =>
     prep.total > 0 ? `Preparing slide ${prep.done} of ${prep.total}` : "Preparing slides";
-  // The upload after Start, in words: the slides are not prepared again, they are sent.
-  const uploadText = upload ? `Uploading ${upload.done} of ${upload.total}` : "";
+  const uploadText = `Uploading ${sent.done} of ${sent.total}`;
+  // Some images did not go up and nothing is on its way: Start lecture tries them again.
+  const stalled =
+    !starting &&
+    parts.some((p) => {
+      const u = uploads.progress(p.key);
+      return u.failed > 0 && u.pending === 0;
+    });
+  const stalledText = "Some slides did not upload. Start lecture tries again.";
   // One live region that is always there, so screen readers hear the progress as it changes.
   const status =
-    starting && upload
-      ? uploadText
-      : preparing && preparing.prep.status === "preparing"
-        ? preparingText(preparing.prep)
+    preparing && preparing.prep.status === "preparing"
+      ? preparingText(preparing.prep)
+      : ready && !uploaded
+        ? stalled
+          ? stalledText
+          : uploadText
         : ready
           ? `${slidesWord(totalSlides)} ready`
           : "";
@@ -426,14 +490,46 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                       </button>
                     </div>
                   </div>
-                  {part.prep.status === "preparing" && (
-                    <>
-                      <ProgressBar done={part.prep.done} total={part.prep.total} label="Preparing slides" />
-                      <p aria-hidden className="type-small text-secondary">
-                        {preparingText(part.prep)}
-                      </p>
-                    </>
-                  )}
+                  {(() => {
+                    // Preparing, then uploading: one bar that only grows (pages made plus pages
+                    // sent, out of twice the pages), and the words for what is happening now.
+                    const u = uploads.progress(part.key);
+                    if (part.prep.status === "preparing") {
+                      const total = part.prep.total;
+                      return (
+                        <>
+                          <ProgressBar
+                            done={part.prep.done + Math.min(u.done, total)}
+                            total={total * 2}
+                            label="Preparing slides"
+                            text={preparingText(part.prep)}
+                          />
+                          <p aria-hidden className="type-small text-secondary">
+                            {preparingText(part.prep)}
+                          </p>
+                        </>
+                      );
+                    }
+                    const total = part.prep.blobs.length;
+                    if (u.done >= total || starting) return null;
+                    if (u.failed > 0 && u.pending === 0) {
+                      return (
+                        <p data-testid="upload-stalled" className="flex items-center gap-2 type-small text-ink">
+                          <Icon name="alert" size={18} />
+                          {stalledText}
+                        </p>
+                      );
+                    }
+                    const text = `Uploading ${u.done} of ${total}`;
+                    return (
+                      <>
+                        <ProgressBar done={total + u.done} total={total * 2} label={`Uploading ${part.file.name}`} text={text} />
+                        <p aria-hidden className="type-small text-secondary">
+                          {text}
+                        </p>
+                      </>
+                    );
+                  })()}
                 </li>
               ))}
             </ol>
@@ -457,7 +553,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                   </div>
                 )}
                 <p aria-hidden className="type-small text-secondary">
-                  {slidesWord(totalSlides)} ready
+                  {uploaded ? `${slidesWord(totalSlides)} ready` : slidesWord(totalSlides)}
                 </p>
               </div>
             )}
@@ -490,10 +586,10 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
         <ButtonPrimary type="submit" disabled={!ready || starting || name.trim() === ""} className="w-auto!">
           Start lecture
         </ButtonPrimary>
-        {starting && upload && (
-          // The prepared slides are being sent, not prepared again: say so next to the button.
+        {starting && !uploaded && (
+          // Start waits for the uploads still running (D5), and says so next to the button.
           <div className="flex min-w-0 flex-1 basis-56 animate-fade-in items-center gap-3">
-            <ProgressBar done={upload.done} total={upload.total} label="Uploading slides" className="w-40 shrink-0" />
+            <ProgressBar done={sent.done} total={sent.total} label="Uploading slides" className="w-40 shrink-0" />
             <p aria-hidden className="type-small whitespace-nowrap text-secondary">
               {uploadText}
             </p>

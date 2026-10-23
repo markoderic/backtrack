@@ -90,6 +90,16 @@ describe("renderPdf", () => {
     expect(destroy).toHaveBeenCalled();
   });
 
+  it("hands each page's image to onPage as soon as it is made, in order, before that page's progress", async () => {
+    getDocument.mockReturnValue({ promise: Promise.resolve(fakeDoc(["One", "Two", "Three"])), destroy: vi.fn(async () => {}) });
+    const order: string[] = [];
+    const onPage = vi.fn((_image: Blob, i: number) => order.push(`page ${i}`));
+    const result = await renderPdf(pdfFile(), (done) => order.push(`progress ${done}`), onPage);
+    expect(onPage.mock.calls.map((c) => c[0])).toEqual(result.blobs);
+    expect(onPage.mock.calls.map((c) => c[1])).toEqual([0, 1, 2]);
+    expect(order).toEqual(["page 0", "progress 1", "page 1", "progress 2", "page 2", "progress 3"]);
+  });
+
   it("renders each page 1920 px wide", async () => {
     getDocument.mockReturnValue({ promise: Promise.resolve(fakeDoc(["One"])), destroy: vi.fn() });
     await renderPdf(pdfFile(), () => {});

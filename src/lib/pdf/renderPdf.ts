@@ -50,11 +50,13 @@ function translate(error: unknown): unknown {
 
 /**
  * Renders every page of a PDF to an image in the browser, 1920 px wide, plus the
- * first line of text on each page. Calls onProgress(done, total) after each page.
+ * first line of text on each page. Calls onPage(image, index) as soon as each page's image
+ * is made (so it can be uploaded while the next one renders), then onProgress(done, total).
  */
 export async function renderPdf(
   file: File,
   onProgress: (done: number, total: number) => void,
+  onPage?: (image: Blob, index: number) => void,
 ): Promise<{ blobs: Blob[]; firstLines: string[] }> {
   if (!(await startsWithPdfMagic(file))) throw new NotPdfError();
 
@@ -85,7 +87,9 @@ export async function renderPdf(
       canvas.height = Math.round(viewport.height);
 
       await page.render({ canvas, viewport }).promise;
-      blobs.push(await exportPage(canvas, webpWorks));
+      const image = await exportPage(canvas, webpWorks);
+      blobs.push(image);
+      onPage?.(image, n - 1);
 
       const content = await page.getTextContent();
       const items = content.items.filter((item): item is typeof item & TextItem => "str" in item && "transform" in item);
