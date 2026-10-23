@@ -16,14 +16,18 @@ function CourseNameForm({
   autoFocus,
   onClose,
   onAdded,
+  inputRef,
 }: {
   id?: string;
   canClose: boolean;
   autoFocus: boolean;
   onClose: () => void;
   onAdded?: () => void;
+  inputRef?: React.Ref<HTMLInputElement>;
 }) {
   const [name, setName] = useState("");
+  // Its own id: Next keeps Settings and the dashboard mounted (one hidden), each with this field.
+  const fieldId = useId();
   const [pending, startTransition] = useTransition();
 
   function submit(e: React.FormEvent) {
@@ -39,12 +43,13 @@ function CourseNameForm({
 
   return (
     <form id={id} onSubmit={submit} className="flex w-full max-w-[720px] animate-pop-in flex-col gap-2 pt-4">
-      <label htmlFor="new-course" className={labelClass}>
+      <label htmlFor={fieldId} className={labelClass}>
         Course name
       </label>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <input
-          id="new-course"
+          ref={inputRef}
+          id={fieldId}
           value={name}
           maxLength={120}
           autoFocus={autoFocus}
@@ -102,11 +107,12 @@ export function AddCourseForm({ startOpen = false }: { startOpen?: boolean }) {
  * The dashboard's "Courses" heading with a "+" icon button in the top right corner (batch H,
  * Marko: "just a plus button in a corner"), named "Add a course" for screen readers. It opens the
  * course name field under the heading; Add course or Cancel closes it again with the keyboard back
- * on "+". With no courses yet the field is open from the start (and "+" closes nothing then).
+ * on "+". With no courses yet the field is open from the start (and "+" puts the keyboard in it).
  */
 export function CoursesHeading({ startOpen = false }: { startOpen?: boolean }) {
   const [open, setOpen] = useState(startOpen);
   const plus = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLInputElement>(null);
   const refocus = useRef(false);
   const formId = useId();
 
@@ -135,7 +141,7 @@ export function CoursesHeading({ startOpen = false }: { startOpen?: boolean }) {
           data-testid="add-course-plus"
           onClick={() => {
             if (!open) setOpen(true);
-            else if (startOpen) document.getElementById("new-course")?.focus();
+            else if (startOpen) field.current?.focus();
             else close();
           }}
           className={`${buttonSecondaryClass} size-11 shrink-0 px-0!`}
@@ -150,9 +156,9 @@ export function CoursesHeading({ startOpen = false }: { startOpen?: boolean }) {
           canClose={!startOpen}
           autoFocus={!startOpen}
           onClose={close}
-          onAdded={() => {
-            if (!startOpen) close();
-          }}
+          inputRef={field}
+          // Closed again once the course is in (the new card shows it), also after the first one.
+          onAdded={close}
         />
       )}
     </>

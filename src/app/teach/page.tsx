@@ -35,9 +35,14 @@ type DashCourse = { id: string; name: string; details: CourseDetails | null };
 /**
  * The teacher's courses in use, with their color, section and schedule (migration 0018). Newest
  * columns first: with 0019's columns there the new colors and choices can be saved (`options`).
- * Before 0019, and before 0018, those columns are not there: the read is made again without them,
- * and the cards and the Now / Next block leave out what they drive (details null before 0018).
+ * Before 0019, and before 0018, those columns are not there: only then (42703, undefined column)
+ * the read is made again without them, and the cards and the Now / Next block leave out what they
+ * drive (details null before 0018). Any other error is a real failure and is thrown: a passing
+ * hiccup must never make the page offer the old choices for a course that uses the new ones.
  */
+/** Postgres "undefined column": the migration that adds it has not run yet. */
+const MISSING_COLUMN = "42703";
+
 async function readCourses(supabase: Supabase): Promise<{ courses: DashCourse[]; options: boolean }> {
   const read = (columns: string) =>
     supabase.from("courses").select(columns).eq("archived", false).order("created_at");
@@ -54,6 +59,7 @@ async function readCourses(supabase: Supabase): Promise<{ courses: DashCourse[];
       }));
       return { courses, options };
     }
+    if (full.error.code !== MISSING_COLUMN) throw new Error(full.error.message);
   }
   const plain = await read("id, name");
   if (plain.error) throw new Error(plain.error.message);

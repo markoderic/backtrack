@@ -83,6 +83,31 @@ export function colorPaint(color: unknown): { className: string; style?: React.C
   return { className: "bg-hairline" };
 }
 
+function hslToHex(h: number, sat: number, light: number): `#${string}` {
+  const s = sat / 100;
+  const l = light / 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const hex = (x: number) =>
+    Math.round(x * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${hex(f(0))}${hex(f(8))}${hex(f(4))}`;
+}
+
+/** Columns of the in-app color picker's grid: one per hue. */
+export const PICKER_HUES = 12;
+
+/**
+ * The in-app color picker's swatches (batch H, in place of the system color panel): twelve hues
+ * around the wheel, each as a deeper and a lighter shade, as #rrggbb values a teacher can pick.
+ * Computed, so they are the teacher's data like a typed color, not colors of the app.
+ */
+export const PICKER_SWATCHES: `#${string}`[] = [42, 62].flatMap((light) =>
+  Array.from({ length: PICKER_HUES }, (_, i) => hslToHex(i * 30, light === 42 ? 62 : 58, light)),
+);
+
 export function colorLabel(color: unknown): string | null {
   if (isPresetColor(color)) return COURSE_COLORS.find((c) => c.value === color)!.label;
   const hex = normalizeHex(color);

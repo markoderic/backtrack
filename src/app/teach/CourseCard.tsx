@@ -59,18 +59,6 @@ export function CourseCard({
           className={`w-1.5 shrink-0 ${paint.className}`}
           style={paint.style}
         />
-        {/* Above the card's link, in the top right corner. */}
-        <div className="absolute top-2 right-2 z-10">
-          <CourseMenu
-            courseId={id}
-            name={name}
-            code={code}
-            details={details}
-            options={options}
-            onArchive={onArchive}
-            announce={announce}
-          />
-        </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1 py-5 pr-5 pl-4">
           {/* Room on the right for the ⋯ button. */}
           <div className="flex min-w-0 items-baseline gap-3 pr-10">
@@ -117,6 +105,18 @@ export function CourseCard({
               </Link>
             )}
           </div>
+        </div>
+        {/* Above the card's link, in the top right corner; after the name in reading and Tab order. */}
+        <div className="absolute top-2 right-2 z-10">
+          <CourseMenu
+            courseId={id}
+            name={name}
+            code={code}
+            details={details}
+            options={options}
+            onArchive={onArchive}
+            announce={announce}
+          />
         </div>
       </article>
     </li>

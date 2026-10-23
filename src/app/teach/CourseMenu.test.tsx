@@ -189,7 +189,11 @@ describe("CourseMenu: Edit details in a dialog", () => {
     open();
     const dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
-    fireEvent.change(within(dialog).getByLabelText("Custom color"), { target: { value: "#c0ffee" } });
+    // The app's own picker: a popover outside the dialog's box, still reachable.
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Pick a color/ }));
+    fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "#c0ffee" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("dialog", { name: "Details for IMS 452" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Wednesday" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -286,3 +290,41 @@ describe("CourseMenu: Rename in a dialog", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });
+
+describe("CourseMenu: the dialog and the page", () => {
+  it("the page behind does not scroll while a dialog is open", () => {
+    show();
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.keyDown(screen.getByLabelText("Course name"), { key: "Escape" });
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("Next hiding the page closes an open dialog; shown again it is closed and pulls no focus", () => {
+    const view = (mode: "visible" | "hidden") => (
+      <Activity mode={mode}>
+        <CourseMenu {...props} onArchive={onArchive as never} announce={announce as never} />
+      </Activity>
+    );
+    const { rerender } = render(view("visible"));
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit details" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    rerender(view("hidden"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    rerender(view("visible"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(trigger()).not.toHaveFocus();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("a failed Archive puts the keyboard back on ⋯", async () => {
+    onArchive.mockResolvedValue(false);
+    show();
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    await waitFor(() => expect(trigger()).toHaveFocus());
+  });
+});
+

@@ -22,11 +22,15 @@ export type GridCourse = {
 
 type Note = { text: string; undo?: GridCourse };
 
+/** Undo for an archive goes away after this long, like the student's Undo (batch G, Marko). */
+export const UNDO_MS = 10_000;
+
 /**
  * The course cards on the dashboard, and one status line above them for what the cards' ⋯ menus
  * did: "Saved the details for IMS 452.", "Renamed to ...", or "Archived IMS 452." with Undo.
  * Archive hides the card at once (the server list catches up with a refresh) and puts the keyboard
- * on Undo; Undo brings the card back (from the copy kept here until the server list has it again)
+ * on Undo. Undo goes after 10 s (Settings' Unarchive stays the way back); if the keyboard was on it,
+ * it goes to the status line. Undo brings the card back (from the copy kept here until the server list has it again)
  * and puts the keyboard back on its ⋯. A failed archive leaves the card and says so.
  */
 export function CourseGrid({ courses, options }: { courses: GridCourse[]; options: boolean }) {
@@ -37,14 +41,23 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
   const [note, setNote] = useState<Note | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   // Where the keyboard goes after the next render (the Undo button, or a card's ⋯ again).
-  const focusNext = useRef<{ to: "undo" } | { to: "menu"; id: string } | null>(null);
+  const focusNext = useRef<{ to: "undo" } | { to: "status" } | { to: "menu"; id: string } | null>(null);
+  const statusLine = useRef<HTMLDivElement>(null);
   const undoButton = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
-  // Messages without Undo go after a few seconds; an Undo stays until something else happens.
+  // Messages go after a few seconds; an Undo after 10 s, leaving its words for a few seconds more.
   useEffect(() => {
-    if (!note || note.undo) return;
-    const t = setTimeout(() => setNote(null), STATUS_MS);
+    if (!note) return;
+    const t = setTimeout(
+      () => {
+        if (note.undo) {
+          if (document.activeElement === undoButton.current) focusNext.current = { to: "status" };
+          setNote({ text: note.text });
+        } else setNote(null);
+      },
+      note.undo ? UNDO_MS : STATUS_MS,
+    );
     return () => clearTimeout(t);
   }, [note]);
 
@@ -53,6 +66,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
     if (!f) return;
     focusNext.current = null;
     if (f.to === "undo") undoButton.current?.focus();
+    else if (f.to === "status") statusLine.current?.focus();
     else list.current?.querySelector<HTMLElement>(`[data-course-menu="${f.id}"]`)?.focus();
   });
 
@@ -111,7 +125,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div ref={statusLine} tabIndex={-1} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-sm outline-none">
         {/* Always in the page so it is announced; the visible line is the same words. */}
         <p role="status" data-testid="courses-status" className="type-small text-secondary empty:sr-only">
           {note?.text ?? ""}

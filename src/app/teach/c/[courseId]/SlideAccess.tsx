@@ -8,6 +8,7 @@ import { buttonPrimaryInlineClass } from "@/components/ButtonPrimary";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { formatLectureDate } from "@/lib/lectureDate";
 import {
+  ACCESS_CHOICES,
   ACCESS_DAYS_MAX,
   accessChoices,
   choiceOf,
@@ -165,6 +166,13 @@ export function SlideAccess({
   }
 
   const choices = accessChoices(options);
+  // The saved custom date has passed: students lose each lecture's slides as soon as class ends.
+  const ended =
+    saved.access === "custom_date" &&
+    access === "custom_date" &&
+    until === saved.until &&
+    /^\d{4}-\d{2}-\d{2}$/.test(saved.until) &&
+    saved.until < today;
   const invalid = (at: "end" | "until" | "days") =>
     errorAt === at ? { "aria-invalid": true as const, "aria-describedby": errorId } : {};
 
@@ -211,7 +219,13 @@ export function SlideAccess({
             />
           </>
         )}
-        {choice === "custom" && (
+        {ended && (
+          <p data-testid="access-ended" className="flex items-center gap-2 type-small text-ink">
+            <Icon name="alert" size={18} />
+            Ended {formatLectureDate(saved.until)}. Students can&rsquo;t see slides after class.
+          </p>
+        )}
+        {choice === "custom" && options && (
           <fieldset
             data-testid="custom-access"
             className="flex basis-full animate-pop-in flex-col gap-3 py-1"
@@ -357,7 +371,10 @@ function AccessPicker({
         ? "A date, or a number of days after each class"
         : null;
 
-  const current = choices.find((c) => c.value === value) ?? choices[0];
+  // A stored choice this page can not offer (a new one while 0019's columns could not be read)
+  // still shows its own name, never the first choice in the list.
+  const current =
+    choices.find((c) => c.value === value) ?? ACCESS_CHOICES.find((c) => c.value === value) ?? choices[0];
 
   function pick(next: AccessChoice) {
     onPick(next);
@@ -429,13 +446,21 @@ function AccessPicker({
                   role="option"
                   tabIndex={-1}
                   aria-selected={selected}
+                  aria-labelledby={`${ids}-${c.value}-label`}
+                  aria-describedby={sub ? `${ids}-${c.value}-sub` : undefined}
                   data-value={c.value}
                   onClick={() => pick(c.value)}
                   className={optionClass}
                 >
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="type-small-strong text-ink">{c.label}</span>
-                    {sub && <span className="type-caption text-secondary">{sub}</span>}
+                    <span id={`${ids}-${c.value}-label`} className="type-small-strong text-ink">
+                      {c.label}
+                    </span>
+                    {sub && (
+                      <span id={`${ids}-${c.value}-sub`} className="type-caption text-secondary">
+                        {sub}
+                      </span>
+                    )}
                   </span>
                   {selected && <Icon name="check" size={18} />}
                 </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { StudentAccess } from "@/lib/slideAccess";
 
 const h = vi.hoisted(() => ({
@@ -297,3 +297,44 @@ describe("SlideAccess: saving", () => {
     expect(save()).toBeDisabled();
   });
 });
+
+describe("SlideAccess: batch H fix round 1", () => {
+  it.each([
+    ["custom_days", "Custom"],
+    ["custom_date", "Custom"],
+    ["7d", "A week after each class"],
+  ] as const)("a stored %s the page can not offer (columns not read) still shows its own name, not the first choice", (access, label) => {
+    show(access);
+    expect(trigger()).toHaveAccessibleName(`Students can see slides until ${label}`);
+    // No made-up custom values, and nothing to save.
+    expect(screen.queryByRole("group", { name: "Custom" })).toBeNull();
+    expect(save()).toBeDisabled();
+  });
+
+  it("a custom date that has passed says so next to the button", () => {
+    show("custom_date", null, { options: true, accessUntil: "2026-10-20" });
+    expect(screen.getByTestId("access-ended")).toHaveTextContent("Ended Oct 20. Students can’t see slides after class.");
+  });
+
+  it("no such line for a date still ahead, for other choices, or once another date is typed", () => {
+    show("custom_date", null, { options: true, accessUntil: "2026-10-22" });
+    expect(screen.queryByTestId("access-ended")).toBeNull();
+    cleanup();
+    show("custom_date", null, { options: true, accessUntil: "2026-10-20" });
+    fireEvent.change(screen.getByLabelText("Last day students can see the slides"), { target: { value: "2026-12-01" } });
+    expect(screen.queryByTestId("access-ended")).toBeNull();
+    cleanup();
+    show("semester", "2026-10-20");
+    expect(screen.queryByTestId("access-ended")).toBeNull();
+  });
+
+  it("each option is named by its label, with the date or hint as its description", () => {
+    show("semester", null, { options: true });
+    fireEvent.click(trigger());
+    const semester = within(list()!).getAllByRole("option")[0];
+    expect(semester).toHaveAccessibleName("End of semester");
+    expect(semester).toHaveAccessibleDescription("Dec 18");
+    expect(within(list()!).getAllByRole("option")[4]).toHaveAccessibleDescription("A date, or a number of days after each class");
+  });
+});
+

@@ -175,7 +175,11 @@ export function CourseMenu({ courseId, name, code, details, options, onArchive, 
               type="button"
               onClick={() => {
                 close(false);
-                void onArchive();
+                // On success the list moves the keyboard to Undo; on failure it stays on ⋯ (the
+                // card stays and the list says why).
+                void onArchive().then((ok) => {
+                  if (!ok) trigger.current?.focus();
+                });
               }}
               className={itemClass}
             >

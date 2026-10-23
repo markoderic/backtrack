@@ -49,6 +49,30 @@ export function Dialog({
     }
   }, [open, returnFocusTo]);
 
+  // While open the page behind does not scroll; and Next hiding the page (Back, Forward) closes the
+  // dialog, so it never comes back open on its own (the menus do the same, usePopup).
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
+  useEffect(() => {
+    if (!open) return;
+    const body = document.body.style;
+    const before = body.overflow;
+    body.overflow = "hidden";
+    return () => {
+      body.overflow = before;
+    };
+  }, [open]);
+  useEffect(
+    () => () => {
+      // Closed by the page going away, not by the teacher: the keyboard is not pulled anywhere.
+      wasOpen.current = false;
+      closeRef.current();
+    },
+    [],
+  );
+
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === "Escape") {
       // Esc in a time or color field belongs to the field (it closes the browser's own picker).

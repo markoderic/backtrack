@@ -166,7 +166,9 @@ export async function CourseBody({
   ];
   let read = await readCourse(columnSets[0]);
   for (const columns of columnSets.slice(1)) {
-    if (!read.error || read.error.code === "22P02") break;
+    // Only a missing column (42703: that migration has not run yet) means "try without it". A
+    // malformed uuid (22P02) or any other error stops here and is handled below.
+    if (!read.error || read.error.code !== "42703") break;
     read = await readCourse(columns);
   }
   const { error } = read;

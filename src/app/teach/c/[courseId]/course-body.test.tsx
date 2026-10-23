@@ -526,4 +526,16 @@ describe("CourseBody: batch H (0019 options, spacing)", () => {
     expect(form.split(" ")).not.toContain("pt-8");
     expect(html).not.toMatch(/<div class="pt-12"><form/);
   });
+
+  it("falls back only when a column is missing (42703); any other error is thrown, not hidden", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    await expect(CourseBody({ params })).rejects.toThrow("statement timeout");
+    expect(selectCalls.filter(([t]) => t === "courses")).toHaveLength(1);
+    selectCalls.length = 0;
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
+      .mockResolvedValueOnce({ data: null, error: { message: "fetch failed" } });
+    await expect(CourseBody({ params })).rejects.toThrow("fetch failed");
+    expect(selectCalls.filter(([t]) => t === "courses")).toHaveLength(2);
+  });
 });

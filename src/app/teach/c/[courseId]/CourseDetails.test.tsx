@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { CourseDetails } from "@/lib/courseDetails";
 
 const h = vi.hoisted(() => ({
@@ -123,18 +123,35 @@ describe("CourseDetailsEditor", () => {
     expect(document.querySelector(".bg-lost")).toBeNull();
   });
 
-  it("after 0019: Custom opens a color picker and a hex field, and saves the color as lowercase #rrggbb", async () => {
+  const picker = () => screen.getByRole("button", { name: /^Pick a color/ });
+  const panel = () => screen.queryByRole("dialog", { name: "Pick a custom color" });
+  const swatches = () => within(screen.getByRole("group", { name: "Colors" })).getAllByRole("button");
+
+  it("after 0019: Custom opens a picker of the app's own (no system color panel): 24 swatches and the hex field", async () => {
     showWith(set, true);
     edit();
-    expect(screen.queryByLabelText("Pick a color")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Pick a color/ })).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Custom" }));
-    const picker = screen.getByLabelText("Pick a color") as HTMLInputElement;
-    expect(picker.type).toBe("color");
-    fireEvent.change(picker, { target: { value: "#c0ffee" } });
-    expect(screen.getByLabelText("Custom color")).toHaveValue("#c0ffee");
-    // The chip shows the picked color.
-    expect((document.querySelector('[data-swatch="custom"]') as HTMLElement).style.backgroundColor).toBe("rgb(192, 255, 238)");
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+    expect(picker()).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(picker());
+    expect(picker()).toHaveAttribute("aria-expanded", "true");
+    expect(swatches()).toHaveLength(24);
+    for (const b of swatches()) expect(b.getAttribute("aria-label")).toMatch(/^#[0-9a-f]{6}$/);
+    expect(new Set(swatches().map((b) => b.getAttribute("aria-label"))).size).toBe(24);
+    // A swatch picks the color, closes the popover and puts the keyboard back on the button.
+    const third = swatches()[2];
+    const hex = third.getAttribute("aria-label")!;
+    fireEvent.click(third);
+    expect(panel()).toBeNull();
+    expect(picker()).toHaveFocus();
+    expect(picker()).toHaveAccessibleName(`Pick a color, now ${hex}`);
+    expect((document.querySelector('[data-swatch="custom"]') as HTMLElement).style.backgroundColor).not.toBe("");
+    // The hex field, typed in any case, is saved lowercase.
+    fireEvent.click(picker());
+    expect(within(panel()!).getByRole("button", { name: hex })).toHaveAttribute("aria-pressed", "true");
     fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "#2F6DB5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     save();
     await waitFor(() => expect(h.refresh).toHaveBeenCalled());
     expect(h.updates).toEqual([
@@ -142,13 +159,63 @@ describe("CourseDetailsEditor", () => {
     ]);
   });
 
-  it("after 0019: a hex without the # is taken; a bad one is refused and points at the field", () => {
+  it("after 0019: the picker works from the keyboard: arrows in the grid, Tab through the field and Done, Esc back", () => {
+    showWith({ ...set, color: null }, true);
+    edit();
+    fireEvent.click(screen.getByRole("radio", { name: "Custom" }));
+    fireEvent.click(picker());
+    const grid = screen.getByRole("group", { name: "Colors" });
+    expect(swatches()[0]).toHaveFocus();
+    expect(swatches().filter((b) => b.tabIndex === 0)).toHaveLength(1);
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    expect(swatches()[1]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
+    expect(swatches()[13]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowLeft" });
+    expect(swatches()[12]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "End" });
+    expect(swatches()[23]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowUp" });
+    expect(swatches()[11]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "Home" });
+    expect(swatches()[0]).toHaveFocus();
+    fireEvent.keyDown(swatches()[0], { key: "Tab" });
+    expect(screen.getByLabelText("Custom color")).toHaveFocus();
+    fireEvent.keyDown(screen.getByLabelText("Custom color"), { key: "Tab" });
+    expect(screen.getByRole("button", { name: "Done" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Done" }), { key: "Tab" });
+    expect(swatches()[0]).toHaveFocus();
+    fireEvent.keyDown(swatches()[0], { key: "Tab", shiftKey: true });
+    expect(screen.getByRole("button", { name: "Done" })).toHaveFocus();
+    // Esc closes the popover only (not the form), back on the button.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Done" }), { key: "Escape" });
+    expect(panel()).toBeNull();
+    expect(picker()).toHaveFocus();
+    expect(screen.getByTestId("course-details-form")).toBeInTheDocument();
+    // Enter in the hex field closes it too.
+    fireEvent.click(picker());
+    fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "#123456" } });
+    fireEvent.keyDown(screen.getByLabelText("Custom color"), { key: "Enter" });
+    expect(panel()).toBeNull();
+    expect(picker()).toHaveAccessibleName("Pick a color, now #123456");
+  });
+
+  it("after 0019: a hex without the # is taken; a bad one is refused and points at the picker", async () => {
     showWith(set, true);
     edit();
     fireEvent.click(screen.getByRole("radio", { name: "Custom" }));
+    fireEvent.click(picker());
+    fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "c0ffee" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(picker()).toHaveAccessibleName("Pick a color, now #c0ffee");
+    fireEvent.click(picker());
     fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "#12g" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     save();
-    expect(screen.getByRole("alert")).toHaveTextContent("Pick a color, or type one like #2f6db5.");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Pick a color, or type one like #2f6db5.");
+    expect(picker()).toHaveAttribute("aria-describedby", alert.id);
+    fireEvent.click(picker());
     expect(screen.getByLabelText("Custom color")).toHaveAttribute("aria-invalid", "true");
     expect(h.updates).toEqual([]);
   });
@@ -158,7 +225,34 @@ describe("CourseDetailsEditor", () => {
     edit();
     expect(screen.getByRole("radio", { name: "Custom" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Custom" })).toHaveFocus();
-    expect(screen.getByLabelText("Custom color")).toHaveValue("#2f6db5");
+    expect(picker()).toHaveAccessibleName("Pick a color, now #2f6db5");
+  });
+
+  it.each([
+    ["a picked color", "#2f6db5" as CourseDetails["color"]],
+    ["a preset from 0019", "pink" as CourseDetails["color"]],
+  ])("a stored color the form can not offer (%s, columns not read) is kept on Save, not cleared", async (_n, color) => {
+    showWith({ ...set, color }, false);
+    edit();
+    const kept = screen.getByRole("radio", { name: "Current color" });
+    expect(kept).toBeChecked();
+    expect(kept).toHaveFocus();
+    expect(screen.queryByRole("radio", { name: "Custom" })).toBeNull();
+    fireEvent.click(day("Tuesday"));
+    save();
+    await waitFor(() => expect(h.refresh).toHaveBeenCalled());
+    expect(h.updates).toEqual([
+      { color, section: "Section B", meet_days: [1, 2, 3, 5], start_minute: 605, end_minute: 660 },
+    ]);
+  });
+
+  it("a stored color the form can not offer can still be changed on purpose", async () => {
+    showWith({ ...set, color: "#2f6db5" }, false);
+    edit();
+    fireEvent.click(screen.getByRole("radio", { name: "Teal" }));
+    save();
+    await waitFor(() => expect(h.updates).toHaveLength(1));
+    expect(h.updates[0]).toMatchObject({ color: "teal" });
   });
 
   it("the days are toggles, Monday to Sunday, with the course's days pressed", () => {
@@ -198,7 +292,7 @@ describe("CourseDetailsEditor", () => {
     expect(h.eqs).toEqual([["id", "c1"]]);
     expect(screen.getByTestId("course-details")).toHaveTextContent("001 · Tue Thu · 1:15–2:35 PM");
     expect(screen.getByRole("status")).toHaveTextContent("Saved.");
-    expect(screen.getByRole("button", { name: "Edit details" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit details" })).toHaveFocus());
   });
 
   it("clearing everything saves empty values", async () => {

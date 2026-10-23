@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({
   select: vi.fn(),
@@ -91,4 +91,39 @@ describe("CourseGrid: Archive from a card's ⋯", () => {
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed to IMS 452 Capstone."));
   });
+
+  it("Undo goes away after 10 s (like the student's Undo); the keyboard moves to the status line, not the page", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<CourseGrid courses={[ims, acc]} options />);
+      archive("IMS 452");
+      await vi.waitFor(() => expect(screen.getByRole("button", { name: "Undo, unarchive IMS 452" })).toHaveFocus());
+      await act(async () => {
+        vi.advanceTimersByTime(9_900);
+      });
+      expect(screen.getByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(screen.queryByRole("button", { name: /^Undo/ })).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent("Archived IMS 452.");
+      expect(document.activeElement).toBe(screen.getByRole("status").parentElement);
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("");
+      expect(cards()).toEqual(["ACC 221"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failed archive keeps the keyboard on the card's ⋯ and shows why", async () => {
+    h.select.mockResolvedValue({ data: null, error: { message: "nope" } });
+    render(<CourseGrid courses={[ims, acc]} options />);
+    archive("IMS 452");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not archive IMS 452.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "More for IMS 452" })).toHaveFocus());
+  });
 });
+

@@ -331,4 +331,25 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     expect(html).not.toMatch(/>Add a course</);
     expect(html.indexOf('aria-label="Add a course"')).toBeLessThan(html.indexOf('data-testid="course-card"'));
   });
+
+  it("falls back only when a column is missing (42703); any other error on the first read is thrown, not hidden", async () => {
+    courses.mockResolvedValueOnce({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    await expect(TeachBody({ searchParams: search })).rejects.toThrow("statement timeout");
+    expect(selects.filter(([t]) => t === "courses")).toHaveLength(1);
+  });
+
+  it("an error other than a missing column on the 0018 read is thrown too", async () => {
+    courses
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
+      .mockResolvedValueOnce({ data: null, error: { code: "PGRST301", message: "upstream broke" } });
+    await expect(TeachBody({ searchParams: search })).rejects.toThrow("upstream broke");
+    expect(selects.filter(([t]) => t === "courses")).toHaveLength(2);
+  });
+
+  it("in each card the course name comes first and the ⋯ last, in reading and Tab order", async () => {
+    courses.mockResolvedValue({ data: [ims], error: null });
+    const card = cards(renderToStaticMarkup(await TeachBody({ searchParams: search })))[0];
+    expect(card.indexOf("<h2")).toBeLessThan(card.indexOf('aria-label="More for IMS 452"'));
+    expect(card.indexOf("Start lecture")).toBeLessThan(card.indexOf('aria-label="More for IMS 452"'));
+  });
 });

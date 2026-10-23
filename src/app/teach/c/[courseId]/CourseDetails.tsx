@@ -9,6 +9,7 @@ import {
   COLOR_BG,
   DAYS,
   SECTION_MAX,
+  colorPaint,
   isPresetColor,
   normalizeHex,
   parseTime,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/courseDetails";
 import { fieldClass, labelClass } from "../../ui";
 import { STATUS_MS } from "../../settings/NameForm";
+import { ColorPicker } from "./ColorPicker";
 
 type ErrorField = "start" | "end" | "days" | "section" | "color";
 
@@ -39,7 +41,8 @@ const chipClass =
 /** The Custom chip before a color is picked: every preset around a circle (globals.css, tokens only). */
 const rainbowClass = "bg-course-rainbow";
 
-type Choice = PresetColor | "custom" | null;
+/** "stored": a color the form can not offer (see below), kept as it is unless another is picked. */
+type Choice = PresetColor | "custom" | "stored" | null;
 
 /** A preset's own color, read from its token, to start Custom from (empty where styles are not loaded). */
 function tokenHex(color: PresetColor): string {
@@ -76,8 +79,14 @@ export function CourseDetailsForm({
 }) {
   const presets = presetColors(options);
   const startHex = normalizeHex(initial.color);
+  // A stored color this form can not offer (a new preset or a picked color while the page could
+  // not read 0019's columns) is kept as it is: never quietly replaced by No color on Save.
+  const offered =
+    initial.color === null ||
+    presets.some((c) => c.value === initial.color) ||
+    (options && startHex !== null && !isPresetColor(initial.color));
   const [choice, setChoice] = useState<Choice>(
-    isPresetColor(initial.color) ? initial.color : startHex && options ? "custom" : null,
+    !offered ? "stored" : isPresetColor(initial.color) ? initial.color : startHex ? "custom" : null,
   );
   const [custom, setCustom] = useState(startHex ?? "");
   const [section, setSection] = useState(initial.section ?? "");
@@ -97,7 +106,6 @@ export function CourseDetailsForm({
   const sectionId = `${id}-section`;
   const startId = `${id}-start`;
   const endId = `${id}-end`;
-  const hexId = `${id}-hex`;
   const errorId = `${id}-error`;
 
   useEffect(() => {
@@ -140,7 +148,7 @@ export function CourseDetailsForm({
     setError(null);
     setSaving(true);
     const next: CourseDetails = {
-      color: choice === "custom" ? pickedHex : choice,
+      color: choice === "custom" ? pickedHex : choice === "stored" ? initial.color : choice,
       section: trimmed || null,
       meetDays: [...days].sort((a, b) => a - b),
       startMinute,
@@ -186,9 +194,9 @@ export function CourseDetailsForm({
       ref={form}
       onSubmit={(e) => void submit(e)}
       onKeyDown={(e) => {
-        // Esc in a time or color field belongs to the field (it closes the browser's own picker).
+        // Esc in a time field belongs to the field (it closes the browser's own picker).
         const t = e.target;
-        if (e.key === "Escape" && !(t instanceof HTMLInputElement && (t.type === "time" || t.type === "color"))) {
+        if (e.key === "Escape" && !(t instanceof HTMLInputElement && t.type === "time")) {
           e.preventDefault();
           e.stopPropagation();
           onCancel();
@@ -218,6 +226,25 @@ export function CourseDetailsForm({
             <span className={`${chipClass} border border-strip bg-surface`} />
             <span className="sr-only">No color</span>
           </label>
+          {!offered && (
+            <label className="group relative flex size-9 cursor-pointer items-center justify-center" title="Current color">
+              <input
+                type="radio"
+                name={`${id}-color`}
+                value="stored"
+                checked={choice === "stored"}
+                onChange={() => pick("stored")}
+                disabled={saving}
+                className="peer sr-only"
+              />
+              <span
+                data-swatch="stored"
+                className={`${chipClass} ${colorPaint(initial.color).className}`}
+                style={colorPaint(initial.color).style}
+              />
+              <span className="sr-only">Current color</span>
+            </label>
+          )}
           {presets.map((c) => (
             <label
               key={c.value}
@@ -259,35 +286,15 @@ export function CourseDetailsForm({
         </div>
         {options && choice === "custom" && (
           <div className="flex animate-pop-in flex-wrap items-center gap-3">
-            <input
-              type="color"
-              aria-label="Pick a color"
-              value={pickedHex ?? "#000000"}
-              disabled={saving}
-              onChange={(e) => {
-                setCustom(e.target.value.toLowerCase());
-                setError(null);
-              }}
-              className="press focus-ring size-11 shrink-0 cursor-pointer rounded-md border border-hairline bg-surface p-1"
-            />
-            <label htmlFor={hexId} className="sr-only">
-              Custom color
-            </label>
-            <input
-              id={hexId}
+            <ColorPicker
               value={custom}
-              maxLength={7}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="#2f6db5"
               disabled={saving}
-              aria-invalid={errorAt === "color" ? true : undefined}
-              aria-describedby={errorAt === "color" ? errorId : undefined}
-              onChange={(e) => {
-                setCustom(e.target.value.trim().toLowerCase());
+              invalid={errorAt === "color"}
+              describedBy={errorAt === "color" ? errorId : undefined}
+              onChange={(v) => {
+                setCustom(v);
                 setError(null);
               }}
-              className={`${fieldClass} w-32!`}
             />
           </div>
         )}

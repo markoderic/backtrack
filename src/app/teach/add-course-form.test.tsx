@@ -113,5 +113,28 @@ describe("CoursesHeading (the dashboard's + button)", () => {
     fireEvent.click(plus());
     expect(screen.getByLabelText("Course name")).toHaveFocus();
   });
+
+  it("Settings' field and the dashboard's field never share an id (Next keeps both pages mounted)", () => {
+    render(
+      <>
+        <AddCourseForm startOpen />
+        <CoursesHeading startOpen />
+      </>,
+    );
+    const fields = screen.getAllByLabelText("Course name");
+    expect(fields).toHaveLength(2);
+    expect(fields[0].id).not.toBe(fields[1].id);
+    expect(document.getElementById("new-course")).toBeNull();
+    // The dashboard's + reaches its own field, not Settings'.
+    fireEvent.click(screen.getByRole("button", { name: "Add a course" }));
+    expect(fields[1]).toHaveFocus();
+  });
+
+  it("with no courses yet, the field closes once the first course is added", async () => {
+    render(<CoursesHeading startOpen />);
+    fireEvent.change(screen.getByLabelText("Course name"), { target: { value: "BIO 121" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add course" }));
+    await waitFor(() => expect(screen.queryByLabelText("Course name")).toBeNull());
+  });
 });
 

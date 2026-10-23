@@ -7,6 +7,8 @@ import {
   formatDays,
   normalizeHex,
   presetColors,
+  PICKER_HUES,
+  PICKER_SWATCHES,
   formatTime,
   formatTimeRange,
   nowAndNext,
@@ -69,6 +71,19 @@ describe("colors", () => {
     expect(normalizeHex("#C0FFEE")).toBe("#c0ffee");
     expect(normalizeHex(" #c0ffee ")).toBe("#c0ffee");
     for (const bad of ["c0ffee", "#c0ffe", "#c0ffeeee", "#g0ffee", "", null, 5]) expect(normalizeHex(bad)).toBeNull();
+  });
+});
+
+describe("the in-app color picker's swatches", () => {
+  it("24 distinct #rrggbb colors: 12 hues, a deeper and a lighter shade each", () => {
+    expect(PICKER_HUES).toBe(12);
+    expect(PICKER_SWATCHES).toHaveLength(24);
+    expect(new Set(PICKER_SWATCHES).size).toBe(24);
+    for (const c of PICKER_SWATCHES) expect(normalizeHex(c)).toBe(c);
+    // The first hue is a red: more red than green or blue.
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(PICKER_SWATCHES[0].slice(i, i + 2), 16));
+    expect(r).toBeGreaterThan(g);
+    expect(r).toBeGreaterThan(b);
   });
 });
 
