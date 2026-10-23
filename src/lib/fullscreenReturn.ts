@@ -6,9 +6,22 @@
  */
 export const fullscreenReturnKey = (lectureId: string) => `backtrack:fullscreen:${lectureId}`;
 
-/** Leaves fullscreen when the page is in it, and remembers to come back to it. */
+/** Forgets a flag Data left (the projector came back some other way than Back to slides). */
+export function clearFullscreenReturn(lectureId: string): void {
+  try {
+    window.sessionStorage.removeItem(fullscreenReturnKey(lectureId));
+  } catch {
+    // Storage blocked: there is no flag.
+  }
+}
+
+/** Leaves fullscreen when the page is in it, and remembers to come back to it (only then). */
 export function leaveFullscreenFor(lectureId: string): void {
-  if (typeof document === "undefined" || !document.fullscreenElement) return;
+  if (typeof document === "undefined") return;
+  if (!document.fullscreenElement) {
+    clearFullscreenReturn(lectureId);
+    return;
+  }
   try {
     window.sessionStorage.setItem(fullscreenReturnKey(lectureId), "1");
   } catch {

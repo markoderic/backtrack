@@ -477,6 +477,47 @@ describe("Projector", () => {
     }
   });
 
+  it("Data out of fullscreen forgets a flag left from earlier, so Back to slides can't go fullscreen unasked (review M1)", async () => {
+    window.sessionStorage.setItem(fullscreenReturnKey(LECTURE), "1");
+    try {
+      show({ initialSlide: 3 });
+      const data = screen.getByRole("link", { name: "Data" });
+      data.addEventListener("click", (e) => e.preventDefault());
+      fireEvent.click(data);
+      expect(window.sessionStorage.getItem(fullscreenReturnKey(LECTURE))).toBeNull();
+    } finally {
+      window.sessionStorage.clear();
+    }
+  });
+
+  it("shown again (browser Back from Data) it forgets the flag too", async () => {
+    vi.useFakeTimers();
+    try {
+      const props = { lectureId: LECTURE, code: "482916", siteAddress: "backtrack.courses", slideCount: 10, courseId: "c1" };
+      const view = render(
+        <Activity mode="visible">
+          <Projector {...props} initialSlide={3} />
+        </Activity>,
+      );
+      window.sessionStorage.setItem(fullscreenReturnKey(LECTURE), "1");
+      view.rerender(
+        <Activity mode="hidden">
+          <Projector {...props} initialSlide={3} />
+        </Activity>,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+      view.rerender(
+        <Activity mode="visible">
+          <Projector {...props} initialSlide={3} />
+        </Activity>,
+      );
+      expect(window.sessionStorage.getItem(fullscreenReturnKey(LECTURE))).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      window.sessionStorage.clear();
+    }
+  });
+
   it("Data out of fullscreen leaves the window alone", async () => {
     const exitFullscreen = vi.fn().mockResolvedValue(undefined);
     document.exitFullscreen = exitFullscreen;
@@ -964,10 +1005,13 @@ describe("Projector bar: who is here", () => {
     joined = 38;
     here = 31;
     show({ initialSlide: 2 });
-    expect(count()).toHaveTextContent("31 watching · 38 joined");
+    expect(count()).toHaveTextContent("31 watching, students with the lecture open right now · 38 joined");
     expect(count()).not.toHaveTextContent("here");
     const watching = screen.getByTestId("projector-watching");
-    expect(watching).toHaveAccessibleDescription("Students with the lecture open right now");
+    // Seen: "31 watching" (with the meaning on hover); heard: the meaning right after the number.
+    const hidden = watching.querySelector(".sr-only")!;
+    expect(hidden).toHaveTextContent(", students with the lecture open right now");
+    expect(watching.textContent!.replace(hidden.textContent!, "")).toBe("31 watching");
     expect(watching).toHaveAttribute("title", "Students with the lecture open right now");
   });
 
@@ -983,7 +1027,7 @@ describe("Projector bar: who is here", () => {
     joined = 3;
     here = 5;
     show({ initialSlide: 2 });
-    expect(count()).toHaveTextContent("3 watching · 3 joined");
+    expect(count()).toHaveTextContent(/^3 watching.* · 3 joined$/);
   });
 
   it("leaves the count to the big join card while it is up", () => {
@@ -1005,7 +1049,7 @@ describe("Projector bar: who is here", () => {
 });
 
 describe("Projector Show code", () => {
-  const codeDialog = () => screen.queryByRole("dialog", { name: "backtrack-ebon-sigma.vercel.app" });
+  const codeDialog = () => screen.queryByRole("dialog", { name: "Join code" });
   const showCode = () => screen.getByRole("button", { name: "Show code" });
   const openCode = () => {
     show({ initialSlide: 4 });
@@ -1016,6 +1060,8 @@ describe("Projector Show code", () => {
     openCode();
     const d = codeDialog()!;
     expect(d).toHaveAttribute("aria-modal", "true");
+    // Named "Join code", described by the address and the code (review M8).
+    expect(d).toHaveAccessibleDescription("backtrack-ebon-sigma.vercel.app 482916");
     expect(d).toHaveTextContent(/^backtrack-ebon-sigma\.vercel\.app482916/);
     expect(d).not.toHaveTextContent("Go to");
     expect(d).toHaveTextContent("482916");

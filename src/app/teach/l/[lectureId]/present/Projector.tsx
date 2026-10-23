@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
@@ -8,8 +8,8 @@ import { useSlideImages } from "@/lib/useSlideImages";
 import { useJoinedCount } from "@/lib/useJoinedCount";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useHereCount } from "@/lib/useHere";
-import { WATCHING_HINT } from "@/lib/watching";
-import { leaveFullscreenFor } from "@/lib/fullscreenReturn";
+import { WATCHING_HINT, WATCHING_SPOKEN } from "@/lib/watching";
+import { clearFullscreenReturn, leaveFullscreenFor } from "@/lib/fullscreenReturn";
 import { useShownAgain } from "@/lib/useShownAgain";
 import { LogoMark } from "@/components/Logo";
 import { Icon } from "@/components/Icon";
@@ -213,7 +213,6 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   // Closed, and still on screen for the close animation (the open one run backwards). It is
   // no longer a dialog then: hidden from screen readers, inert, and the keys move slides again.
   const [codeClosing, setCodeClosing] = useState(false);
-  const watchingHint = useId();
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -273,6 +272,8 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     setCodeOpen(false);
     setCodeClosing(false);
     if (currentRef.current > 1) setContinued(currentRef.current);
+    // Back on the slides (browser Back, Resume, Back to slides): a flag Data left is spent.
+    clearFullscreenReturn(lectureId);
   });
 
   // "Continued on slide N" goes away by itself, and as soon as the slide moves.
@@ -575,24 +576,20 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
           </p>
         )}
         {/* "N watching · M joined": watching is who has the lecture open right now (Marko did not
-            read "here"); the hover and the accessible description say so. */}
+            read "here"); the hover text and visually hidden words say so. */}
         {!joinCardShowing && joined !== null && (
           <p data-testid="projector-count" className="shrink-0">
             {hereCount !== null && (
               <>
-                <span data-testid="projector-watching" title={WATCHING_HINT} aria-describedby={watchingHint}>
+                <span data-testid="projector-watching" title={WATCHING_HINT}>
                   {hereCount} watching
+                  <span className="sr-only">{WATCHING_SPOKEN}</span>
                 </span>
                 {" · "}
               </>
             )}
             {joined} joined
           </p>
-        )}
-        {!joinCardShowing && joined !== null && hereCount !== null && (
-          <span hidden id={watchingHint}>
-            {WATCHING_HINT}
-          </span>
         )}
         {/* The middle: a failure first, else "Continued on slide N" (a live region that is always there). */}
         <div className="flex min-w-0 flex-1 justify-center">
@@ -730,7 +727,8 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
           <div
             role={codeOpen ? "dialog" : undefined}
             aria-modal={codeOpen ? "true" : undefined}
-            aria-labelledby={codeOpen ? "show-code-title" : undefined}
+            aria-label={codeOpen ? "Join code" : undefined}
+            aria-describedby={codeOpen ? "show-code-title show-code-number" : undefined}
             data-testid="show-code-card"
             className={`flex max-w-full flex-col items-center gap-[min(16px,1.111vw,1.5vh)] rounded-md bg-surface px-[min(96px,6.667vw)] pt-[min(72px,5vw,6.5vh)] pb-[min(48px,3.333vw,4.5vh)] text-center whitespace-nowrap shadow-popover ${
               codeOpen ? "animate-pop-in" : "[animation:pop-in_160ms_var(--ease-in-out)_reverse_both]"
@@ -739,7 +737,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
             <p id={codeOpen ? "show-code-title" : undefined} className={addressClass}>
               {siteAddress}
             </p>
-            <p className="font-sans text-[min(160px,11.111vw,15vh)] leading-none font-light tracking-[-0.03em] text-ink">
+            <p
+              id={codeOpen ? "show-code-number" : undefined}
+              className="font-sans text-[min(160px,11.111vw,15vh)] leading-none font-light tracking-[-0.03em] text-ink"
+            >
               <Code code={code} />
             </p>
             <button
