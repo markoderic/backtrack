@@ -15,6 +15,22 @@ describe("globals.css entrance animations", () => {
     expect(opacity).toBeGreaterThanOrEqual(0.5);
   });
 
+  it("a slide the student moves to slides in under 200 ms, with transform and opacity only", () => {
+    for (const name of ["slide-next", "slide-back"]) {
+      const token = css.match(new RegExp(`--animate-${name}:\\s*${name} (\\d+)ms`));
+      expect(token, name).not.toBeNull();
+      expect(Number(token![1])).toBeLessThan(200);
+      const block = css.match(new RegExp(`@keyframes ${name}\\s*{([\\s\\S]*?)\\n}`))?.[1] ?? "";
+      const props = [...block.matchAll(/([a-z-]+):/g)].map((m) => m[1]);
+      expect(props.length, name).toBeGreaterThan(0);
+      for (const p of props) expect(["opacity", "translate"], `${name} ${p}`).toContain(p);
+    }
+  });
+
+  it("the narrow student screen keeps room under the slide for the whole I'm lost panel with its note box", () => {
+    expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 374px\)/);
+  });
+
   it("has no keyframes block that nothing uses", () => {
     expect(css).not.toContain("digit-pop");
   });

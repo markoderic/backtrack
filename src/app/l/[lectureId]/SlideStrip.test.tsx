@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { SlideStrip, type SpotKind } from "./SlideStrip";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { SlideStrip, stripTarget, type SpotKind } from "./SlideStrip";
 
 const strip = (props: Partial<Parameters<typeof SlideStrip>[0]> = {}) =>
   render(<SlideStrip live={8} viewing={8} spots={new Map()} onPick={() => {}} {...props} />);
@@ -68,9 +68,46 @@ describe("SlideStrip", () => {
   it("names the markers for a screen reader", () => {
     strip({ live: 8, viewing: 5, spots: kinds([[5, "save"], [3, "lost"]]) });
     expect(screen.getByRole("button", { name: "Slide 8, live" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Slide 5, viewing, saved" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Slide 3, lost" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Slide 5, you are here, you saved this" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Slide 3, you got lost here" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Slide 1" })).toBeInTheDocument();
+  });
+
+  describe("tooltip", () => {
+    const tip = () => document.querySelector("[data-strip-tip]");
+
+    it("hovering a dot shows its slide number in a small tooltip, the same words as its name", () => {
+      strip({ live: 12, viewing: 12, spots: kinds([[9, "lost"]]) });
+      expect(tip()).toBeNull();
+      fireEvent.pointerEnter(item(9), { pointerType: "mouse" });
+      expect(tip()).toHaveTextContent("Slide 9, you got lost here");
+      expect(item(9)).toHaveAccessibleName("Slide 9, you got lost here");
+      // Read once, as the button's name: the tooltip itself is hidden from screen readers.
+      expect(tip()).toHaveAttribute("aria-hidden", "true");
+      fireEvent.pointerLeave(item(9), { pointerType: "mouse" });
+      expect(tip()).toBeNull();
+    });
+
+    it("focusing a dot from the keyboard shows it too, and it goes on blur", () => {
+      strip({ live: 12, viewing: 12 });
+      act(() => item(4).focus());
+      expect(tip()).toHaveTextContent("Slide 4");
+      act(() => item(4).blur());
+      expect(tip()).toBeNull();
+    });
+
+    it("a finger tap does not leave a tooltip behind", () => {
+      strip({ live: 12, viewing: 12 });
+      fireEvent.pointerEnter(item(4), { pointerType: "touch" });
+      expect(tip()).toBeNull();
+    });
+
+    it("hides when the strip scrolls", () => {
+      strip({ live: 12, viewing: 12 });
+      fireEvent.pointerEnter(item(4), { pointerType: "mouse" });
+      fireEvent.scroll(screen.getByRole("list"));
+      expect(tip()).toBeNull();
+    });
   });
 
   it("calls onPick with the slide number", () => {
@@ -87,6 +124,79 @@ describe("SlideStrip", () => {
     rerender(<SlideStrip live={4} viewing={4} spots={new Map()} onPick={() => {}} />);
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(container.textContent).not.toMatch(/\bof\b|\//);
+  });
+
+  describe("scrolling", () => {
+    const DOT = 44;
+    /** A strip 220 px wide (5 dots) with real-looking geometry: each dot at its place minus the scroll. */
+    function geometry(list: HTMLElement, live: number) {
+      let left = 0;
+      Object.defineProperty(list, "clientWidth", { configurable: true, get: () => 220 });
+      Object.defineProperty(list, "scrollWidth", { configurable: true, get: () => live * DOT });
+      Object.defineProperty(list, "scrollLeft", { configurable: true, get: () => left, set: (v: number) => (left = v) });
+      list.getBoundingClientRect = () => ({ left: 0, right: 220, width: 220, top: 0, bottom: 44, height: 44, x: 0, y: 0, toJSON() {} });
+      list.querySelectorAll("button").forEach((b, i) => {
+        b.getBoundingClientRect = () => {
+          const x = i * DOT - left;
+          return { left: x, right: x + DOT, width: DOT, top: 0, bottom: 44, height: 44, x, y: 0, toJSON() {} };
+        };
+      });
+      const scrollTo = vi.fn((o: ScrollToOptions) => (left = o.left ?? left));
+      list.scrollTo = scrollTo as unknown as typeof list.scrollTo;
+      return { scrollTo, left: () => left };
+    }
+
+    it("keeps the dot on screen and the live dot both in view, and scrolls smoothly when they change", () => {
+      const { rerender } = strip({ live: 30, viewing: 30 });
+      const g = geometry(screen.getByRole("list"), 30);
+      rerender(<SlideStrip live={30} viewing={26} spots={new Map()} onPick={() => {}} />);
+      // Slides 26 to 30 fill the 220 px exactly: both the ring and the playhead are in view.
+      expect(g.scrollTo).toHaveBeenLastCalledWith({ left: 25 * DOT, behavior: "smooth" });
+      const shown = [g.left(), g.left() + 220];
+      expect(25 * DOT).toBeGreaterThanOrEqual(shown[0]);
+      expect(30 * DOT).toBeLessThanOrEqual(shown[1]);
+    });
+
+    it("when both can't fit, centers the dot on screen", () => {
+      const { rerender } = strip({ live: 30, viewing: 30 });
+      const g = geometry(screen.getByRole("list"), 30);
+      rerender(<SlideStrip live={30} viewing={10} spots={new Map()} onPick={() => {}} />);
+      expect(g.scrollTo).toHaveBeenLastCalledWith({ left: 9 * DOT - (220 - DOT) / 2, behavior: "smooth" });
+    });
+
+    it("moves with the live dot as the teacher goes on, while both still fit", () => {
+      const { rerender } = strip({ live: 30, viewing: 30 });
+      let g = geometry(screen.getByRole("list"), 30);
+      rerender(<SlideStrip live={30} viewing={28} spots={new Map()} onPick={() => {}} />);
+      const before = g.left();
+      // The teacher goes to 31: the new dot is measured, and the strip moves one dot on.
+      rerender(<SlideStrip live={31} viewing={28} spots={new Map()} onPick={() => {}} />);
+      g = geometry(screen.getByRole("list"), 31);
+      rerender(<SlideStrip live={31} viewing={27} spots={new Map()} onPick={() => {}} />);
+      expect(g.left()).toBe(before + DOT);
+      expect(g.scrollTo).toHaveBeenLastCalledWith({ left: 26 * DOT, behavior: "smooth" });
+    });
+
+    it("stripTarget: does not move when both are already in view", () => {
+      expect(stripTarget({ scrollLeft: 100, view: 220, max: 1000, here: [120, 164], live: [250, 294] })).toBe(100);
+      expect(stripTarget({ scrollLeft: 100, view: 220, max: 1000, here: [40, 84], live: [200, 244] })).toBe(40);
+      expect(stripTarget({ scrollLeft: 0, view: 220, max: 1000, here: [100, 144], live: [200, 244] })).toBe(24);
+      expect(stripTarget({ scrollLeft: 0, view: 220, max: 50, here: [300, 344], live: [400, 444] })).toBe(50);
+      expect(stripTarget({ scrollLeft: 0, view: 220, max: 1000, here: [100, 144], live: [300, 344] })).toBe(12);
+    });
+
+    it("jumps without the smooth scroll with reduced motion", () => {
+      const media = vi.fn(() => ({ matches: true }));
+      vi.stubGlobal("matchMedia", media);
+      try {
+        const { rerender } = strip({ live: 30, viewing: 30 });
+        const g = geometry(screen.getByRole("list"), 30);
+        rerender(<SlideStrip live={30} viewing={10} spots={new Map()} onPick={() => {}} />);
+        expect(g.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: "auto" }));
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   it("scrolls sideways when the lecture runs past the width, instead of shrinking the dots", () => {

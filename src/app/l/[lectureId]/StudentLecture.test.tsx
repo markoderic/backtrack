@@ -295,6 +295,100 @@ describe("StudentLecture", () => {
     expect(screen.queryByRole("button", { name: /Jump to live/ })).not.toBeInTheDocument();
   });
 
+  describe("slide moves", () => {
+    const content = () => document.querySelector("[data-slide-content]") as HTMLElement;
+
+    it("a move the student makes slides the new slide in: Back from the left; Forward, a later dot and Jump to live from the right", async () => {
+      show(7);
+      await settle();
+      expect(content()).not.toHaveAttribute("data-move");
+      fireEvent.click(back());
+      expect(content()).toHaveAttribute("data-move", "back");
+      expect(content().className).toContain("motion-safe:animate-slide-back");
+      fireEvent.click(forward());
+      expect(content()).toHaveAttribute("data-move", "next");
+      expect(content().className).toContain("motion-safe:animate-slide-next");
+      fireEvent.click(within(strip()).getByRole("button", { name: /^Slide 3\b/ }));
+      expect(content()).toHaveAttribute("data-move", "back");
+      expect(shownSrc()).toBe("https://signed/3.webp");
+      fireEvent.click(within(strip()).getByRole("button", { name: /^Slide 5\b/ }));
+      expect(content()).toHaveAttribute("data-move", "next");
+      fireEvent.click(jumps(7)[0]);
+      expect(content()).toHaveAttribute("data-move", "next");
+      expect(shownSrc()).toBe("https://signed/7.webp");
+    });
+
+    it("each move starts the slide-in again on a fresh element, with the one slide image inside", async () => {
+      show(7);
+      await settle();
+      fireEvent.click(back());
+      const first = content();
+      fireEvent.click(back());
+      expect(content()).not.toBe(first);
+      expect(content()).toHaveAttribute("data-move", "back");
+      expect(screen.getAllByRole("img")).toHaveLength(1);
+      expect(content()).toContainElement(screen.getByRole("img"));
+    });
+
+    it("the teacher moving a following student stays instant: no slide-in, the same element", async () => {
+      show(7);
+      await settle();
+      teacherMoves(8);
+      expect(shownSrc()).toBe("https://signed/8.webp");
+      expect(content()).not.toHaveAttribute("data-move");
+      // Also after the student moved and is following live again.
+      fireEvent.click(back());
+      fireEvent.click(forward());
+      const el = content();
+      teacherMoves(9);
+      expect(shownSrc()).toBe("https://signed/9.webp");
+      expect(content()).toBe(el);
+      expect(content()).not.toHaveAttribute("data-move");
+      expect(content().className).not.toMatch(/animate-slide/);
+    });
+
+    it("picking the dot already on screen does not slide anything", async () => {
+      show(7);
+      await settle();
+      const el = content();
+      fireEvent.click(within(strip()).getByRole("button", { name: /^Slide 7\b/ }));
+      expect(content()).toBe(el);
+      expect(content()).not.toHaveAttribute("data-move");
+    });
+  });
+
+  it("has a note box under I'm lost and Save this the whole time; a note on a slide with no tap sends one I'm lost with the note", async () => {
+    show(7);
+    await settle();
+    const box = screen.getByRole("textbox", { name: "Your note" });
+    expect(panel()).toContainElement(box);
+    expect(box).toHaveAttribute("placeholder", "Add a note");
+    fireEvent.change(box, { target: { value: "lost on the accrual" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBeInTheDocument();
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    expect(upsert.mock.calls[0][0]).toMatchObject({ kind: "lost", tapped_on_slide: 7, note: "lost on the accrual" });
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveValue("lost on the accrual");
+  });
+
+  it("Undo goes away 10 seconds after a tap; the tap stays and its dot stays", async () => {
+    vi.useFakeTimers();
+    try {
+      show(7);
+      await settle();
+      fireEvent.click(lost());
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBeInTheDocument();
+      expect(within(strip()).getByRole("button", { name: /^Slide 7, live, you are here, you got lost here$/ })).toBeInTheDocument();
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows Reconnecting… while the channel is down and clears it when it is back", async () => {
     const { container } = show();
     await settle();
@@ -404,8 +498,8 @@ describe("StudentLecture", () => {
       fireEvent.load(img);
       await act(async () => vi.advanceTimersByTimeAsync(1000));
       expect(screen.queryByText(/Loading slide/)).not.toBeInTheDocument();
-      const box = img.parentElement as HTMLElement;
-      expect(box).toHaveAttribute("data-slide");
+      const box = img.closest("[data-slide]") as HTMLElement;
+      expect(box).not.toBeNull();
       expect(box.style.aspectRatio).toMatch(/^1\.333/);
     } finally {
       vi.useRealTimers();
@@ -436,7 +530,7 @@ describe("StudentLecture", () => {
       fireEvent.click(back());
       fireEvent.click(back());
       expect(within(strip()).getByRole("button", { name: "Slide 7, live" })).toHaveAttribute("data-live");
-      expect(within(strip()).getByRole("button", { name: "Slide 5, viewing" })).toHaveAttribute("aria-current", "true");
+      expect(within(strip()).getByRole("button", { name: "Slide 5, you are here" })).toHaveAttribute("aria-current", "true");
     });
 
     it("picking a slide shows it and offers Jump to live", () => {
@@ -459,10 +553,10 @@ describe("StudentLecture", () => {
         status: 200,
       });
       show(7);
-      await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 3, lost" })).toBeInTheDocument());
-      expect(within(strip()).getByRole("button", { name: "Slide 5, saved" })).toBeInTheDocument();
+      await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 3, you got lost here" })).toBeInTheDocument());
+      expect(within(strip()).getByRole("button", { name: "Slide 5, you saved this" })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: /My spots/ })).toHaveTextContent("My spots2");
-      expect(within(strip()).getByRole("button", { name: "Slide 7, live, viewing" })).toBeInTheDocument();
+      expect(within(strip()).getByRole("button", { name: "Slide 7, live, you are here" })).toBeInTheDocument();
       // Only this user's rows are asked for.
       expect(ownFilters).toHaveBeenCalledWith("lecture_id", LECTURE);
       expect(ownFilters).toHaveBeenCalledWith("anon_id", STUDENT);
@@ -520,7 +614,7 @@ describe("StudentLecture", () => {
       fireEvent.click(back());
       fireEvent.click(lost());
       expect(screen.getByRole("button", { name: "Lost on slide 6" })).toHaveAttribute("aria-disabled", "true");
-      expect(within(strip()).getByRole("button", { name: "Slide 6, viewing, lost" })).toBeInTheDocument();
+      expect(within(strip()).getByRole("button", { name: "Slide 6, you are here, you got lost here" })).toBeInTheDocument();
       await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
       expect(from).toHaveBeenCalledWith("lost_taps");
       expect(upsert.mock.calls[0][0]).toMatchObject({
@@ -561,7 +655,7 @@ describe("StudentLecture", () => {
         status: 200,
       });
       show(7);
-      await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 3, lost" })).toBeInTheDocument());
+      await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 3, you got lost here" })).toBeInTheDocument());
       expect(screen.getByRole("link", { name: /My spots/ })).toHaveTextContent("My spots1");
     });
 
@@ -590,7 +684,7 @@ describe("StudentLecture", () => {
         await settle();
         expect(upsert).toHaveBeenCalledTimes(1);
         expect(screen.getByText("This one didn't save because the lecture had ended.")).toBeInTheDocument();
-        expect(within(strip()).getByRole("button", { name: "Slide 7, live, viewing" })).toBeInTheDocument();
+        expect(within(strip()).getByRole("button", { name: "Slide 7, live, you are here" })).toBeInTheDocument();
       } finally {
         vi.useRealTimers();
       }
@@ -836,7 +930,7 @@ describe("StudentLecture Mark the spot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save this" }));
     await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
     expect(upsert.mock.calls[0][0]).toMatchObject({ lecture_id: LECTURE, anon_id: STUDENT, kind: "save", tapped_on_slide: 6 });
-    expect(within(strip()).getByRole("button", { name: "Slide 6, viewing, saved" })).toBeInTheDocument();
+    expect(within(strip()).getByRole("button", { name: "Slide 6, you are here, you saved this" })).toBeInTheDocument();
     // A save is not an I'm lost: the count goes up but does not turn red, and the button keeps its look.
     const count = screen.getByRole("link", { name: /My spots/ }).lastElementChild as HTMLElement;
     expect(count).toHaveTextContent("1");

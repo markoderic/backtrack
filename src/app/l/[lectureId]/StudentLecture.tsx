@@ -163,6 +163,23 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
   const jumpLabel = state ? `Jump to live, slide ${state.live}` : "";
 
+  // A move the student makes (Back, Forward, a strip dot, Jump to live) slides the new slide in;
+  // the teacher moving a following student stays instant. Each move gets a new key, so the
+  // slide's content mounts again with the short slide and fade (none with reduced motion).
+  const [move, setMove] = useState<{ n: number; dir: "next" | "back"; slide: number; done: boolean } | null>(null);
+  const moveTo = (target: number, go: () => void) => {
+    if (state && target !== state.viewing && target >= 1 && target <= state.live) {
+      const dir = target < state.viewing ? "back" : "next";
+      setMove((m) => ({ n: (m?.n ?? 0) + 1, dir, slide: target, done: false }));
+    }
+    go();
+  };
+  const moving = move && !move.done && move.slide === viewing ? move.dir : null;
+  const onBack = () => moveTo(viewing - 1, back);
+  const onForward = () => moveTo(viewing + 1, forward);
+  const onJump = () => moveTo(live, jumpToLive);
+  const onPick = (n: number) => moveTo(Math.min(Math.max(Math.floor(n), 1), live), () => goTo(n));
+
   return (
     <div data-lecture="" className="text-ink" style={{ "--slide-ratio": ratio } as CSSProperties}>
       <div data-lecture-side="">
@@ -221,7 +238,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           <button
             type="button"
             data-lecture-jump="side"
-            onClick={jumpToLive}
+            onClick={onJump}
             className="press focus-ring flex h-12 w-full items-center justify-center rounded-md bg-ink px-4 type-button text-surface hover:bg-ink-hover"
           >
             {jumpLabel}
@@ -237,46 +254,59 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
         <div data-lecture-slide="" className="relative shrink-0">
           <div
             data-slide=""
-            className="relative w-full rounded-sm bg-surface shadow-slide"
+            className="relative w-full overflow-hidden rounded-sm bg-surface shadow-slide"
             style={{ aspectRatio: ratio } as CSSProperties}
           >
-            {url && (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  ref={imageRef}
-                  src={url}
-                  alt={`Slide ${viewing}`}
-                  draggable={false}
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    setLoadedSrc(img.getAttribute("src"));
-                    if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
-                  }}
-                  className="absolute inset-0 h-full w-full rounded-sm object-contain"
-                />
-                <HighlightLayer
-                  imageRef={imageRef}
-                  marking={marking && active !== null}
-                  markingKind={active?.kind}
-                  onMark={(rect) => markRef.current?.(rect)}
-                  onCancel={() => setMarking(false)}
-                  shown={shown}
-                />
-              </>
-            )}
-            {loading && (
-              <p className="absolute inset-0 flex animate-fade-in items-center justify-center rounded-sm bg-surface type-small text-secondary">
-                Loading slide {viewing}
-              </p>
-            )}
+            <div
+              key={move?.n ?? 0}
+              data-slide-content=""
+              data-move={moving ?? undefined}
+              // Its own animation only (a mark or the loading text inside fades in too).
+              onAnimationEnd={(e) => {
+                if (e.target === e.currentTarget) setMove((m) => m && { ...m, done: true });
+              }}
+              className={`absolute inset-0 ${
+                moving === "back" ? "motion-safe:animate-slide-back" : moving === "next" ? "motion-safe:animate-slide-next" : ""
+              }`}
+            >
+              {url && (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    ref={imageRef}
+                    src={url}
+                    alt={`Slide ${viewing}`}
+                    draggable={false}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      setLoadedSrc(img.getAttribute("src"));
+                      if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
+                    }}
+                    className="absolute inset-0 h-full w-full rounded-sm object-contain"
+                  />
+                  <HighlightLayer
+                    imageRef={imageRef}
+                    marking={marking && active !== null}
+                    markingKind={active?.kind}
+                    onMark={(rect) => markRef.current?.(rect)}
+                    onCancel={() => setMarking(false)}
+                    shown={shown}
+                  />
+                </>
+              )}
+              {loading && (
+                <p className="absolute inset-0 flex animate-fade-in items-center justify-center rounded-sm bg-surface type-small text-secondary">
+                  Loading slide {viewing}
+                </p>
+              )}
+            </div>
           </div>
           {behind && !marking && (
             // On a phone, Jump to live floats over the bottom edge of the slide (the sidebar has it on a laptop).
             <button
               type="button"
               data-lecture-jump="pill"
-              onClick={jumpToLive}
+              onClick={onJump}
               className="press focus-ring absolute bottom-3 left-1/2 z-10 flex h-11 -translate-x-1/2 animate-pop-in items-center rounded-full bg-ink px-4 type-button whitespace-nowrap text-surface shadow-popover hover:bg-ink-hover"
             >
               {jumpLabel}
@@ -288,17 +318,17 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           <button
             type="button"
             aria-label="Back"
-            onClick={back}
+            onClick={onBack}
             disabled={!state || state.viewing <= 1}
             className={arrowClass}
           >
             <Icon name="back" />
           </button>
-          <SlideStrip live={live} viewing={viewing} spots={spotKinds} onPick={goTo} />
+          <SlideStrip live={live} viewing={viewing} spots={spotKinds} onPick={onPick} />
           <button
             type="button"
             aria-label="Forward"
-            onClick={forward}
+            onClick={onForward}
             disabled={!state || state.viewing >= state.live}
             className={arrowClass}
           >

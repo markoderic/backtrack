@@ -59,6 +59,10 @@
   --animate-page-in: page-in var(--dur-fast) var(--ease-out) both;
   --animate-pop-in: pop-in 160ms var(--ease-spring) both;
   --animate-dot-drop: dot-drop var(--dur-base) var(--ease-out) both;
+  /* A slide the student moves to slides in (from the right going on, from the left going back). The
+     element carries it behind motion-safe:, so reduced motion gets an instant swap. */
+  --animate-slide-next: slide-next 180ms var(--ease-out) both;
+  --animate-slide-back: slide-back 180ms var(--ease-out) both;
   /* Two names for the same shake, so a second wrong code shakes again (switch between them). */
   --animate-shake: shake 240ms var(--ease-in-out) both;
   --animate-shake-again: shake-again 240ms var(--ease-in-out) both;
@@ -322,8 +326,9 @@
     padding: 0 16px 24px;
     overflow-y: auto;
     container-type: size;
-    /* Top bar, I'm lost, the strip and the gaps between them stay on screen under the slide. */
-    --slide-room: calc(100cqh - 232px);
+    /* Top bar, the I'm lost panel (I'm lost 48, Save this / Mark the spot 44, the note box 66, the
+       line under it 20, gaps 36: 214), the strip and the gaps between them stay on screen under the slide. */
+    --slide-room: calc(100cqh - 374px);
   }
   [data-lecture-side],
   [data-lecture-stage] {
@@ -413,6 +418,14 @@
 @keyframes dot-drop {
   from { opacity: 0; translate: 0 -10px; scale: 0.6; }
   to { opacity: 1; translate: 0 0; scale: 1; }
+}
+@keyframes slide-next {
+  from { opacity: 0; translate: 24px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes slide-back {
+  from { opacity: 0; translate: -24px 0; }
+  to { opacity: 1; translate: 0 0; }
 }
 @keyframes shake {
   0%, 100% { translate: 0 0; }
