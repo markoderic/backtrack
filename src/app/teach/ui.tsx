@@ -58,7 +58,7 @@ export const staggerClass =
 export type Crumb = { label: string; href?: string };
 
 /**
- * The teacher top bar: 64 high with a hairline, logo, breadcrumb, then the teacher's name and
+ * The teacher top bar: 64 high with a hairline, logo (to Home), breadcrumb, then the teacher's name and
  * the Settings link on the right (Figma 33:788, 34:1246). On a phone the name is left out so the
  * back link and Settings keep their room.
  */
@@ -79,7 +79,7 @@ export function TeacherTopBar({
   const parent = back ?? (crumbs.length > 1 ? crumbs[crumbs.length - 2] : undefined);
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-hairline px-4 sm:gap-6 sm:px-8">
-      <Link href="/teach" aria-label="backtrack, courses" className="press focus-ring shrink-0 rounded-sm">
+      <Link href="/" aria-label="backtrack, home" className="press focus-ring shrink-0 rounded-sm">
         <LogoLockup size="S" />
       </Link>
       {parent?.href && (

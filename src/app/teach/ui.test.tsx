@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { TeacherTopBar, fieldClass, fieldNarrowClass, hitAreaClass } from "./ui";
@@ -48,6 +48,15 @@ describe("TeacherTopBar", () => {
     expect(nav.querySelector('a[href="/teach/c/c1"]')!.className).toContain("after:-inset-y-3");
     expect(screen.getByText("Start lecture")).toHaveAttribute("aria-current", "page");
     expect(screen.getByText("Linda Carter")).toBeInTheDocument();
+  });
+
+  it("the logo goes Home, the page with I'm a student and I'm a teacher (Marko, hand test 2)", () => {
+    render(<TeacherTopBar crumbs={[{ label: "Courses" }]} teacherName="Linda Carter" />);
+    const logo = screen.getByRole("link", { name: "backtrack, home" });
+    expect(logo).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "backtrack, courses" })).toBeNull();
+    // The dashboard keeps its Courses breadcrumb.
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByText("Courses")).toHaveAttribute("aria-current", "page");
   });
 
   it("gives phones a back link to the page one level up (the breadcrumb is hidden there)", () => {

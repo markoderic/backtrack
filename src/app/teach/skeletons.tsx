@@ -24,7 +24,7 @@ function SkeletonShell({ crumbs, children }: { crumbs: React.ReactNode; children
   return (
     <div data-testid="teacher-skeleton" aria-busy="true" className="flex min-h-screen flex-col">
       <header className="flex h-16 shrink-0 items-center gap-4 border-b border-hairline px-4 sm:gap-6 sm:px-8">
-        <Link href="/teach" aria-label="backtrack, courses" className="press focus-ring shrink-0 rounded-sm">
+        <Link href="/" aria-label="backtrack, home" className="press focus-ring shrink-0 rounded-sm">
           <LogoLockup size="S" />
         </Link>
         <div className="hidden min-w-0 items-center gap-2 type-small whitespace-nowrap sm:flex">{crumbs}</div>

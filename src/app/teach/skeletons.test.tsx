@@ -40,8 +40,8 @@ describe("teacher loading skeletons (Marko: no blank page after a click)", () =>
     const page = screen.getByTestId("teacher-skeleton");
     expect(page).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status")).toHaveTextContent("Loading");
-    // The logo goes to Courses and Settings works while the page loads.
-    expect(screen.getByRole("link", { name: "backtrack, courses" })).toHaveAttribute("href", "/teach");
+    // The logo goes Home (I'm a student / I'm a teacher, Marko's hand test 2) and Settings works while the page loads.
+    expect(screen.getByRole("link", { name: "backtrack, home" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/teach/settings");
     // Quiet hairline blocks: no spinner, no shimmer, no pulse.
     const bones = page.querySelectorAll("[data-bone]");
