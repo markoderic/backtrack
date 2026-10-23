@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type FormEvent,
@@ -171,14 +172,44 @@ export function LostButton({
   idle,
 }: Props) {
   const [taps, setTaps] = useState<ReadonlyMap<string, Spot>>(new Map());
+  // The rows as last shown, for the flush (a refusal gives back a note saved on a dropped tap).
+  const tapsRef = useRef(taps);
   // The note being typed. It stays when the slide changes, so a note typed while the teacher moves on is not lost.
   const [draft, setDraft] = useState<Draft | null>(null);
   // Taps made on this screen less than 10 s ago, while their slide stayed on screen: these offer Undo.
   const [undoable, setUndoable] = useState<ReadonlySet<string>>(new Set());
   const undoTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // When each tap's Undo ends (ms). Kept apart from the timers: Next hides a page it keeps alive
+  // (Activity) by taking its effects down, so the timers stop; on the way back the time left is armed again.
+  const undoUntil = useRef(new Map<string, number>());
+  const dropUndo = useCallback((id: string) => {
+    undoUntil.current.delete(id);
+    undoTimers.current.delete(id);
+    setUndoable((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  const armUndo = useCallback(
+    (id: string, ms: number) => {
+      clearTimeout(undoTimers.current.get(id));
+      undoTimers.current.set(id, setTimeout(() => dropUndo(id), ms));
+    },
+    [dropUndo],
+  );
   // What the status line says last; each one gets a new key so it is read even if the text repeats.
   const [said, setSaid] = useState<{ n: number; text: string } | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
+  // A short line under the box after a note is saved, so a sighted student sees it went (3 s).
+  const [noted, setNoted] = useState<{ n: number; text: string } | null>(null);
+  useEffect(() => {
+    if (!noted) return;
+    const timer = setTimeout(() => setNoted(null), 3000);
+    return () => clearTimeout(timer);
+  }, [noted]);
+  const counterId = useId();
   const [fatal, setFatal] = useState<Error | null>(null);
 
   const lostRef = useRef<HTMLButtonElement>(null);
@@ -234,13 +265,19 @@ export function LostButton({
     return gone;
   }, []);
 
-  /** A note sent with a new tap that did not save comes back into the box, so it is not lost. */
+  /**
+   * A note on a new tap that did not save comes back into the box, so it is not lost: sent with the
+   * tap, or saved on it after (that update is dropped with the tap).
+   */
   const keepNotes = useCallback((dropped: QueueOp[]) => {
-    const op = dropped.find((o) => o.op === "insert" && o.tap.note);
-    if (!op || op.op !== "insert" || !op.tap.note) return;
-    const text = op.tap.note;
-    const slide = op.tap.tappedOnSlide;
-    setDraft((d) => d ?? { slide, text });
+    for (const op of dropped) {
+      if (op.op !== "insert") continue;
+      const text = op.tap.note || tapsRef.current.get(op.tap.id)?.note;
+      if (!text) continue;
+      const slide = op.tap.tappedOnSlide;
+      setDraft((d) => d ?? { slide, text });
+      return;
+    }
   }, []);
 
   const fail = useCallback((e: unknown) => {
@@ -335,6 +372,12 @@ export function LostButton({
   useEffect(() => {
     mounted.current = true;
     const timers = undoTimers.current;
+    // Shown again after being hidden: each Undo gets the time it had left, or goes if that ran out.
+    for (const [id, until] of undoUntil.current) {
+      const left = until - Date.now();
+      if (left > 0) armUndo(id, left);
+      else dropUndo(id);
+    }
     // Taps left from the last visit get their dots back (read after the first render, as storage is only there in the browser).
     void Promise.resolve().then(() => {
       if (!mounted.current) return;
@@ -361,7 +404,7 @@ export function LostButton({
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
     };
-  }, [queue, flush, loadSaved]);
+  }, [queue, flush, loadSaved, armUndo, dropUndo]);
 
   useEffect(() => {
     if (reconnects === 0) return;
@@ -370,6 +413,7 @@ export function LostButton({
   }, [reconnects, flush, loadSaved]);
 
   useEffect(() => {
+    tapsRef.current = taps;
     onSpotsRef.current([...taps.values()]);
   }, [taps]);
 
@@ -378,6 +422,7 @@ export function LostButton({
   const [shownSlide, setShownSlide] = useState(viewing);
   if (shownSlide !== viewing) {
     setShownSlide(viewing);
+    // (A deadline left behind only arms a timer that finds nothing to take away.)
     if (undoable.size > 0) setUndoable(new Set());
     if (draft && !isDirty(taps, draft)) setDraft(null);
   }
@@ -391,16 +436,8 @@ export function LostButton({
   /** Offers Undo on a new tap for 10 s. */
   function offerUndo(id: string) {
     setUndoable((s) => new Set(s).add(id));
-    const timer = setTimeout(() => {
-      undoTimers.current.delete(id);
-      setUndoable((s) => {
-        if (!s.has(id)) return s;
-        const next = new Set(s);
-        next.delete(id);
-        return next;
-      });
-    }, UNDO_MS);
-    undoTimers.current.set(id, timer);
+    undoUntil.current.set(id, Date.now() + UNDO_MS);
+    armUndo(id, UNDO_MS);
   }
 
   function record(kind: Kind, slide = viewing, note?: string) {
@@ -449,11 +486,7 @@ export function LostButton({
       if (!queue().cancel(id)) queue().update(id, { undone: true });
     }
     dropTaps(ids);
-    setUndoable((s) => {
-      const next = new Set(s);
-      for (const id of ids) next.delete(id);
-      return next;
-    });
+    for (const id of ids) dropUndo(id);
     onMarkingChangeRef.current?.(false);
     say("Undone.");
     // Undo was pressed on purpose: I'm lost is back and takes the focus.
@@ -482,6 +515,8 @@ export function LostButton({
       // No tap on that slide yet: the note is an I'm lost with the note, in one go.
       record("lost", draft.slide, text);
     }
+    const where = draft.slide !== viewing ? ` on slide ${draft.slide}` : "";
+    setNoted((n) => ({ n: (n?.n ?? 0) + 1, text: text ? `Note saved${where}` : "Note removed" }));
     setDraft(null);
   }
 
@@ -593,6 +628,7 @@ export function LostButton({
           <textarea
             ref={textareaRef}
             aria-label={otherSlide !== null ? `Your note on slide ${otherSlide}` : "Your note"}
+            aria-describedby={counter !== null ? counterId : undefined}
             placeholder="Add a note"
             rows={2}
             maxLength={NOTE_MAX}
@@ -627,10 +663,16 @@ export function LostButton({
           <p className="flex gap-3 type-caption text-secondary">
             {otherSlide !== null && <span>Note for slide {otherSlide}</span>}
             {counter !== null && (
-              <span data-counter="" className="ml-auto">
+              <span id={counterId} data-counter="" className="ml-auto">
                 {counter} left
               </span>
             )}
+          </p>
+        ) : noted ? (
+          // Seen, not read out twice: the status line below already says it.
+          <p key={noted.n} aria-hidden data-noted="" className="flex animate-fade-in items-center gap-2 type-small text-secondary">
+            <Icon name="check" size={16} />
+            {noted.text}
           </p>
         ) : savedForYou ? (
           <p className="flex animate-fade-in items-center gap-2 type-small-strong text-ink">

@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from "react";
+import { Activity, Component, type ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import type { Rect } from "@/lib/rect";
@@ -287,6 +287,50 @@ describe("LostButton", () => {
       expect(undoButton()).not.toBeInTheDocument();
     });
 
+    describe("when Next hides the page and shows it again (Activity)", () => {
+      function inActivity() {
+        const props: Props = { lectureId: LECTURE, viewing: 7, send: okSend(), loadOwn: vi.fn(async () => [] as Row[]), onSpots: vi.fn() };
+        const at = (mode: "visible" | "hidden") => (
+          <Activity mode={mode}>
+            <LostButton {...props} />
+          </Activity>
+        );
+        const view = render(at("visible"));
+        return { hide: () => view.rerender(at("hidden")), showAgain: () => view.rerender(at("visible")) };
+      }
+
+      it("keeps the 10 seconds from the tap: the time left runs out after the page comes back", async () => {
+        vi.useFakeTimers();
+        const page = inActivity();
+        await settle();
+        press();
+        await act(async () => vi.advanceTimersByTime(2000));
+        page.hide();
+        await act(async () => vi.advanceTimersByTime(3000));
+        page.showAgain();
+        await settle();
+        expect(undoButton()).toBeInTheDocument();
+        await act(async () => vi.advanceTimersByTime(UNDO_MS - 5000 - 100));
+        expect(undoButton()).toBeInTheDocument();
+        await act(async () => vi.advanceTimersByTime(100));
+        expect(undoButton()).not.toBeInTheDocument();
+        expect(checked()).toBeInTheDocument();
+      });
+
+      it("drops Undo at once when its 10 seconds ran out while the page was hidden", async () => {
+        vi.useFakeTimers();
+        const page = inActivity();
+        await settle();
+        press();
+        page.hide();
+        await act(async () => vi.advanceTimersByTime(UNDO_MS + 2000));
+        page.showAgain();
+        await settle();
+        expect(undoButton()).not.toBeInTheDocument();
+        expect(checked()).toBeInTheDocument();
+      });
+    });
+
     it("is not offered on rows saved before (loaded), only on a tap made here", async () => {
       setup({
         loadOwn: vi.fn(async () => [
@@ -523,6 +567,47 @@ describe("LostButton", () => {
       undo();
       await settle();
       expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
+    });
+
+    it("gives back a note saved on a new tap whose insert is then refused (the dropped update carried it)", async () => {
+      let finish: (r: SendResult) => void = () => {};
+      const send = vi.fn<Send>((op) => (op.op === "insert" ? new Promise<SendResult>((r) => (finish = r)) : Promise.resolve("ok")));
+      setup({ send });
+      await settle();
+      press();
+      await settle();
+      typeNote("saved after the tap");
+      saveNote();
+      expect(noteField()).toHaveValue("saved after the tap");
+      await act(async () => finish("limited"));
+      await settle();
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(noteField()).toHaveValue("saved after the tap");
+      expect(saveButton()).toBeEnabled();
+    });
+
+    it("shows a short Note saved line under the box (Note saved on slide 7 when it went to another slide), gone after 3 s", async () => {
+      vi.useFakeTimers();
+      const { show } = setup();
+      await settle();
+      typeNote("on seven");
+      show({ viewing: 8 });
+      fireEvent.keyDown(noteField(), { key: "Enter" });
+      expect(document.querySelector("[data-noted]")).toHaveTextContent("Note saved on slide 7");
+      await act(async () => vi.advanceTimersByTime(3000));
+      expect(document.querySelector("[data-noted]")).toBeNull();
+      typeNote("on eight");
+      fireEvent.keyDown(noteField(), { key: "Enter" });
+      expect(document.querySelector("[data-noted]")).toHaveTextContent(/^Note saved$/);
+    });
+
+    it("ties the counter to the box for a screen reader while it shows", async () => {
+      setup();
+      await settle();
+      typeNote("a".repeat(119));
+      expect(noteField()).not.toHaveAttribute("aria-describedby");
+      typeNote("a".repeat(130));
+      expect(noteField()).toHaveAccessibleDescription("10 left");
     });
 
     for (const result of ["rejected", "limited"] as const) {
