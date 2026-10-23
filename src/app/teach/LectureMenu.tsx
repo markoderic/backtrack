@@ -1,20 +1,16 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { DeleteLectureDialog } from "./DeleteLecture";
+import { moveFocus, usePopup } from "./usePopup";
 
 /** The menu items: 44 px tall rows, Small strong, a quiet reason line under one that is off. */
 const itemClass =
   "flex min-h-11 w-full flex-col items-start justify-center rounded-sm px-3 py-1.5 text-left type-small-strong text-ink outline-hidden " +
   "transition-colors duration-(--dur-fast) ease-out hover:bg-bg focus-visible:bg-bg " +
   "focus-visible:shadow-[inset_0_0_0_2px_var(--color-ink)] aria-disabled:cursor-default aria-disabled:text-secondary aria-disabled:hover:bg-transparent";
-
-const GAP = 4;
-const EDGE = 8;
-
-type Place = { top?: number; bottom?: number; right: number };
 
 /**
  * The ⋯ button at the end of a lecture row (Marko, 2:05 PM: in place of a Delete that only
@@ -29,16 +25,12 @@ type Place = { top?: number; bottom?: number; right: number };
  */
 export function LectureMenu({ lectureId, lectureName, live }: { lectureId: string; lectureName: string; live: boolean }) {
   const [open, setOpen] = useState(false);
-  const [place, setPlace] = useState<Place | null>(null);
   const [confirming, setConfirming] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const startAt = useRef<"first" | "last">("first");
   const ids = useId();
   const menuId = `${ids}-menu`;
-  const placed = place !== null;
-
-  const items = () => Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
 
   function show(at: "first" | "last") {
     startAt.current = at;
@@ -47,73 +39,21 @@ export function LectureMenu({ lectureId, lectureName, live }: { lectureId: strin
 
   function close(refocus: boolean) {
     setOpen(false);
-    setPlace(null);
     if (refocus) trigger.current?.focus();
   }
 
-  // Under the button, right edges lined up; above the button when there is no room below.
-  function measure() {
-    if (!trigger.current) return;
-    const r = trigger.current.getBoundingClientRect();
-    const h = menu.current?.offsetHeight ?? 0;
-    const right = Math.max(EDGE, window.innerWidth - r.right);
-    const roomBelow = window.innerHeight - r.bottom - GAP - EDGE;
-    setPlace(
-      h > roomBelow && r.top - GAP - EDGE > roomBelow
-        ? { bottom: window.innerHeight - r.top + GAP, right }
-        : { top: r.bottom + GAP, right },
-    );
-  }
-
-  useLayoutEffect(() => {
-    if (open) measure();
-  }, [open]);
-
-  // Back or Forward (batch A review M2): Next keeps a visited page alive but hidden, and a hidden
-  // page's effects are cleaned up, so the menu closes then; going Forward again shows it closed,
-  // and nothing pulls focus into it.
-  useEffect(
-    () => () => {
-      setOpen(false);
-      setPlace(null);
-    },
-    [],
-  );
+  // Placed under the button (above it when there is no room below) and carried along on scroll and
+  // resize; a press elsewhere, Back or Forward (batch A review M2: Next keeps a visited page alive
+  // but hidden, and a hidden page's effects are cleaned up) or leaving the page closes it.
+  const place = usePopup({ open, close, trigger, panel: menu });
+  const placed = place !== null;
 
   // The keyboard goes into the menu once it is placed.
   useEffect(() => {
-    if (!open || !place) return;
-    const list = items();
+    if (!open || !placed) return;
+    const list = Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
     (startAt.current === "last" ? list[list.length - 1] : list[0])?.focus({ preventScroll: true });
-    // Only when it opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, placed]);
-
-  // A press anywhere else closes it; a scroll or a resize carries it along with its button.
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: Event) => {
-      const t = e.target as Node;
-      if (menu.current?.contains(t) || trigger.current?.contains(t)) return;
-      close(false);
-    };
-    // Leaving the page by history (Back, Forward, a swipe) or by hiding it closes it too.
-    const gone = () => close(false);
-    document.addEventListener("mousedown", outside);
-    document.addEventListener("touchstart", outside);
-    window.addEventListener("popstate", gone);
-    window.addEventListener("pagehide", gone);
-    window.addEventListener("scroll", measure, true);
-    window.addEventListener("resize", measure);
-    return () => {
-      document.removeEventListener("mousedown", outside);
-      document.removeEventListener("touchstart", outside);
-      window.removeEventListener("popstate", gone);
-      window.removeEventListener("pagehide", gone);
-      window.removeEventListener("scroll", measure, true);
-      window.removeEventListener("resize", measure);
-    };
-  }, [open]);
 
   function onTriggerKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -123,21 +63,9 @@ export function LectureMenu({ lectureId, lectureName, live }: { lectureId: strin
   }
 
   function onMenuKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    const list = items();
-    const at = list.indexOf(document.activeElement as HTMLElement);
-    const go = (i: number) => list[(i + list.length) % list.length]?.focus({ preventScroll: true });
-    if (e.key === "ArrowDown") {
+    const list = Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    if (moveFocus(e.key, list)) {
       e.preventDefault();
-      go(at + 1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      go(at - 1);
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      go(0);
-    } else if (e.key === "End") {
-      e.preventDefault();
-      go(list.length - 1);
     } else if (e.key === "Escape" || e.key === "Tab") {
       e.preventDefault();
       e.stopPropagation();

@@ -40,9 +40,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => {} }),
 }));
 vi.mock("./sign-in-button", () => ({ SignInButton: () => <button>Sign in</button> }));
-vi.mock("./add-course-form", () => ({
-  AddCourseForm: ({ startOpen }: { startOpen?: boolean }) => <form data-start-open={String(!!startOpen)} />,
-}));
+vi.mock("./actions", () => ({ addCourse: vi.fn(), saveSetup: vi.fn() }));
 
 import { TeachBody } from "./page";
 import NotMiamiPage from "./not-miami/page";
@@ -134,7 +132,9 @@ describe("TeachBody", () => {
     expect(html).toContain("2 lectures, last on Oct 21");
     expect(html).toContain("No lectures yet");
     expect(html).toContain("Marko");
-    expect(html).toContain('data-start-open="false"');
+    // With courses, only the "+" next to the heading; the name field opens from it.
+    expect(html).toMatch(/<button[^>]*aria-label="Add a course"[^>]*aria-expanded="false"/);
+    expect(html).not.toContain("Course name");
   });
 
   it("still lists the courses, without the line under them, when that read fails", async () => {
@@ -149,7 +149,8 @@ describe("TeachBody", () => {
   it("opens the add course field when there are no courses", async () => {
     courses.mockResolvedValue({ data: [], error: null });
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
-    expect(html).toContain('data-start-open="true"');
+    expect(html).toMatch(/<button[^>]*aria-label="Add a course"[^>]*aria-expanded="true"/);
+    expect(html).toContain("Course name");
   });
 
   it("shows Teacher sign in, and why when sign in did not finish", async () => {
@@ -191,9 +192,11 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
   });
   const cards = (html: string) => html.split('data-testid="course-card"').slice(1);
 
-  it("reads the color, section and schedule with the courses", async () => {
+  it("reads the color, section and schedule with the courses (and 0019's columns, to know the new options are in)", async () => {
     await TeachBody({ searchParams: search });
-    expect(selects).toContainEqual(["courses", "id, name, color, section, meet_days, start_minute, end_minute"]);
+    expect(selects.filter(([t]) => t === "courses")).toEqual([
+      ["courses", "id, name, color, section, meet_days, start_minute, end_minute, access_days, access_until"],
+    ]);
   });
 
   it("each course is a card: color bar, code, section, when it meets, lectures, and Start lecture", async () => {
@@ -219,11 +222,13 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
 
   it("before migration 0018 it reads the courses without the new columns and leaves them out", async () => {
     courses
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.color does not exist" } })
       .mockResolvedValueOnce({ data: [{ id: "c1", name: "IMS 452" }], error: null });
     at("2026-10-21T10:10:00-04:00");
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
     expect(selects.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, color, section, meet_days, start_minute, end_minute, access_days, access_until",
       "id, name, color, section, meet_days, start_minute, end_minute",
       "id, name",
     ]);
@@ -278,5 +283,52 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
     expect(html).not.toContain('data-testid="now-next"');
     expect(cards(html)[1]).toContain(">Mon<");
+  });
+
+  it("before migration 0019 it reads the details without 0019's columns and keeps the cards as they were", async () => {
+    courses
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
+      .mockResolvedValueOnce({ data: [ims], error: null });
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(selects.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, color, section, meet_days, start_minute, end_minute, access_days, access_until",
+      "id, name, color, section, meet_days, start_minute, end_minute",
+    ]);
+    expect(cards(html)).toHaveLength(1);
+    expect(cards(html)[0]).toContain("bg-course-teal");
+    expect(cards(html)[0]).toContain("Section B");
+  });
+
+  it("a course with a picked color (after 0019): the bar is painted with it, inline, on the card and in Now", async () => {
+    courses.mockResolvedValue({ data: [{ ...ims, color: "#2f6db5", access_days: null, access_until: null }], error: null });
+    at("2026-10-21T10:10:00-04:00");
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(cards(html)[0]).toMatch(/data-course-color="#2f6db5"[^>]*style="background-color:#2f6db5"/);
+    const block = html.match(/<section[^>]*data-testid="now-next"[\s\S]*?<\/section>/)?.[0] ?? "";
+    expect(block).toContain("background-color:#2f6db5");
+    // The new presets have their own tokens.
+    courses.mockResolvedValue({ data: [{ ...ims, color: "pink" }], error: null });
+    expect(renderToStaticMarkup(await TeachBody({ searchParams: search }))).toContain("bg-course-pink");
+  });
+
+  it("each card has a ⋯ button in its top right corner, named for the course, above the card's link", async () => {
+    courses.mockResolvedValue({ data: [ims, plain], error: null });
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    const [first, second] = cards(html);
+    expect(first).toMatch(/<div class="absolute top-2 right-2 z-10"><button[^>]*aria-label="More for IMS 452"[^>]*aria-haspopup="menu"/);
+    expect(second).toContain('aria-label="More for BIO 121"');
+  });
+
+  it("Add a course is a + icon button next to the Courses heading, not a text button under the cards", async () => {
+    courses.mockResolvedValue({ data: [ims], error: null });
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    const row = html.match(/<div class="flex items-center justify-between gap-4"><h1[^>]*>Courses<\/h1><button[^>]*>[\s\S]*?<\/button><\/div>/)?.[0];
+    expect(row).toBeDefined();
+    expect(row).toContain('aria-label="Add a course"');
+    expect(row).toContain('data-icon="close"');
+    expect(row).toContain("rotate-45");
+    // No visible "Add a course" text anywhere on the dashboard.
+    expect(html).not.toMatch(/>Add a course</);
+    expect(html.indexOf('aria-label="Add a course"')).toBeLessThan(html.indexOf('data-testid="course-card"'));
   });
 });

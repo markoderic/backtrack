@@ -3,9 +3,9 @@ import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { isMiamiEmail } from "@/lib/email";
 import { formatLectureDate } from "@/lib/lectureDate";
-import { DETAIL_COLUMNS, hasSchedule, readDetails, type CourseDetails } from "@/lib/courseDetails";
-import { AddCourseForm } from "./add-course-form";
-import { CourseCard } from "./CourseCard";
+import { DETAIL_COLUMNS, OPTION_COLUMNS, hasSchedule, readDetails, type CourseDetails } from "@/lib/courseDetails";
+import { CoursesHeading } from "./add-course-form";
+import { CourseGrid } from "./CourseGrid";
 import { LiveLectureRow } from "./LiveLectureRow";
 import { NowNext, type ScheduledCourse } from "./NowNext";
 import { RefreshOnReturn } from "./RefreshOnReturn";
@@ -33,28 +33,36 @@ function serverNow(): number {
 type DashCourse = { id: string; name: string; details: CourseDetails | null };
 
 /**
- * The teacher's courses in use, with their color, section and schedule (migration 0018). Before
- * 0018 those columns are not there: the read is made again without them, and the cards and the
- * Now / Next block leave them out (details null).
+ * The teacher's courses in use, with their color, section and schedule (migration 0018). Newest
+ * columns first: with 0019's columns there the new colors and choices can be saved (`options`).
+ * Before 0019, and before 0018, those columns are not there: the read is made again without them,
+ * and the cards and the Now / Next block leave out what they drive (details null before 0018).
  */
-async function readCourses(supabase: Supabase): Promise<DashCourse[]> {
+async function readCourses(supabase: Supabase): Promise<{ courses: DashCourse[]; options: boolean }> {
   const read = (columns: string) =>
     supabase.from("courses").select(columns).eq("archived", false).order("created_at");
-  const full = await read(`id, name, ${DETAIL_COLUMNS}`);
-  if (!full.error) {
-    return ((full.data ?? []) as unknown as Record<string, unknown>[]).map((c) => ({
-      id: String(c.id),
-      name: String(c.name),
-      details: readDetails(c),
-    }));
+  for (const [columns, options] of [
+    [`id, name, ${DETAIL_COLUMNS}, ${OPTION_COLUMNS}`, true],
+    [`id, name, ${DETAIL_COLUMNS}`, false],
+  ] as const) {
+    const full = await read(columns);
+    if (!full.error) {
+      const courses = ((full.data ?? []) as unknown as Record<string, unknown>[]).map((c) => ({
+        id: String(c.id),
+        name: String(c.name),
+        details: readDetails(c),
+      }));
+      return { courses, options };
+    }
   }
   const plain = await read("id, name");
   if (plain.error) throw new Error(plain.error.message);
-  return ((plain.data ?? []) as unknown as { id: string; name: string }[]).map((c) => ({
+  const courses = ((plain.data ?? []) as unknown as { id: string; name: string }[]).map((c) => ({
     id: c.id,
     name: c.name,
     details: null,
   }));
+  return { courses, options: false };
 }
 
 /**
@@ -96,7 +104,7 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
       .maybeSingle();
     if (teacher && !teacher.display_name) redirect("/teach/setup");
     if (teacher) {
-      const list = await readCourses(supabase);
+      const { courses: list, options } = await readCourses(supabase);
       // Joined students can read the lectures they joined, so ask for the
       // teacher's own courses explicitly instead of relying on row level security.
       const { data: live, error: liveError } = await supabase
@@ -140,23 +148,17 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
             {scheduled.length > 0 && (
               <NowNext courses={scheduled} liveCourseIds={[...liveByCourse.keys()]} initialNow={now} />
             )}
-            <h1 className="type-display text-ink">Courses</h1>
-            {list.length > 0 && (
-              <ul className="grid grid-cols-1 gap-4 pt-6 pb-4 sm:grid-cols-2 lg:grid-cols-3">
-                {list.map((course, i) => (
-                  <CourseCard
-                    key={course.id}
-                    id={course.id}
-                    name={course.name}
-                    details={course.details}
-                    meta={held ? courseMeta(byCourse.get(course.id)) : null}
-                    liveLectureId={liveByCourse.get(course.id) ?? null}
-                    index={i}
-                  />
-                ))}
-              </ul>
-            )}
-            <AddCourseForm startOpen={list.length === 0} />
+            <CoursesHeading startOpen={list.length === 0} />
+            <CourseGrid
+              options={options}
+              courses={list.map((course) => ({
+                id: course.id,
+                name: course.name,
+                details: course.details,
+                meta: held ? courseMeta(byCourse.get(course.id)) : null,
+                liveLectureId: liveByCourse.get(course.id) ?? null,
+              }))}
+            />
           </main>
         </TeacherPage>
       );

@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
-import { colorClass, scheduleLabel, type CourseDetails } from "@/lib/courseDetails";
+import { colorPaint, scheduleLabel, type CourseDetails } from "@/lib/courseDetails";
+import { CourseMenu } from "./CourseMenu";
 import { splitCourseName, staggerClass, staggerStyle } from "./ui";
 
 /**
  * One course on the dashboard (batch D): a card with the course's color as a bar down its left
  * side, the code and title, the section, when it meets, how many lectures it has had, and Start
  * lecture (Resume while one of its lectures is live). The whole card opens the course page (the
- * name is the link, stretched over the card); the button sits above that link.
+ * name is the link, stretched over the card); the button sits above that link. The ⋯ menu in the
+ * top right corner (batch H) sits above it too: Download CSV, Edit details, Rename, Archive.
  * No white fill behind the content (design brief: surface is never a card behind content): a
  * hairline outline on the page background, white only as a hover.
  */
@@ -18,6 +20,9 @@ export function CourseCard({
   meta,
   liveLectureId,
   index,
+  options,
+  onArchive,
+  announce,
 }: {
   id: string;
   name: string;
@@ -28,10 +33,15 @@ export function CourseCard({
   /** A lecture of this course that is live now. */
   liveLectureId?: string | null;
   index: number;
+  /** Migration 0019 is in: the new colors and Custom in Edit details. */
+  options: boolean;
+  onArchive: () => Promise<boolean>;
+  announce: (text: string) => void;
 }) {
   const { code, title } = splitCourseName(name);
   const schedule = details ? scheduleLabel(details) : null;
   const color = details?.color ?? null;
+  const paint = colorPaint(color);
   return (
     <li className={`flex ${staggerClass}`} style={staggerStyle(index)} data-testid="course-card">
       <article
@@ -43,9 +53,27 @@ export function CourseCard({
           "outline-0 outline-offset-4 outline-transparent has-[[data-card-link]:focus-visible]:outline-2 has-[[data-card-link]:focus-visible]:outline-ink"
         }
       >
-        <span aria-hidden data-course-color={color ?? "none"} className={`w-1.5 shrink-0 ${colorClass(color)}`} />
+        <span
+          aria-hidden
+          data-course-color={color ?? "none"}
+          className={`w-1.5 shrink-0 ${paint.className}`}
+          style={paint.style}
+        />
+        {/* Above the card's link, in the top right corner. */}
+        <div className="absolute top-2 right-2 z-10">
+          <CourseMenu
+            courseId={id}
+            name={name}
+            code={code}
+            details={details}
+            options={options}
+            onArchive={onArchive}
+            announce={announce}
+          />
+        </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1 py-5 pr-5 pl-4">
-          <div className="flex min-w-0 items-baseline gap-3">
+          {/* Room on the right for the ⋯ button. */}
+          <div className="flex min-w-0 items-baseline gap-3 pr-10">
             <h2 className="min-w-0 flex-1 truncate type-title text-ink">
               <Link
                 href={`/teach/c/${id}`}

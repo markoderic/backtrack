@@ -56,14 +56,17 @@ const Slash = () => (
 /**
  * Courses (the dashboard, /teach): the heading, three course cards in the same grid as the page
  * (outline, a bar down the left side where the color goes, name, a line under it, the schedule
- * and lectures lines, and the button), then Add a course. The Now / Next block is left out: it
+ * and lectures lines, and the button), with the "+" (Add a course) next to the heading. The Now / Next block is left out: it
  * only shows when a course has a schedule, so the skeleton can not know it is there.
  */
 export function CoursesSkeleton() {
   return (
     <SkeletonShell crumbs={<span className="type-small-strong text-ink">Courses</span>}>
       <main className="mx-auto flex w-full max-w-[1104px] flex-col gap-2 px-4 py-12 sm:px-8">
-        <h1 className="type-display text-ink">Courses</h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="type-display text-ink">Courses</h1>
+          <Bone className="size-11" />
+        </div>
         <ul aria-hidden className="grid grid-cols-1 gap-4 pt-6 pb-4 sm:grid-cols-2 lg:grid-cols-3">
           {/* Different widths, so the cards read as names and not as a grid of copies. */}
           {["w-[min(120px,60%)]", "w-[min(96px,50%)]", "w-[min(110px,55%)]"].map((w, i) => (
@@ -79,7 +82,6 @@ export function CoursesSkeleton() {
             </li>
           ))}
         </ul>
-        <Bone className="mt-4 h-11 w-32" />
       </main>
     </SkeletonShell>
   );
