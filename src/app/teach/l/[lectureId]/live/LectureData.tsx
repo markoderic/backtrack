@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
@@ -10,7 +10,6 @@ import { ButtonPrimary, buttonPrimaryClass, buttonSecondaryClass } from "@/compo
 import { Icon } from "@/components/Icon";
 import {
   highlightsBySlide,
-  marksBySlide,
   notesBySlide,
   redSlides,
   slideStats,
@@ -20,7 +19,7 @@ import {
 } from "@/lib/stats";
 import { useSlideUrls } from "@/lib/useSlideUrls";
 import { useHereCount } from "@/lib/useHere";
-import { WATCHING_HINT } from "@/lib/watching";
+import { WATCHING_HINT, WATCHING_SPOKEN } from "@/lib/watching";
 import { returnToFullscreen } from "@/lib/fullscreenReturn";
 import { SlideFocus } from "./SlideFocus";
 
@@ -167,8 +166,8 @@ const endButtonClass = `${buttonSecondaryClass} h-12! shrink-0 px-5`;
 const highlights = (n: number) => (n > 0 ? `${n} ${n === 1 ? "highlight" : "highlights"}` : null);
 
 /**
- * One number in the summary row: a quiet label over a Geist Light number. `describedBy` points
- * the label at a description outside the list (with `hint` as its hover text).
+ * One number in the summary row: a quiet label over a Geist Light number. `hint` is the label's
+ * hover text, and `spoken` what a screen reader hears after the label (visually hidden).
  */
 function Figure({
   label,
@@ -176,19 +175,20 @@ function Figure({
   extra,
   testId,
   hint,
-  describedBy,
+  spoken,
 }: {
   label: string;
   value: React.ReactNode;
   extra?: React.ReactNode;
   testId: string;
   hint?: string;
-  describedBy?: string;
+  spoken?: string;
 }) {
   return (
     <div data-testid={testId} className="flex min-w-0 flex-col gap-1">
-      <dt title={hint} aria-describedby={describedBy} className="type-small text-secondary">
-        {label}
+      <dt title={hint} className="type-small text-secondary">
+        <span>{label}</span>
+        {spoken && <span className="sr-only">{spoken}</span>}
       </dt>
       <dd className="flex min-w-0 items-baseline gap-2">
         <span className={typeof value === "number" ? "type-number-s text-ink" : "type-body text-secondary"}>{value}</span>
@@ -240,7 +240,6 @@ export function LectureData({
   };
   // Who has the lecture open right now (Realtime Presence, as the projector counts it).
   const here = useHereCount(lectureId, live);
-  const watchingHint = useId();
   const [tip, setTip] = useState<Tip | null>(null);
   const chartBox = useRef<HTMLDivElement>(null);
   const endButton = useRef<HTMLButtonElement>(null);
@@ -507,7 +506,9 @@ export function LectureData({
   const red = useMemo(() => redSlides(stats), [stats]);
   const most = Math.max(0, ...stats.map((s) => s.students));
   const boxes = useMemo(() => highlightsBySlide(rows), [rows]);
-  const marks = useMemo(() => marksBySlide(rows), [rows]);
+  // Highlights per slide: the number of Mark the spot boxes drawn on it (the brief's count), not
+  // the number of people, so the caption always matches the boxes on the slide.
+  const marks = useMemo(() => new Map(Array.from(boxes, ([n, list]) => [n, list.length])), [boxes]);
   const noteMap = useMemo(() => notesBySlide(rows), [rows]);
 
   const liveSlide = Math.min(Math.max(current, 1), Math.max(slides.length, 1));
@@ -547,7 +548,9 @@ export function LectureData({
   );
   const mostLost = ranked[0];
   // A student with two tabs open is one person: never more here than joined.
-  const hereNow = live && here !== null ? (joined !== null ? Math.min(here, joined) : here) : null;
+  // Shown once both counts are known, capped at joined like the projector: presence counts a
+  // second tab twice, so an uncapped number must never flash before the joined count arrives.
+  const hereNow = live && here !== null && joined !== null ? Math.min(here, joined) : null;
 
   // The card over a hovered or focused bar sits just above that bar's count, kept inside the chart.
   const showTip = (n: number, button: HTMLElement) => {
@@ -720,11 +723,6 @@ export function LectureData({
       )}
 
       {/* The lecture in numbers. Joined and watching also stand for the header's old "N joined". */}
-      {loaded && hereNow !== null && (
-        <span hidden id={watchingHint}>
-          {WATCHING_HINT}
-        </span>
-      )}
       {loaded && (
         <dl
           data-testid="summary"
@@ -732,7 +730,7 @@ export function LectureData({
         >
           <Figure testId="sum-joined" label="Joined" value={joined ?? "–"} />
           {hereNow !== null && (
-            <Figure testId="sum-here" label="Watching now" value={hereNow} hint={WATCHING_HINT} describedBy={watchingHint} />
+            <Figure testId="sum-here" label="Watching now" value={hereNow} hint={WATCHING_HINT} spoken={WATCHING_SPOKEN} />
           )}
           <Figure
             testId="sum-tapped"

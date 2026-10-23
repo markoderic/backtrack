@@ -1426,8 +1426,9 @@ describe("LectureData summary row", () => {
     expect(figure("sum-here")).toBe("7");
     // Marko did not read "Here now" or "Marked spots": "Watching now" (with what it means) and "Highlights".
     const watching = within(screen.getByTestId("sum-here")).getByText("Watching now");
-    expect(watching).toHaveAccessibleDescription("Students with the lecture open right now");
-    expect(watching).toHaveAttribute("title", "Students with the lecture open right now");
+    // What it means: hover text, and words a screen reader hears right after the label.
+    expect(watching.closest("dt")).toHaveAttribute("title", "Students with the lecture open right now");
+    expect(watching.closest("dt")!.querySelector(".sr-only")).toHaveTextContent(", students with the lecture open right now");
     expect(within(screen.getByTestId("sum-marks")).getByText("Highlights")).toBeInTheDocument();
     expect(screen.queryByText("Here now")).toBeNull();
     expect(screen.queryByText("Marked spots")).toBeNull();
@@ -1442,6 +1443,34 @@ describe("LectureData summary row", () => {
     expect(figure("sum-marks")).toBe("2");
     // Slide 2: 2 people, 3 taps.
     expect(figure("sum-most")).toBe("2Heading 2");
+  });
+
+  it("Highlights counts the boxes: one student drawing two boxes on one slide is 2 (review I1)", async () => {
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 2, anon_id: "s1", ...HL }),
+        row("b", { slide_number: 2, anon_id: "s1", hl_x: 0.5, hl_y: 0.5, hl_w: 0.2, hl_h: 0.1 }),
+        row("c", { slide_number: 3, anon_id: "s2", ...HL }),
+      ],
+      error: null,
+    });
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("3"));
+    select(2);
+    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("2 highlights");
+    expect(within(slideRow(2)).getByText(", 2 highlights")).toBeInTheDocument();
+    expect(within(slideRow(3)).getByText(", 1 highlight")).toBeInTheDocument();
+  });
+
+  it("shows Watching now only once the joined count is known, capped at it, never an uncapped number first (review I2)", async () => {
+    let giveJoined: (v: unknown) => void = () => {};
+    h.participantsQuery.mockReturnValue(new Promise((r) => (giveJoined = r)));
+    h.here.mockReturnValue(12);
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(screen.queryByTestId("sum-here")).toBeNull();
+    await act(async () => giveJoined({ count: 7, error: null }));
+    expect(figure("sum-here")).toBe("7");
   });
 
   it("shows here only while live, and follows a Realtime change in every number", async () => {
