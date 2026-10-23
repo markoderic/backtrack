@@ -161,6 +161,18 @@ describe("SlideUploads", () => {
     expect(upload.mock.calls[1][0]).toBe("lecture-2/1.webp");
   });
 
+  it("takes a long deck out in calls of 100 paths (review M9)", async () => {
+    const upload = vi.fn(async () => {});
+    const remove = vi.fn();
+    const uploads = new SlideUploads({ upload, remove }, () => {}, 4, () => "l");
+    uploads.begin(1);
+    uploads.setTotal(1, 250);
+    for (let i = 0; i < 250; i++) uploads.add(1, i, image());
+    await expect(uploads.settle([1])).resolves.toBe(true);
+    uploads.discard(1);
+    expect(remove.mock.calls.map((c) => c[0].length)).toEqual([100, 100, 50]);
+  });
+
   it("tells the form to draw again as things change", async () => {
     const { uploads, onChange, finish } = setup(4);
     uploads.begin(1);

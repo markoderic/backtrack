@@ -12,8 +12,12 @@ const upload = vi.fn();
 const remove = vi.fn();
 const rpc = vi.fn();
 const from = vi.fn(() => ({ upload, remove }));
+// The read after a start whose id was taken: from("lectures").select("id").eq("id", ...).maybeSingle().
+const lectureRow = vi.fn();
+const lectureEq = vi.fn(() => ({ maybeSingle: lectureRow }));
+const fromTable = vi.fn(() => ({ select: () => ({ eq: lectureEq }) }));
 vi.mock("@/lib/supabase/browser", () => ({
-  createBrowserSupabase: () => ({ storage: { from }, rpc }),
+  createBrowserSupabase: () => ({ storage: { from }, rpc, from: fromTable }),
 }));
 
 // The projector opens with replace (Back goes to the course, not to this form).
@@ -51,6 +55,9 @@ beforeEach(() => {
   cleanupOrphanUploads.mockReset().mockResolvedValue(0);
   rpc.mockReset();
   from.mockClear();
+  fromTable.mockClear();
+  lectureEq.mockClear();
+  lectureRow.mockReset().mockResolvedValue({ data: null, error: null });
   replace.mockReset();
   refresh.mockReset();
   upload.mockResolvedValue({ data: {}, error: null });
@@ -115,8 +122,12 @@ describe("StartForm", () => {
     render(<StartForm courseId={COURSE} existingCount={0} />);
     choose();
     // Announced in one polite live region that is always on the page.
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Preparing slide 12 of 40"));
+    await waitFor(() => expect(screen.getByText("Preparing slide 12 of 40")).toBeInTheDocument());
+    // Announced in one polite live region that is always on the page, by phase only; the count
+    // is the bar's value.
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing slides");
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByRole("progressbar", { name: "Preparing slides" })).toHaveAttribute("aria-valuetext", "Preparing slide 12 of 40");
     expect(screen.getByRole("progressbar", { name: "Preparing slides" })).toHaveAttribute("aria-valuenow", "12");
     expect(screen.getByText(/^40 pages, /)).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
@@ -334,13 +345,15 @@ describe("StartForm", () => {
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady();
     // Already uploading in the background, on the file's card.
-    expect(screen.getByRole("status")).toHaveTextContent("Uploading 0 of 2");
+    expect(screen.getByRole("status")).toHaveTextContent("Uploading slides");
+    expect(screen.getByText("Uploading 0 of 2")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Uploading slides.pdf" })).toBeInTheDocument();
     fireEvent.click(startButton());
     await waitFor(() => expect(screen.getByRole("progressbar", { name: "Uploading slides" })).toHaveAttribute("aria-valuemax", "2"));
-    expect(screen.getByRole("status")).toHaveTextContent("Uploading 0 of 2");
-    // On screen next to Start lecture (the card's own bar steps aside), as well as in the status line.
-    expect(screen.getAllByText("Uploading 0 of 2")).toHaveLength(2);
+    expect(screen.getByRole("status")).toHaveTextContent("Uploading slides");
+    // On screen next to Start lecture (the card's own bar steps aside), the count in the bar's value too.
+    expect(screen.getAllByText("Uploading 0 of 2")).toHaveLength(1);
+    expect(screen.getByRole("progressbar", { name: "Uploading slides" })).toHaveAttribute("aria-valuetext", "Uploading 0 of 2");
     expect(screen.queryByRole("progressbar", { name: "Uploading slides.pdf" })).toBeNull();
     expect(screen.queryByRole("progressbar", { name: "Preparing slides" })).toBeNull();
     // No lecture with a missing slide.
@@ -559,8 +572,10 @@ describe("StartForm background uploads", () => {
     upload.mockResolvedValueOnce({ data: {}, error: null }).mockReturnValueOnce(second.promise);
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady();
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Uploading 1 of 2"));
+    await waitFor(() => expect(screen.getByText("Uploading 1 of 2")).toBeInTheDocument());
+    expect(screen.getByRole("status")).toHaveTextContent("Uploading slides");
     const bar = screen.getByRole("progressbar", { name: "Uploading slides.pdf" });
+    expect(bar).toHaveAttribute("aria-valuetext", "Uploading 1 of 2");
     expect(bar).toHaveAttribute("aria-valuenow", "3");
     expect(bar).toHaveAttribute("aria-valuemax", "4");
     expect(screen.getByText("2 slides")).toBeInTheDocument();
@@ -583,6 +598,59 @@ describe("StartForm background uploads", () => {
     await act(async () => last.d.resolve({ data: {}, error: null }));
     await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
     expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it("the live region says only the phase (Preparing, Uploading, ready), never each count (review I3)", async () => {
+    const pages = [blob("image/webp"), blob("image/webp"), blob("image/webp")];
+    let finish: (v: unknown) => void = () => {};
+    renderPdf.mockImplementation((_f: File, onProgress: (d: number, t: number) => void, onPage: (b: Blob, i: number) => void) => {
+      pages.forEach((p, i) => {
+        onPage(p, i);
+        onProgress(i + 1, 3);
+      });
+      return new Promise((r) => (finish = r));
+    });
+    const sent = [later(), later(), later()];
+    sent.forEach((x) => upload.mockReturnValueOnce(x.promise));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    const said = new Set<string>();
+    const region = screen.getByTestId("start-status");
+    const watch = new MutationObserver(() => said.add(region.textContent ?? ""));
+    watch.observe(region, { childList: true, characterData: true, subtree: true });
+    choose();
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(3));
+    await act(async () => sent[0].d.resolve({ data: {}, error: null }));
+    await act(async () => finish({ blobs: pages, firstLines: ["", "", ""] }));
+    await act(async () => sent[1].d.resolve({ data: {}, error: null }));
+    await act(async () => sent[2].d.resolve({ data: {}, error: null }));
+    await waitFor(() => expect(region).toHaveTextContent("3 slides ready"));
+    watch.disconnect();
+    expect([...said].filter(Boolean)).toEqual(["Preparing slides", "Uploading slides", "3 slides ready"]);
+  });
+
+  it("a start whose answer was lost (the id is taken by the lecture it made) opens the projector on the next press", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "23505", message: "duplicate key value violates unique constraint \"lectures_pkey\"" } });
+    lectureRow.mockResolvedValueOnce({ data: { id: "made" }, error: null });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    const id = rpc.mock.calls[0][1].p_lecture_id as string;
+    expect(fromTable).toHaveBeenCalledWith("lectures");
+    expect(lectureEq).toHaveBeenCalledWith("id", id);
+    expect(replace).toHaveBeenCalledWith(`/teach/l/${id}/present`);
+  });
+
+  it("a taken id with no lecture of this teacher behind it is still an error", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "23505", message: "duplicate key" } });
+    lectureRow.mockResolvedValueOnce({ data: null, error: null });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    await chooseReady();
+    fireEvent.click(startButton());
+    expect(await screen.findByText("Could not start the lecture. Try again.")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("Remove takes the PDF's images back out of storage", async () => {
@@ -716,11 +784,12 @@ describe("StartForm shown again after a start", () => {
     await waitFor(() => expect(nameField().value).toMatch(/^Lecture 4, /));
   });
 
-  it("a PDF still being prepared when the page was hidden starts preparing again when it is shown", async () => {
+  it("a PDF still being prepared when the page was hidden starts preparing again when it is shown, and its partial upload goes", async () => {
     let calls = 0;
-    renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void) => {
+    renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void, onPage: (b: Blob, i: number) => void) => {
       calls++;
       if (calls === 1) {
+        onPage(blob("image/webp"), 0);
         onProgress(1, 3);
         // The first render is stopped at its next page when the page is hidden.
         return new Promise((_resolve, reject) => setTimeout(() => {
@@ -735,13 +804,41 @@ describe("StartForm shown again after a start", () => {
     });
     const view = render(at("visible"));
     choose("long.pdf");
-    await waitFor(() => expect(screen.getByTestId("start-status")).toHaveTextContent("Preparing slide 1 of 3"));
+    await waitFor(() => expect(screen.getByText("Preparing slide 1 of 3")).toBeInTheDocument());
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    const partial = upload.mock.calls[0][0] as string;
     view.rerender(at("hidden"));
     await act(async () => new Promise((r) => setTimeout(r, 40)));
     view.rerender(at("visible"));
     await waitFor(() => expect(startButton()).toBeEnabled());
     expect(renderPdf).toHaveBeenCalledTimes(2);
-    expect(screen.getByTestId("start-status")).toHaveTextContent("3 slides ready");
+    await waitFor(() => expect(screen.getByTestId("start-status")).toHaveTextContent("3 slides ready"));
+    // The first run's upload went back out; the pages went up again under new names.
+    expect(remove).toHaveBeenCalledWith([partial]);
+    fireEvent.click(startButton());
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1));
+    const id = rpc.mock.calls[0][1].p_lecture_id as string;
+    expect(rpc.mock.calls[0][1].p_slides.map((x: { image_path: string }) => x.image_path)).toEqual([`${id}/2.webp`, `${id}/3.webp`, `${id}/4.webp`]);
+    expect(partial).toBe(`${id}/1.webp`);
+  });
+
+  it("hidden and shown again before the first run reached its next page: that run stops, only the new one goes on (review M6)", async () => {
+    const progress: ((d: number, t: number) => void)[] = [];
+    renderPdf.mockImplementation((_file: File, onProgress: (d: number, t: number) => void) => {
+      progress.push(onProgress);
+      onProgress(1, 3);
+      return new Promise(() => {});
+    });
+    const view = render(at("visible"));
+    choose("long.pdf");
+    await waitFor(() => expect(renderPdf).toHaveBeenCalledTimes(1));
+    view.rerender(at("hidden"));
+    await act(async () => {});
+    view.rerender(at("visible"));
+    await waitFor(() => expect(renderPdf).toHaveBeenCalledTimes(2));
+    // The old run's next page is refused; the new run's is not.
+    expect(() => progress[0](2, 3)).toThrow();
+    expect(() => progress[1](2, 3)).not.toThrow();
   });
 
   it("is left alone when it is shown again without a start (the teacher went to look at something)", async () => {

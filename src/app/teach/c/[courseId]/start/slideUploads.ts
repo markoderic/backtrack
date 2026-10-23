@@ -43,6 +43,9 @@ type Batch = {
 
 type Item = { batch: Batch; index: number; path: string; tries: number };
 
+/** Paths per Storage remove call. */
+const REMOVE_BATCH = 100;
+
 /** One quiet retry in the background; after that Start lecture asks again. */
 const BACKGROUND_TRIES = 2;
 
@@ -105,7 +108,7 @@ export class SlideUploads {
     batch.pending -= queued;
     const paths = batch.paths.filter((p): p is string => typeof p === "string");
     batch.paths = [];
-    if (paths.length > 0) this.store.remove(paths);
+    this.removeAll(paths);
     this.notify();
     this.onChange();
   }
@@ -171,7 +174,7 @@ export class SlideUploads {
       const old = batch.paths.filter((p): p is string => typeof p === "string");
       batch.paths = [];
       batch.failed.clear();
-      if (old.length > 0) this.store.remove(old);
+      this.removeAll(old);
       batch.images.forEach((image, index) => {
         if (image) this.enqueue(batch, index, 0);
       });
@@ -188,6 +191,11 @@ export class SlideUploads {
     this.number = 0;
     this.notify();
     this.onChange();
+  }
+
+  /** Storage takes a list; a long deck goes in calls of 100, as elsewhere in the app. */
+  private removeAll(paths: string[]): void {
+    for (let i = 0; i < paths.length; i += REMOVE_BATCH) this.store.remove(paths.slice(i, i + REMOVE_BATCH));
   }
 
   private enqueue(batch: Batch, index: number, tries: number): void {

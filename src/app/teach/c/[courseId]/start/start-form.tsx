@@ -130,9 +130,12 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const fileInput = useRef<HTMLInputElement>(null);
   const pickTarget = useRef<PickTarget>({ mode: "add" });
   const nextKey = useRef(0);
-  // The PDFs being prepared right now. A removed or replaced PDF's render (or every render, when
-  // the page is hidden or goes away) is ignored and stopped at its next page.
-  const alive = useRef(new Set<number>());
+  // The PDFs being prepared right now, each with the run preparing it. A removed or replaced
+  // PDF's render (or every render, when the page is hidden or goes away), and a run that a newer
+  // one replaced (hidden and shown again before it reached its next page), is ignored and stopped
+  // at its next page.
+  const alive = useRef(new Map<number, number>());
+  const runs = useRef(0);
   // A PDF being prepared as a Replace, by its key: the part it replaces, put back if it fails.
   const replaced = useRef(new Map<number, Part>());
   const partsNow = useRef<Part[]>([]);
@@ -177,10 +180,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   // was still being prepared: that PDF starts preparing again, so it is never stuck halfway.
   useEffect(() => {
     for (const part of partsNow.current) {
-      if (part.prep.status === "preparing" && !alive.current.has(part.key)) {
-        alive.current.add(part.key);
-        void prepare(part.key, part.file);
-      }
+      if (part.prep.status === "preparing" && !alive.current.has(part.key)) void prepare(part.key, part.file);
     }
     const running = alive.current;
     return () => running.clear();
@@ -195,21 +195,24 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     // A fresh run: anything an earlier run of this PDF put up (a render stopped when the page was
     // hidden) goes, and its pages go up again as they are made.
     uploads.begin(key);
+    const run = ++runs.current;
+    alive.current.set(key, run);
+    const mine = () => alive.current.get(key) === run;
     try {
       const result = await renderPdf(
         file,
         (done, total) => {
           // Throwing here stops the render at this page (renderPdf cleans up in its finally).
-          if (!alive.current.has(key)) throw new Error("cancelled");
+          if (!mine()) throw new Error("cancelled");
           uploads.setTotal(key, total);
           update(key, { status: "preparing", done, total });
         },
         // Each page uploads as soon as it is made, while the next one renders.
         (image, index) => {
-          if (alive.current.has(key)) uploads.add(key, index, image);
+          if (mine()) uploads.add(key, index, image);
         },
       );
-      if (!alive.current.has(key)) return;
+      if (!mine()) return;
       alive.current.delete(key);
       uploads.setTotal(key, result.blobs.length);
       // Any page not handed over yet goes up now (added once; the rest are already on their way).
@@ -220,7 +223,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       if (before) uploads.discard(before.key);
       replaced.current.delete(key);
     } catch (e) {
-      if (!alive.current.has(key)) return;
+      if (!mine()) return;
       alive.current.delete(key);
       // A file that could not be read: whatever it put up goes.
       uploads.discard(key);
@@ -230,10 +233,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       replaced.current.delete(key);
       if (old) {
         setParts((list) => list.map((p) => (p.key === key ? old : p)));
-        if (old.prep.status !== "ready") {
-          alive.current.add(old.key);
-          void prepare(old.key, old.file);
-        }
+        if (old.prep.status !== "ready") void prepare(old.key, old.file);
       } else {
         setParts((list) => list.filter((p) => p.key !== key));
       }
@@ -249,7 +249,6 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     setError(null);
     const fresh = (target.mode === "replace" ? picked.slice(0, 1) : picked).map((file) => {
       const key = ++nextKey.current;
-      alive.current.add(key);
       return { key, file, prep: { status: "preparing", done: 0, total: 0 } } as Part;
     });
     if (target.mode === "replace") {
@@ -337,6 +336,12 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
         if (!(await uploads.settle(startKeys))) throw new UploadError("Some slides did not upload.");
         ({ error: rpcError } = await create());
       }
+      // The id is taken: an earlier press created this lecture but its answer was lost. If the
+      // lecture is there (and so this teacher's), that start worked.
+      if (rpcError?.code === "23505") {
+        const { data: made } = await supabase.from("lectures").select("id").eq("id", lectureId).maybeSingle();
+        if (made) rpcError = null;
+      }
       if (rpcError) throw new StartError(rpcError.message);
 
       // Replace, not push: Back from the projector goes to the course (with the live lecture
@@ -364,14 +369,16 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       return u.failed > 0 && u.pending === 0;
     });
   const stalledText = "Some slides did not upload. Start lecture tries again.";
-  // One live region that is always there, so screen readers hear the progress as it changes.
+  // One live region that is always there. It says only when the phase changes (preparing,
+  // uploading, ready, stalled), so it never talks over the teacher typing the name; the counts
+  // are in the progress bars' values for whoever wants them.
   const status =
     preparing && preparing.prep.status === "preparing"
-      ? preparingText(preparing.prep)
+      ? "Preparing slides"
       : ready && !uploaded
         ? stalled
           ? stalledText
-          : uploadText
+          : "Uploading slides"
         : ready
           ? `${slidesWord(totalSlides)} ready`
           : "";
@@ -589,7 +596,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
         {starting && !uploaded && (
           // Start waits for the uploads still running (D5), and says so next to the button.
           <div className="flex min-w-0 flex-1 basis-56 animate-fade-in items-center gap-3">
-            <ProgressBar done={sent.done} total={sent.total} label="Uploading slides" className="w-40 shrink-0" />
+            <ProgressBar done={sent.done} total={sent.total} label="Uploading slides" text={uploadText} className="w-40 shrink-0" />
             <p aria-hidden className="type-small whitespace-nowrap text-secondary">
               {uploadText}
             </p>
