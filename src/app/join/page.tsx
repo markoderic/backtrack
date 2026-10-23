@@ -4,8 +4,9 @@ import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, typ
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
-import { ButtonPrimary } from "@/components/ButtonPrimary";
+import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
+import { LinkPending, pendingPressClass } from "@/components/LinkPending";
 import { LogoLockup } from "@/components/Logo";
 import { PrivacyLink } from "@/components/PrivacyLink";
 
@@ -25,6 +26,7 @@ class TooManyTriesError extends Error {}
  * each, with a wider gap after the third so it reads "482 913". Typing moves to the next box;
  * Backspace clears a box or steps back; arrows move; a paste or one-time-code autofill fills
  * them all. Each typed digit pops in; a wrong code shakes the boxes and keeps the digits.
+ * Under Join, a quiet My spots for the lectures already joined on this browser.
  */
 export default function JoinPage() {
   const router = useRouter();
@@ -247,6 +249,12 @@ export default function JoinPage() {
           </ButtonPrimary>
           {/* Reserved for the message, so the column never moves (design: a 20 px row). */}
           {!error && <div aria-hidden className="h-5" />}
+          {/* Quiet, under Join: the lectures already joined on this browser (Marko, hand test 2: My spots
+              lives with the student's choice, not on Home). */}
+          <Link href="/spots" className={`${buttonSecondaryClass} ${pendingPressClass} px-5`}>
+            My spots
+            <LinkPending />
+          </Link>
         </div>
       </form>
       <footer className="absolute inset-x-0 bottom-0 flex justify-center pb-1">

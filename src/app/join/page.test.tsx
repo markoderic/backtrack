@@ -396,6 +396,22 @@ describe("Join page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not join. Try again.");
   });
 
+  it("has a quiet white My spots button under Join, for lectures already joined on this browser", () => {
+    render(<JoinPage />);
+    const spots = screen.getByRole("link", { name: "My spots" });
+    expect(spots).toHaveAttribute("href", "/spots");
+    // Secondary (white, 44 px), not the primary look and not underlined text.
+    expect(spots.className).toContain("bg-surface");
+    expect(spots.className).toContain("h-11");
+    expect(spots.className).not.toContain("bg-ink");
+    expect(spots.className).not.toContain("underline");
+    // Under Join in the column, and it holds its press until the next page shows.
+    expect(joinButton().compareDocumentPosition(spots) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(spots.querySelector("span.hidden[aria-hidden]")).not.toBeNull();
+    // Enter in a box still joins, not My spots.
+    expect(joinButton()).toHaveAttribute("type", "submit");
+  });
+
   it("has a quiet Privacy link in the footer", () => {
     render(<JoinPage />);
     expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/privacy");

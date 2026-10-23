@@ -15,3 +15,6 @@ export function LinkPending() {
 /** The held press of a link with a <LinkPending /> inside: pressed in and a step darker until the next page shows. */
 export const pendingPressClass =
   "has-[[data-pending]]:border-strip has-[[data-pending]]:bg-bg motion-safe:has-[[data-pending]]:scale-[0.97]";
+
+/** The same held press on a primary (ink) link: pressed in and the hover ink until the next page shows. */
+export const pendingPressPrimaryClass = "has-[[data-pending]]:bg-ink-hover motion-safe:has-[[data-pending]]:scale-[0.97]";
