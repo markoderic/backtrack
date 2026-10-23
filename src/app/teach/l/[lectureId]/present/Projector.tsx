@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { clampSlide, slideKeyAction } from "@/lib/slideKeys";
@@ -8,6 +8,8 @@ import { useSlideImages } from "@/lib/useSlideImages";
 import { useJoinedCount } from "@/lib/useJoinedCount";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useHereCount } from "@/lib/useHere";
+import { WATCHING_HINT } from "@/lib/watching";
+import { leaveFullscreenFor } from "@/lib/fullscreenReturn";
 import { useShownAgain } from "@/lib/useShownAgain";
 import { LogoMark } from "@/components/Logo";
 import { Icon } from "@/components/Icon";
@@ -27,6 +29,9 @@ type Props = {
 
 /** How long the join card takes to fade out on the first arrow (--dur-slow, plus room). */
 const JOIN_FADE_MS = 400;
+
+/** How long the Show code dialog takes to close (the open animation run backwards, plus room). */
+const CODE_CLOSE_MS = 250;
 
 /** How long "Continued on slide N" stays in the bar. */
 export const CONTINUED_MS = 4000;
@@ -96,7 +101,8 @@ function Code({ code }: { code: string }) {
 
 /*
  * The join card (Figma 34:821) is drawn for a 1920 x 1080 projector: the logo up top, then one
- * centered block, "Go to <address>" over the code, and how many joined under it. Every size is
+ * centered block, the address (the clear, strong line; no "Go to", Marko, hand test 2) over the
+ * code, big, and how many joined under it. Every size is
  * min(design px, the same size on a 1440 wide screen, a share of the height), so it is exact on
  * a projector and shrinks with a smaller window instead of running off the side.
  */
@@ -141,8 +147,7 @@ function JoinCard({
         </span>
       </span>
       <div data-testid="join-block" className="flex flex-col items-center gap-[min(16px,1.111vw,1.5vh)] text-center whitespace-nowrap">
-        <p className="font-sans text-[min(64px,4.444vw,6vh)] leading-[1.125] font-medium tracking-[-0.02em] text-ink">
-          <span className="font-normal text-secondary">Go to </span>
+        <p data-testid="join-address" className={addressClass}>
           {siteAddress}
         </p>
         <p className="font-sans text-[min(160px,11.111vw,15vh)] leading-none font-light tracking-[-0.03em] text-ink">
@@ -156,6 +161,13 @@ function JoinCard({
     </div>
   );
 }
+
+/**
+ * The address on the join card and in Show code: Projector L size in ink, at the wordmark's
+ * weight, so it reads as the one thing to type. The code sits under it at Number XL.
+ */
+const addressClass =
+  "font-sans text-[min(64px,4.444vw,6vh)] leading-[1.125] font-semibold tracking-[-0.02em] text-ink";
 
 /** Data, Show code, Fullscreen and End class: quiet small text actions for the teacher, not for the room. */
 const controlClass =
@@ -198,6 +210,10 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const [ending, setEnding] = useState(false);
   // Show code: the address and the code, big, in a dialog over the slide.
   const [codeOpen, setCodeOpen] = useState(false);
+  // Closed, and still on screen for the close animation (the open one run backwards). It is
+  // no longer a dialog then: hidden from screen readers, inert, and the keys move slides again.
+  const [codeClosing, setCodeClosing] = useState(false);
+  const watchingHint = useId();
   const endButton = useRef<HTMLButtonElement>(null);
   const endArea = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -255,6 +271,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     setJoinCardFading(false);
     setConfirming(false);
     setCodeOpen(false);
+    setCodeClosing(false);
     if (currentRef.current > 1) setContinued(currentRef.current);
   });
 
@@ -357,6 +374,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   const closeCode = useCallback((refocus: boolean) => {
     codeOpenRef.current = false;
     setCodeOpen(false);
+    setCodeClosing(true);
     if (refocus) showCodeButton.current?.focus();
   }, []);
 
@@ -470,6 +488,13 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     }
   }
 
+  // The code dialog's close ends with animationend; this is the fallback when no animation runs.
+  useEffect(() => {
+    if (!codeClosing) return;
+    const timer = setTimeout(() => setCodeClosing(false), CODE_CLOSE_MS);
+    return () => clearTimeout(timer);
+  }, [codeClosing]);
+
   // The fade ends with animationend; this is the fallback when no animation runs.
   useEffect(() => {
     if (!joinCardFading) return;
@@ -477,8 +502,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
     return () => clearTimeout(timer);
   }, [joinCardFading]);
 
-  // The whole page goes fullscreen, not this component, so it stays fullscreen through Data and
-  // back (both are client side, the document stays). Esc leaves fullscreen the browser's way.
+  // The whole page goes fullscreen, not this component. Esc leaves fullscreen the browser's way.
   async function toggleFullscreen(e: React.MouseEvent<HTMLButtonElement>) {
     e.currentTarget.blur(); // Space must move the slide, not press this button again.
     try {
@@ -499,13 +523,11 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
   // Students on the lecture page right now, capped at joined: a student with two tabs open
   // counts twice in presence, so the cap keeps the total believable (it is a cap, not a dedupe).
   const hereCount = here !== null && joined !== null ? Math.min(here, joined) : null;
-  const count =
-    joined === null ? null : hereCount === null ? `${joined} joined` : `${hereCount} here · ${joined} joined`;
 
 
   /*
    * The bar: one slim quiet strip under the slide, never over it. Left, the address and code
-   * small and who is here; middle, messages; right, the teacher's controls. End class opens its
+   * small and who is watching; middle, messages; right, the teacher's controls. End class opens its
    * confirm just above the bar. The bar has no animation of its own and is z-20 over the slide
    * area and the join card (z-10), so the confirm is never under anything: no animated ancestor
    * traps it (see f27789f).
@@ -552,10 +574,25 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
             </span>
           </p>
         )}
-        {!joinCardShowing && count && (
+        {/* "N watching · M joined": watching is who has the lecture open right now (Marko did not
+            read "here"); the hover and the accessible description say so. */}
+        {!joinCardShowing && joined !== null && (
           <p data-testid="projector-count" className="shrink-0">
-            {count}
+            {hereCount !== null && (
+              <>
+                <span data-testid="projector-watching" title={WATCHING_HINT} aria-describedby={watchingHint}>
+                  {hereCount} watching
+                </span>
+                {" · "}
+              </>
+            )}
+            {joined} joined
           </p>
+        )}
+        {!joinCardShowing && joined !== null && hereCount !== null && (
+          <span hidden id={watchingHint}>
+            {WATCHING_HINT}
+          </span>
         )}
         {/* The middle: a failure first, else "Continued on slide N" (a live region that is always there). */}
         <div className="flex min-w-0 flex-1 justify-center">
@@ -577,7 +614,8 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
           </p>
         </div>
         <div data-testid="projector-controls" className="flex shrink-0 items-center gap-1">
-          <Link href={`/teach/l/${lectureId}/live`} className={controlClass}>
+          {/* Data in fullscreen leaves fullscreen first; Back to slides goes back into it. */}
+          <Link href={`/teach/l/${lectureId}/live`} onClick={() => leaveFullscreenFor(lectureId)} className={controlClass}>
             Data
           </Link>
           {!joinCardShowing && (
@@ -588,6 +626,7 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
               onClick={(e) => {
                 e.currentTarget.blur();
                 setError(null);
+                setCodeClosing(false);
                 setCodeOpen(true);
               }}
               className={controlClass}
@@ -669,33 +708,42 @@ export function Projector({ lectureId, code, siteAddress, initialSlide, slideCou
         </div>
       </div>
 
-      {codeOpen && (
-        // The backdrop: a press on it (outside the dialog) closes the dialog.
+      {(codeOpen || codeClosing) && (
+        // The backdrop: a press on it (outside the dialog) closes the dialog. Closing plays the
+        // open animation backwards (fade, and the pop's scale; a fade only with reduced motion),
+        // then the whole thing goes (animationend, or the timer above).
         <div
           data-testid="show-code-backdrop"
-          className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-ink/40 p-4"
+          data-closing={codeOpen ? undefined : ""}
+          aria-hidden={codeOpen ? undefined : true}
+          inert={!codeOpen}
+          onAnimationEnd={(e) => {
+            if (!codeOpen && e.target === e.currentTarget) setCodeClosing(false);
+          }}
+          className={`fixed inset-0 z-40 flex items-center justify-center bg-ink/40 p-4 ${
+            codeOpen ? "animate-fade-in" : "pointer-events-none [animation:fade-in_160ms_var(--ease-in-out)_reverse_both]"
+          }`}
           onPointerDown={(e) => {
-            if (e.target === e.currentTarget) closeCode(false);
+            if (codeOpen && e.target === e.currentTarget) closeCode(false);
           }}
         >
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="show-code-title"
-            className="flex max-w-full animate-pop-in flex-col items-center gap-[min(16px,1.111vw,1.5vh)] rounded-md bg-surface px-[min(96px,6.667vw)] pt-[min(72px,5vw,6.5vh)] pb-[min(48px,3.333vw,4.5vh)] text-center whitespace-nowrap shadow-popover"
+            role={codeOpen ? "dialog" : undefined}
+            aria-modal={codeOpen ? "true" : undefined}
+            aria-labelledby={codeOpen ? "show-code-title" : undefined}
+            data-testid="show-code-card"
+            className={`flex max-w-full flex-col items-center gap-[min(16px,1.111vw,1.5vh)] rounded-md bg-surface px-[min(96px,6.667vw)] pt-[min(72px,5vw,6.5vh)] pb-[min(48px,3.333vw,4.5vh)] text-center whitespace-nowrap shadow-popover ${
+              codeOpen ? "animate-pop-in" : "[animation:pop-in_160ms_var(--ease-in-out)_reverse_both]"
+            }`}
           >
-            <p
-              id="show-code-title"
-              className="font-sans text-[min(64px,4.444vw,6vh)] leading-[1.125] font-medium tracking-[-0.02em] text-ink"
-            >
-              <span className="font-normal text-secondary">Go to </span>
+            <p id={codeOpen ? "show-code-title" : undefined} className={addressClass}>
               {siteAddress}
             </p>
             <p className="font-sans text-[min(160px,11.111vw,15vh)] leading-none font-light tracking-[-0.03em] text-ink">
               <Code code={code} />
             </p>
             <button
-              ref={closeCodeButton}
+              ref={codeOpen ? closeCodeButton : undefined}
               type="button"
               onClick={() => closeCode(true)}
               className={`${buttonSecondaryClass} mt-[min(32px,2.222vw,3vh)] px-6`}

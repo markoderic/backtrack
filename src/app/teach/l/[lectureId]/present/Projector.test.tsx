@@ -53,6 +53,7 @@ const useJoinedCount = vi.fn<(id: string) => number | null>(() => joined);
 vi.mock("@/lib/useJoinedCount", () => ({ useJoinedCount: (id: string) => useJoinedCount(id) }));
 
 import { Projector, joinCardKey, CONTINUED_MS } from "./Projector";
+import { fullscreenReturnKey } from "@/lib/fullscreenReturn";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 
@@ -138,7 +139,15 @@ describe("Projector", () => {
     const card = screen.getByTestId("join-card");
     expect(card).toHaveTextContent("backtrack");
     const block = within(card).getByTestId("join-block");
-    expect(block).toHaveTextContent("Go to backtrack-ebon-sigma.vercel.app");
+    // Marko, hand test 2: no "Go to". The address is the clear, strong line (ink, the wordmark's
+    // weight), with the code big under it.
+    expect(block).not.toHaveTextContent("Go to");
+    const address = within(block).getByTestId("join-address");
+    expect(address.textContent).toBe("backtrack-ebon-sigma.vercel.app");
+    expect(address.className).toContain("font-semibold");
+    expect(address.className).toContain("text-ink");
+    expect(address.querySelector(".text-secondary")).toBeNull();
+    expect(block).toHaveTextContent(/^backtrack-ebon-sigma\.vercel\.app482916/);
     expect(block).toHaveTextContent("482916");
     // The joined count stays, under the code.
     expect(block).toHaveTextContent(/482916.*7 joined/);
@@ -362,7 +371,7 @@ describe("Projector", () => {
     expect(shownSlide()).toBe("https://signed/1.webp");
   });
 
-  it("the Fullscreen button asks the browser for fullscreen on the whole page, so it lasts through Data and back", async () => {
+  it("the Fullscreen button asks the browser for fullscreen on the whole page", async () => {
     const requestFullscreen = vi.fn().mockResolvedValue(undefined);
     document.documentElement.requestFullscreen = requestFullscreen;
     try {
@@ -445,6 +454,44 @@ describe("Projector", () => {
     expect(fireEvent.keyDown(link, { key: "ArrowRight" })).toBe(false);
     await waitFor(() => expect(shownSlide()).toBe("https://signed/3.webp"));
     expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("Data in fullscreen leaves fullscreen first and remembers it for Back to slides (Marko: 'If I click on data, nothing will show')", async () => {
+    const exitFullscreen = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => document.documentElement });
+    document.exitFullscreen = exitFullscreen;
+    window.sessionStorage.clear();
+    try {
+      show({ initialSlide: 3 });
+      const data = screen.getByRole("link", { name: "Data" });
+      data.addEventListener("click", (e) => e.preventDefault()); // jsdom cannot navigate
+      fireEvent.click(data);
+      await act(async () => {});
+      expect(exitFullscreen).toHaveBeenCalledTimes(1);
+      expect(window.sessionStorage.getItem(fullscreenReturnKey(LECTURE))).toBe("1");
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      delete (document as { fullscreenElement?: unknown }).fullscreenElement;
+      delete (document as Partial<Document>).exitFullscreen;
+      window.sessionStorage.clear();
+    }
+  });
+
+  it("Data out of fullscreen leaves the window alone", async () => {
+    const exitFullscreen = vi.fn().mockResolvedValue(undefined);
+    document.exitFullscreen = exitFullscreen;
+    window.sessionStorage.clear();
+    try {
+      show({ initialSlide: 3 });
+      const data = screen.getByRole("link", { name: "Data" });
+      data.addEventListener("click", (e) => e.preventDefault());
+      fireEvent.click(data);
+      await act(async () => {});
+      expect(exitFullscreen).not.toHaveBeenCalled();
+      expect(window.sessionStorage.getItem(fullscreenReturnKey(LECTURE))).toBeNull();
+    } finally {
+      delete (document as Partial<Document>).exitFullscreen;
+    }
   });
 
   it("clicking a link changes no slide", () => {
@@ -913,11 +960,15 @@ describe("Projector slide that has no image", () => {
 describe("Projector bar: who is here", () => {
   const count = () => screen.getByTestId("projector-count");
 
-  it("shows N here · M joined, so the teacher sees who left early", () => {
+  it("shows N watching · M joined, so the teacher sees who left early (Marko did not read 'here')", () => {
     joined = 38;
     here = 31;
     show({ initialSlide: 2 });
-    expect(count()).toHaveTextContent("31 here · 38 joined");
+    expect(count()).toHaveTextContent("31 watching · 38 joined");
+    expect(count()).not.toHaveTextContent("here");
+    const watching = screen.getByTestId("projector-watching");
+    expect(watching).toHaveAccessibleDescription("Students with the lecture open right now");
+    expect(watching).toHaveAttribute("title", "Students with the lecture open right now");
   });
 
   it("shows only joined until the here count is known (or while it is unknown)", () => {
@@ -925,14 +976,14 @@ describe("Projector bar: who is here", () => {
     here = null;
     show({ initialSlide: 2 });
     expect(count()).toHaveTextContent("38 joined");
-    expect(count()).not.toHaveTextContent("here");
+    expect(count()).not.toHaveTextContent("watching");
   });
 
   it("never says more are here than joined (one student with two tabs)", () => {
     joined = 3;
     here = 5;
     show({ initialSlide: 2 });
-    expect(count()).toHaveTextContent("3 here · 3 joined");
+    expect(count()).toHaveTextContent("3 watching · 3 joined");
   });
 
   it("leaves the count to the big join card while it is up", () => {
@@ -954,7 +1005,7 @@ describe("Projector bar: who is here", () => {
 });
 
 describe("Projector Show code", () => {
-  const codeDialog = () => screen.queryByRole("dialog", { name: /Go to/ });
+  const codeDialog = () => screen.queryByRole("dialog", { name: "backtrack-ebon-sigma.vercel.app" });
   const showCode = () => screen.getByRole("button", { name: "Show code" });
   const openCode = () => {
     show({ initialSlide: 4 });
@@ -965,7 +1016,8 @@ describe("Projector Show code", () => {
     openCode();
     const d = codeDialog()!;
     expect(d).toHaveAttribute("aria-modal", "true");
-    expect(d).toHaveTextContent("Go to backtrack-ebon-sigma.vercel.app");
+    expect(d).toHaveTextContent(/^backtrack-ebon-sigma\.vercel\.app482916/);
+    expect(d).not.toHaveTextContent("Go to");
     expect(d).toHaveTextContent("482916");
     expect(within(d).getByRole("button", { name: "Close" })).toHaveFocus();
     expect(screen.queryByTestId("join-card")).toBeNull();
@@ -979,6 +1031,51 @@ describe("Projector Show code", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(codeDialog()).toBeNull();
     expect(showCode()).toHaveFocus();
+  });
+
+  it("closes with the open animation run backwards, then goes (Marko: no animation on close)", async () => {
+    vi.useFakeTimers();
+    try {
+      openCode();
+      const backdrop = screen.getByTestId("show-code-backdrop");
+      expect(backdrop.className).toContain("animate-fade-in");
+      expect(screen.getByTestId("show-code-card").className).toContain("animate-pop-in");
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      // No longer a dialog (hidden, inert, takes no clicks), but still drawn while it animates out.
+      expect(codeDialog()).toBeNull();
+      const closing = screen.getByTestId("show-code-backdrop");
+      expect(closing).toHaveAttribute("data-closing");
+      expect(closing).toHaveAttribute("aria-hidden", "true");
+      expect(closing).toHaveAttribute("inert");
+      expect(closing.className).toContain("pointer-events-none");
+      expect(closing.className).toContain("[animation:fade-in_160ms_var(--ease-in-out)_reverse_both]");
+      expect(screen.getByTestId("show-code-card").className).toContain("[animation:pop-in_160ms_var(--ease-in-out)_reverse_both]");
+      // Slide keys work at once while it fades.
+      press("ArrowRight");
+      expect(update).toHaveBeenCalledWith({ current_slide: 5 });
+      // Gone once the animation is over (animationend, or the fallback timer jsdom gets).
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+      expect(screen.queryByTestId("show-code-backdrop")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the close has a fallback when no animation runs, and Show code during the close opens it again", async () => {
+    vi.useFakeTimers();
+    try {
+      openCode();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      fireEvent.click(showCode());
+      expect(codeDialog()).toBeInTheDocument();
+      expect(screen.getByTestId("show-code-backdrop")).not.toHaveAttribute("data-closing");
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.getByTestId("show-code-backdrop")).toHaveAttribute("data-closing");
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+      expect(screen.queryByTestId("show-code-backdrop")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("Esc closes it", () => {
