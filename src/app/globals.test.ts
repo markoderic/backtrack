@@ -36,7 +36,7 @@ describe("globals.css entrance animations", () => {
   });
 });
 
-describe("course colors (batch D)", () => {
+describe("course colors (batch D, three more in batch H)", () => {
   const token = (name: string) => css.match(new RegExp(`--color-${name}:\\s*(#[0-9a-f]{6})`, "i"))?.[1] ?? null;
   const luminance = (hex: string) => {
     const [r, g, b] = [1, 3, 5].map((i) => {
@@ -55,7 +55,7 @@ describe("course colors (batch D)", () => {
     const bg = token("bg")!;
     const surface = token("surface")!;
     const lost = token("lost")!.toLowerCase();
-    expect(COURSE_COLORS).toHaveLength(8);
+    expect(COURSE_COLORS).toHaveLength(11);
     for (const { value } of COURSE_COLORS) {
       const hex = token(`course-${value}`);
       expect(hex, value).not.toBeNull();
@@ -64,4 +64,12 @@ describe("course colors (batch D)", () => {
       expect(contrast(hex!, surface), value).toBeGreaterThanOrEqual(4.5);
     }
   });
+
+  it("the Custom chip's rainbow is a utility of its own (one class the build can see), made of the course tokens", () => {
+    const block = css.match(/@utility bg-course-rainbow\s*{([\s\S]*?)\n}/)?.[1] ?? "";
+    expect(block).toContain("conic-gradient(");
+    expect(block).not.toMatch(/#[0-9a-f]{3,6}/i);
+    expect(block).toContain("var(--color-course-pink)");
+  });
 });
+

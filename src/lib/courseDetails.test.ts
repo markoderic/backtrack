@@ -3,7 +3,10 @@ import {
   COLOR_BG,
   COURSE_COLORS,
   colorClass,
+  colorPaint,
   formatDays,
+  normalizeHex,
+  presetColors,
   formatTime,
   formatTimeRange,
   nowAndNext,
@@ -27,21 +30,45 @@ const course = (id: string, meetDays: number[], start: number | null, end: numbe
 const wed = (hhmm: string) => new Date(`2026-10-21T${hhmm}:00-04:00`);
 
 describe("colors", () => {
-  it("eight calm names, none of them the I'm lost red, each with its own token", () => {
+  it("eleven presets in hue order (red, orange and pink added in 0019), none the I'm lost red, each with its own token", () => {
     expect(COURSE_COLORS.map((c) => c.value)).toEqual([
-      "slate",
+      "red",
+      "orange",
+      "ochre",
+      "olive",
+      "green",
+      "teal",
       "blue",
       "indigo",
       "plum",
-      "teal",
-      "green",
-      "olive",
-      "ochre",
+      "pink",
+      "slate",
     ]);
     for (const c of COURSE_COLORS) expect(COLOR_BG[c.value]).toBe(`bg-course-${c.value}`);
     expect(colorClass("teal")).toBe("bg-course-teal");
+    expect(colorClass("red")).toBe("bg-course-red");
     expect(colorClass(null)).toBe("bg-hairline");
-    expect(colorClass("red")).toBe("bg-hairline");
+    expect(colorClass("lost")).toBe("bg-hairline");
+  });
+
+  it("before 0019 only the eight presets the database takes", () => {
+    expect(presetColors(false).map((c) => c.value)).toEqual(["ochre", "olive", "green", "teal", "blue", "indigo", "plum", "slate"]);
+    expect(presetColors(true)).toHaveLength(11);
+  });
+
+  it("a picked color is painted inline; a preset by its token; none by the hairline", () => {
+    expect(colorPaint("teal")).toEqual({ className: "bg-course-teal" });
+    expect(colorPaint("#2f6db5")).toEqual({ className: "", style: { backgroundColor: "#2f6db5" } });
+    expect(colorPaint("#2F6DB5")).toEqual({ className: "", style: { backgroundColor: "#2f6db5" } });
+    expect(colorPaint(null)).toEqual({ className: "bg-hairline" });
+    expect(colorPaint("#fff")).toEqual({ className: "bg-hairline" });
+    expect(colorPaint("red; background: url(x)")).toEqual({ className: "bg-hairline" });
+  });
+
+  it("normalizeHex takes #rrggbb in any case and nothing else", () => {
+    expect(normalizeHex("#C0FFEE")).toBe("#c0ffee");
+    expect(normalizeHex(" #c0ffee ")).toBe("#c0ffee");
+    for (const bad of ["c0ffee", "#c0ffe", "#c0ffeeee", "#g0ffee", "", null, 5]) expect(normalizeHex(bad)).toBeNull();
   });
 });
 
@@ -56,10 +83,17 @@ describe("readDetails", () => {
         end_minute: 660,
       }),
     ).toEqual({ color: "plum", section: "Section B", meetDays: [1, 3, 5], startMinute: 605, endMinute: 660 });
-    expect(readDetails({ color: "red", section: "  ", meet_days: null, start_minute: 700, end_minute: 660 })).toEqual(
+    expect(readDetails({ color: "lost", section: "  ", meet_days: null, start_minute: 700, end_minute: 660 })).toEqual(
       none,
     );
     expect(readDetails({})).toEqual(none);
+  });
+
+  it("keeps the new presets and a picked #rrggbb color", () => {
+    expect(readDetails({ color: "pink" }).color).toBe("pink");
+    expect(readDetails({ color: "#2f6db5" }).color).toBe("#2f6db5");
+    expect(readDetails({ color: "#2F6DB5" }).color).toBe("#2f6db5");
+    expect(readDetails({ color: "#2f6" }).color).toBeNull();
   });
 });
 
@@ -174,5 +208,30 @@ describe("nowAndNext", () => {
 
   it("nothing at all when no course has days and a time", () => {
     expect(nowAndNext([plain, course("days-only", [1], null, null)], wed("10:05"))).toEqual({ now: null, next: null });
+  });
+});
+
+describe("where course colors show", () => {
+  it("only on teacher screens: no student or public screen paints a course color", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const path = await import("node:path");
+    const app = path.resolve(__dirname, "../app");
+    const files = (dir: string): string[] =>
+      readdirSync(dir).flatMap((f) => {
+        const p = path.join(dir, f);
+        return statSync(p).isDirectory() ? files(p) : /\.tsx?$/.test(f) && !/\.test\./.test(f) ? [p] : [];
+      });
+    const student = [
+      ...files(path.join(app, "l")),
+      ...files(path.join(app, "spots")),
+      ...files(path.join(app, "join")),
+      path.join(app, "page.tsx"),
+      ...files(path.resolve(__dirname, "../components")),
+    ];
+    expect(student.length).toBeGreaterThan(10);
+    for (const f of student) {
+      const src = readFileSync(f, "utf8");
+      expect(src, f).not.toMatch(/colorPaint|colorClass|bg-course-|courseDetails/);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import type React from "react";
 import { formatLectureDate } from "./lectureDate";
 
 /**
@@ -6,43 +7,94 @@ import { formatLectureDate } from "./lectureDate";
  * (America/New_York), the same clock lecture_date uses; days are 1 = Monday ... 7 = Sunday.
  */
 
+/**
+ * The preset swatches, in hue order. `added` marks the three that came with migration 0019 (red,
+ * orange, pink): before 0019 the database only takes the first eight, so the form leaves them out.
+ */
 export const COURSE_COLORS = [
-  { value: "slate", label: "Slate" },
-  { value: "blue", label: "Blue" },
-  { value: "indigo", label: "Indigo" },
-  { value: "plum", label: "Plum" },
-  { value: "teal", label: "Teal" },
-  { value: "green", label: "Green" },
-  { value: "olive", label: "Olive" },
-  { value: "ochre", label: "Ochre" },
+  { value: "red", label: "Red", added: true },
+  { value: "orange", label: "Orange", added: true },
+  { value: "ochre", label: "Ochre", added: false },
+  { value: "olive", label: "Olive", added: false },
+  { value: "green", label: "Green", added: false },
+  { value: "teal", label: "Teal", added: false },
+  { value: "blue", label: "Blue", added: false },
+  { value: "indigo", label: "Indigo", added: false },
+  { value: "plum", label: "Plum", added: false },
+  { value: "pink", label: "Pink", added: true },
+  { value: "slate", label: "Slate", added: false },
 ] as const;
 
-export type CourseColor = (typeof COURSE_COLORS)[number]["value"];
+export type PresetColor = (typeof COURSE_COLORS)[number]["value"];
+/** A preset name, or (after 0019) any color the teacher picked, as lowercase #rrggbb. */
+export type CourseColor = PresetColor | `#${string}`;
+
+/** The presets the database takes: all eleven after migration 0019, the first eight before it. */
+export function presetColors(options: boolean) {
+  return COURSE_COLORS.filter((c) => options || !c.added);
+}
 
 /** The background utility for each swatch, written out so Tailwind generates every one. */
-export const COLOR_BG: Record<CourseColor, string> = {
-  slate: "bg-course-slate",
+export const COLOR_BG: Record<PresetColor, string> = {
+  red: "bg-course-red",
+  orange: "bg-course-orange",
+  ochre: "bg-course-ochre",
+  olive: "bg-course-olive",
+  green: "bg-course-green",
+  teal: "bg-course-teal",
   blue: "bg-course-blue",
   indigo: "bg-course-indigo",
   plum: "bg-course-plum",
-  teal: "bg-course-teal",
-  green: "bg-course-green",
-  olive: "bg-course-olive",
-  ochre: "bg-course-ochre",
+  pink: "bg-course-pink",
+  slate: "bg-course-slate",
 };
 
-export function isCourseColor(v: unknown): v is CourseColor {
+export function isPresetColor(v: unknown): v is PresetColor {
   return typeof v === "string" && Object.prototype.hasOwnProperty.call(COLOR_BG, v);
+}
+
+const HEX = /^#[0-9a-f]{6}$/;
+
+/** "#2F6DB5" or "#2f6db5" -> "#2f6db5"; anything else -> null. */
+export function normalizeHex(v: unknown): `#${string}` | null {
+  if (typeof v !== "string") return null;
+  const lower = v.trim().toLowerCase();
+  return HEX.test(lower) ? (lower as `#${string}`) : null;
+}
+
+export function isCourseColor(v: unknown): v is CourseColor {
+  return isPresetColor(v) || (typeof v === "string" && HEX.test(v));
 }
 
 /** The background for a course's bar or dot; a quiet hairline when it has no color. */
 export function colorClass(color: unknown): string {
-  return isCourseColor(color) ? COLOR_BG[color] : "bg-hairline";
+  return isPresetColor(color) ? COLOR_BG[color] : "bg-hairline";
+}
+
+/**
+ * The class and style that paint a course's bar or dot: a preset's token, a picked color as an
+ * inline background (the teacher's own value, not a color of the app), or the hairline for none.
+ * Bars and dots are decoration only; no text ever sits on them.
+ */
+export function colorPaint(color: unknown): { className: string; style?: React.CSSProperties } {
+  if (isPresetColor(color)) return { className: COLOR_BG[color] };
+  const hex = normalizeHex(color);
+  if (hex) return { className: "", style: { backgroundColor: hex } };
+  return { className: "bg-hairline" };
 }
 
 export function colorLabel(color: unknown): string | null {
-  return COURSE_COLORS.find((c) => c.value === color)?.label ?? null;
+  if (isPresetColor(color)) return COURSE_COLORS.find((c) => c.value === color)!.label;
+  const hex = normalizeHex(color);
+  return hex ? `Custom ${hex}` : null;
 }
+
+/**
+ * Columns that only exist once migration 0019 is in. A read that asks for them and gets them back
+ * tells the app the new colors and slide access choices can be saved; without them it falls back
+ * to the eight colors and the three choices from before.
+ */
+export const OPTION_COLUMNS = "access_days, access_until";
 
 export const SECTION_MAX = 40;
 
@@ -81,7 +133,7 @@ export function readDetails(row: Record<string, unknown>): CourseDetails {
   const timed = isMinute(start) && isMinute(end) && end > start;
   const section = typeof row.section === "string" && row.section.trim() ? row.section.trim() : null;
   return {
-    color: isCourseColor(row.color) ? row.color : null,
+    color: isPresetColor(row.color) ? row.color : normalizeHex(row.color),
     section,
     meetDays: days,
     startMinute: timed ? start : null,

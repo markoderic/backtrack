@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
 import { useShownAgain } from "@/lib/useShownAgain";
 import {
-  colorClass,
+  colorPaint,
   formatDays,
   formatTimeRange,
   nowAndNext,
@@ -78,7 +78,12 @@ export function NowNext({
         data-state="now"
         className="mb-10 flex animate-rise-in flex-wrap items-center gap-x-8 gap-y-5 border-y border-hairline py-6"
       >
-        <span aria-hidden className={`w-1.5 self-stretch rounded-full ${colorClass(d.color)}`} />
+        <span
+          aria-hidden
+          data-course-color={d.color ?? "none"}
+          className={`w-1.5 self-stretch rounded-full ${colorPaint(d.color).className}`}
+          style={colorPaint(d.color).style}
+        />
         <div className="flex min-w-0 flex-1 basis-60 flex-col gap-1">
           <p className="type-small-strong text-secondary">Now</p>
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-3">
@@ -109,7 +114,12 @@ export function NowNext({
         data-state="next"
         className="mb-10 flex animate-rise-in flex-wrap items-center gap-x-3 gap-y-1 border-y border-hairline py-4"
       >
-        <span aria-hidden className={`size-2.5 shrink-0 rounded-full ${colorClass(d.color)}`} />
+        <span
+          aria-hidden
+          data-course-color={d.color ?? "none"}
+          className={`size-2.5 shrink-0 rounded-full ${colorPaint(d.color).className}`}
+          style={colorPaint(d.color).style}
+        />
         <span className="type-small-strong text-secondary">Next</span>
         <Link href={`/teach/c/${next.course.id}`} className="press focus-ring rounded-sm type-body-strong text-ink">
           {code}

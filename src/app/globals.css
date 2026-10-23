@@ -20,18 +20,23 @@
   --color-lost-tint: #f6dad4;
 
   /*
-   * Course colors (batch D): eight calm swatches for the bar on each course card and the dot on
-   * the course page. None is the I'm lost red. Each is at least 4.5:1 on the page background and
-   * on white, so a bar or dot reads on both. Utilities: bg-course-slate ... bg-course-ochre.
+   * Course colors (batch D, three more in batch H): eleven swatches for the bar on each course
+   * card, the course page and the Now block, on teacher screens only. Red is a crimson, never the
+   * I'm lost red. Each is at least 4.5:1 on the page background and on white, so a bar or dot reads
+   * on both. Utilities: bg-course-red ... bg-course-slate. A teacher's own picked color is the
+   * course's value painted inline; it is decoration only, like these.
    */
-  --color-course-slate: #5e6b7a;
+  --color-course-red: #b42339;
+  --color-course-orange: #a65300;
+  --color-course-ochre: #946507;
+  --color-course-olive: #6b7022;
+  --color-course-green: #3e7b3a;
+  --color-course-teal: #1f7a75;
   --color-course-blue: #2f6db5;
   --color-course-indigo: #5551a8;
   --color-course-plum: #84508f;
-  --color-course-teal: #1f7a75;
-  --color-course-green: #3e7b3a;
-  --color-course-olive: #6b7022;
-  --color-course-ochre: #946507;
+  --color-course-pink: #c2185b;
+  --color-course-slate: #5e6b7a;
 
   /* Radius: sm for slides and thumbnails, md for buttons, fields, popovers. Highlight boxes use rounded-xs (2px). */
   --radius-sm: 4px;
@@ -89,6 +94,24 @@
   @media (max-width: 699.98px), (max-aspect-ratio: 9999/10000) {
     @slot;
   }
+}
+
+/* The Custom color chip before a color is picked: the eleven course colors around a circle. */
+@utility bg-course-rainbow {
+  background-image: conic-gradient(
+    var(--color-course-red),
+    var(--color-course-orange),
+    var(--color-course-ochre),
+    var(--color-course-olive),
+    var(--color-course-green),
+    var(--color-course-teal),
+    var(--color-course-blue),
+    var(--color-course-indigo),
+    var(--color-course-plum),
+    var(--color-course-pink),
+    var(--color-course-slate),
+    var(--color-course-red)
+  );
 }
 
 /* Type styles, one utility per Figma "Final/" text style. Color is set separately (text-ink, text-secondary ...). */

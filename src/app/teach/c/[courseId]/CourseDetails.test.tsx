@@ -53,6 +53,8 @@ beforeEach(() => {
 
 const show = (details: CourseDetails = set) =>
   render(<CourseDetailsEditor courseId="c1" code="IMS 452" details={details} />);
+const showWith = (details: CourseDetails, options: boolean) =>
+  render(<CourseDetailsEditor courseId="c1" code="IMS 452" details={details} options={options} />);
 const edit = () => fireEvent.click(screen.getByRole("button", { name: /Edit details|Add color, section and time/ }));
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save" }));
 const day = (name: string) => screen.getByRole("button", { name });
@@ -70,20 +72,20 @@ describe("CourseDetailsEditor", () => {
     expect(screen.getByRole("button", { name: "Add color, section and time" })).toBeInTheDocument();
   });
 
-  it("the form has the eight colors and No color as named round chips, the chosen one checked and focused", () => {
+  it("before 0019: the eight colors the database takes and No color, as named round chips, the chosen one checked and focused", () => {
     show();
     edit();
     const radios = screen.getAllByRole("radio");
     expect(radios.map((r) => r.closest("label")!.textContent)).toEqual([
       "No color",
-      "Slate",
+      "Ochre",
+      "Olive",
+      "Green",
+      "Teal",
       "Blue",
       "Indigo",
       "Plum",
-      "Teal",
-      "Green",
-      "Olive",
-      "Ochre",
+      "Slate",
     ]);
     expect(screen.getByRole("radio", { name: "Teal" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Teal" })).toHaveFocus();
@@ -92,8 +94,71 @@ describe("CourseDetailsEditor", () => {
     expect(chip.className).toContain("size-6");
     expect(chip.className).toContain("rounded-full");
     expect(chip.className).toContain("bg-course-teal");
-    // No red swatch.
-    expect(document.querySelector('[data-swatch="red"], .bg-lost')).toBeNull();
+    // Nothing the database would refuse before 0019, and never the I'm lost red.
+    expect(document.querySelector('[data-swatch="red"], [data-swatch="custom"], .bg-lost')).toBeNull();
+  });
+
+  it("after 0019: eleven presets in hue order (red, orange and pink added) and Custom", () => {
+    showWith(set, true);
+    edit();
+    expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual([
+      "No color",
+      "Red",
+      "Orange",
+      "Ochre",
+      "Olive",
+      "Green",
+      "Teal",
+      "Blue",
+      "Indigo",
+      "Plum",
+      "Pink",
+      "Slate",
+      "Custom",
+    ]);
+    expect(document.querySelector('[data-swatch="custom"]')!.className).toContain("bg-course-rainbow");
+    for (const c of ["red", "orange", "pink"]) {
+      expect(document.querySelector(`[data-swatch="${c}"]`)!.className).toContain(`bg-course-${c}`);
+    }
+    expect(document.querySelector(".bg-lost")).toBeNull();
+  });
+
+  it("after 0019: Custom opens a color picker and a hex field, and saves the color as lowercase #rrggbb", async () => {
+    showWith(set, true);
+    edit();
+    expect(screen.queryByLabelText("Pick a color")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Custom" }));
+    const picker = screen.getByLabelText("Pick a color") as HTMLInputElement;
+    expect(picker.type).toBe("color");
+    fireEvent.change(picker, { target: { value: "#c0ffee" } });
+    expect(screen.getByLabelText("Custom color")).toHaveValue("#c0ffee");
+    // The chip shows the picked color.
+    expect((document.querySelector('[data-swatch="custom"]') as HTMLElement).style.backgroundColor).toBe("rgb(192, 255, 238)");
+    fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "#2F6DB5" } });
+    save();
+    await waitFor(() => expect(h.refresh).toHaveBeenCalled());
+    expect(h.updates).toEqual([
+      { color: "#2f6db5", section: "Section B", meet_days: [1, 3, 5], start_minute: 605, end_minute: 660 },
+    ]);
+  });
+
+  it("after 0019: a hex without the # is taken; a bad one is refused and points at the field", () => {
+    showWith(set, true);
+    edit();
+    fireEvent.click(screen.getByRole("radio", { name: "Custom" }));
+    fireEvent.change(screen.getByLabelText("Custom color"), { target: { value: "#12g" } });
+    save();
+    expect(screen.getByRole("alert")).toHaveTextContent("Pick a color, or type one like #2f6db5.");
+    expect(screen.getByLabelText("Custom color")).toHaveAttribute("aria-invalid", "true");
+    expect(h.updates).toEqual([]);
+  });
+
+  it("after 0019: a course with a picked color opens on Custom with it", () => {
+    showWith({ ...set, color: "#2f6db5" }, true);
+    edit();
+    expect(screen.getByRole("radio", { name: "Custom" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Custom" })).toHaveFocus();
+    expect(screen.getByLabelText("Custom color")).toHaveValue("#2f6db5");
   });
 
   it("the days are toggles, Monday to Sunday, with the course's days pressed", () => {
