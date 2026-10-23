@@ -33,6 +33,9 @@ export function ColorPicker({
   invalid: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // Where the popover goes: inside the dialog the picker sits in (so aria-modal does not hide it
+  // from screen readers), else the page's body.
+  const [host, setHost] = useState<Element | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const ids = useId();
@@ -67,9 +70,13 @@ export function ColorPicker({
         : e.key === "ArrowLeft"
           ? (at - 1 + n) % n
           : e.key === "ArrowDown"
-            ? Math.min(n - 1, at + PICKER_HUES)
+            ? at + PICKER_HUES <= n - 1
+              ? at + PICKER_HUES
+              : at
             : e.key === "ArrowUp"
-              ? Math.max(0, at - PICKER_HUES)
+              ? at - PICKER_HUES >= 0
+                ? at - PICKER_HUES
+                : at
               : e.key === "Home"
                 ? 0
                 : e.key === "End"
@@ -112,6 +119,7 @@ export function ColorPicker({
         onClick={() => {
           if (open) return close(false);
           setActive(Math.max(0, pickedAt));
+          setHost(trigger.current?.closest('[role="dialog"]') ?? document.body);
           setOpen(true);
         }}
         className={`${buttonSecondaryClass} ${invalid ? "border-ink" : ""}`}
@@ -188,7 +196,7 @@ export function ColorPicker({
               </button>
             </div>
           </div>,
-          document.body,
+          host ?? document.body,
         )}
     </>
   );

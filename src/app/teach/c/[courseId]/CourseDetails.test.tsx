@@ -136,6 +136,8 @@ describe("CourseDetailsEditor", () => {
     expect(picker()).toHaveAttribute("aria-haspopup", "dialog");
     fireEvent.click(picker());
     expect(picker()).toHaveAttribute("aria-expanded", "true");
+    // Not in a dialog here (the course page): the popover goes to the page's body.
+    expect(panel()!.parentElement).toBe(document.body);
     expect(swatches()).toHaveLength(24);
     for (const b of swatches()) expect(b.getAttribute("aria-label")).toMatch(/^#[0-9a-f]{6}$/);
     expect(new Set(swatches().map((b) => b.getAttribute("aria-label"))).size).toBe(24);
@@ -173,7 +175,25 @@ describe("CourseDetailsEditor", () => {
     expect(swatches()[13]).toHaveFocus();
     fireEvent.keyDown(grid, { key: "ArrowLeft" });
     expect(swatches()[12]).toHaveFocus();
+    // At the bottom row ↓ stays put, and at the top row ↑ does.
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
+    expect(swatches()[12]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowUp" });
+    expect(swatches()[0]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowUp" });
+    expect(swatches()[0]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    fireEvent.keyDown(grid, { key: "ArrowUp" });
+    expect(swatches()[1]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowLeft" });
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    expect(swatches()[13]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
+    expect(swatches()[13]).toHaveFocus();
     fireEvent.keyDown(grid, { key: "End" });
+    expect(swatches()[23]).toHaveFocus();
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
     expect(swatches()[23]).toHaveFocus();
     fireEvent.keyDown(grid, { key: "ArrowUp" });
     expect(swatches()[11]).toHaveFocus();

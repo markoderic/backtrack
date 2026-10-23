@@ -297,8 +297,11 @@ describe("CourseMenu: the dialog and the page", () => {
     fireEvent.click(trigger());
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(document.body.style.overflow).toBe("hidden");
+    // The scrollbar's room stays, so the page does not shift sideways.
+    expect(document.documentElement.style.scrollbarGutter).toBe("stable");
     fireEvent.keyDown(screen.getByLabelText("Course name"), { key: "Escape" });
     expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.scrollbarGutter).toBe("");
   });
 
   it("Next hiding the page closes an open dialog; shown again it is closed and pulls no focus", () => {
@@ -325,6 +328,28 @@ describe("CourseMenu: the dialog and the page", () => {
     fireEvent.click(trigger());
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     await waitFor(() => expect(trigger()).toHaveFocus());
+  });
+});
+
+describe("CourseMenu: the color picker inside the Edit details dialog", () => {
+  it("its popover is placed inside the modal dialog, so aria-modal never hides it from screen readers", () => {
+    show();
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit details" }));
+    const dialog = screen.getByRole("dialog", { name: "Details for IMS 452" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Pick a color/ }));
+    const popover = screen.getByRole("dialog", { name: "Pick a custom color" });
+    expect(dialog.contains(popover)).toBe(true);
+    // Still fixed to the window: not inside the white panel, whose pop-in scale would move it.
+    expect(screen.getByTestId("course-details-dialog").contains(popover)).toBe(false);
+    expect(popover.className).toContain("fixed");
+    // A press in the popover does not close the dialog; Esc closes only the popover.
+    fireEvent.mouseDown(within(popover).getAllByRole("button")[0]);
+    fireEvent.keyDown(screen.getByLabelText("Custom color"), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Pick a custom color" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Details for IMS 452" })).toBeInTheDocument();
   });
 });
 

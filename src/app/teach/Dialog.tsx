@@ -58,10 +58,14 @@ export function Dialog({
   useEffect(() => {
     if (!open) return;
     const body = document.body.style;
-    const before = body.overflow;
+    const root = document.documentElement.style;
+    const before = { overflow: body.overflow, gutter: root.scrollbarGutter };
+    // The scrollbar's room stays, so the page does not shift sideways with classic scrollbars.
+    root.scrollbarGutter = "stable";
     body.overflow = "hidden";
     return () => {
-      body.overflow = before;
+      body.overflow = before.overflow;
+      root.scrollbarGutter = before.gutter;
     };
   }, [open]);
   useEffect(
@@ -75,9 +79,9 @@ export function Dialog({
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === "Escape") {
-      // Esc in a time or color field belongs to the field (it closes the browser's own picker).
+      // Esc in a time field belongs to the field (it closes the browser's own time picker).
       const t = e.target;
-      if (t instanceof HTMLInputElement && (t.type === "time" || t.type === "color" || t.type === "date")) return;
+      if (t instanceof HTMLInputElement && t.type === "time") return;
       e.preventDefault();
       e.stopPropagation();
       onClose();
@@ -101,7 +105,13 @@ export function Dialog({
 
   if (!open || typeof document === "undefined") return null;
   return createPortal(
+    // The dialog role sits on the full-screen layer (no transform on it), so a popover inside the
+    // dialog (the color picker) can be placed into it, inside aria-modal, and still be fixed to the
+    // window; the white panel inside is only its look.
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       data-testid={testId ? `${testId}-backdrop` : undefined}
       className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-ink/30 p-4"
       onMouseDown={(e) => {
@@ -110,9 +120,6 @@ export function Dialog({
     >
       <div
         ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
         data-testid={testId}
         onKeyDown={onKeyDown}
         className={
