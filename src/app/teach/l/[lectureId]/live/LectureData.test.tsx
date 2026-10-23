@@ -172,10 +172,44 @@ describe("LectureData live", () => {
     expect(screen.getByText("Live, on slide 3")).toBeInTheDocument();
   });
 
-  it("shows the join code in the heading as two groups of three", async () => {
+  it("shows the join code in the heading as \"Code: 482 916\", the number in ink weight (Marko, hand test 2)", async () => {
     renderLive({ code: "482916" });
     await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
-    expect(screen.getByText("Code 482 916")).toBeInTheDocument();
+    const code = screen.getByTestId("heading-code");
+    expect(code.textContent).toBe("Code: 482 916");
+    const number = within(code).getByText("482 916");
+    expect(number.className).toContain("type-small-strong");
+    expect(number.className).toContain("text-ink");
+  });
+
+  it("shows the summary and the chart as soon as the taps are back, without waiting for the joined count or the lecture row", async () => {
+    let giveJoined: (v: unknown) => void = () => {};
+    h.participantsQuery.mockReturnValue(new Promise((r) => (giveJoined = r)));
+    h.lectureQuery.mockReturnValue(new Promise(() => {}));
+    renderLive();
+    await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+    expect(screen.queryByText("Loading...")).toBeNull();
+    expect(figure("sum-taps")).toBe("3");
+    expect(joinedShown()).toBe("–");
+    await act(async () => giveJoined({ count: 7, error: null }));
+    expect(joinedShown()).toBe("7");
+    expect(screen.queryByText(/Trying again/)).toBeNull();
+  });
+
+  it("a failed joined count still shows the taps, says it is not up to date, and retries", async () => {
+    vi.useFakeTimers();
+    try {
+      h.participantsQuery.mockResolvedValueOnce({ count: null, error: { message: "down" } });
+      renderLive();
+      await act(async () => {});
+      expect(counts(2)).toBe("2 lost, 2 taps");
+      expect(screen.getByText("Not up to date. Trying again.")).toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(joinedShown()).toBe("7");
+      expect(screen.queryByText("Not up to date. Trying again.")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sizes each bar against the slide with the most people, with transform only, and a 2 px bar for nobody", async () => {
@@ -951,6 +985,30 @@ describe("Live header buttons", () => {
     expect(end.className).not.toContain("border-ink");
   });
 
+  it("Back to slides puts the projector back in fullscreen when Data left it (and only then)", async () => {
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    document.documentElement.requestFullscreen = requestFullscreen;
+    sessionStorage.clear();
+    try {
+      renderLive();
+      await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
+      const back = screen.getByRole("link", { name: "Back to slides" });
+      back.addEventListener("click", (e) => e.preventDefault()); // jsdom cannot navigate
+      fireEvent.click(back);
+      expect(requestFullscreen).not.toHaveBeenCalled();
+      sessionStorage.setItem(`backtrack:fullscreen:${LECTURE}`, "1");
+      fireEvent.click(back);
+      expect(requestFullscreen).toHaveBeenCalledTimes(1);
+      expect(sessionStorage.getItem(`backtrack:fullscreen:${LECTURE}`)).toBeNull();
+      // Once: the next Back to slides is a plain link again.
+      fireEvent.click(back);
+      expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (document.documentElement as Partial<HTMLElement>).requestFullscreen;
+      sessionStorage.clear();
+    }
+  });
+
   it("the confirm says End class with a white Keep going button, no underlined link", async () => {
     renderLive();
     await waitFor(() => expect(counts(2)).toBe("2 lost, 2 taps"));
@@ -1103,7 +1161,7 @@ describe("LectureData highlights", () => {
     h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp", 5: "https://signed/5.webp" });
     renderLive();
     await waitFor(() => expect(boxesOn(2)).toHaveLength(2));
-    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("2 marked the spot");
+    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("2 highlights");
     const copy = within(panel()).getByTestId("highlights-2").querySelector("img")!;
     expect(copy).toHaveAttribute("src", "https://signed/2.webp");
     expect(copy.parentElement?.contains(boxesOn(2)[0])).toBe(true);
@@ -1118,7 +1176,7 @@ describe("LectureData highlights", () => {
     );
   });
 
-  it("shows the slide with no boxes when nobody marked it, and says so", async () => {
+  it("shows the slide with no boxes when nobody highlighted it, and says so", async () => {
     withBoxes();
     h.slideUrls.mockReturnValue({ 4: "https://signed/4.webp" });
     renderLive();
@@ -1128,7 +1186,7 @@ describe("LectureData highlights", () => {
       "src",
       "https://signed/4.webp",
     );
-    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("Nobody marked the spot");
+    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("No highlights");
     expect(boxesOn(1)).toHaveLength(0);
   });
 
@@ -1364,8 +1422,15 @@ describe("LectureData summary row", () => {
     renderLive();
     await waitFor(() => expect(figure("sum-joined")).toBe("7"));
     expect(h.here).toHaveBeenLastCalledWith(LECTURE, true);
-    // 12 here but 7 joined: never more here than joined.
+    // 12 watching but 7 joined: never more watching than joined.
     expect(figure("sum-here")).toBe("7");
+    // Marko did not read "Here now" or "Marked spots": "Watching now" (with what it means) and "Highlights".
+    const watching = within(screen.getByTestId("sum-here")).getByText("Watching now");
+    expect(watching).toHaveAccessibleDescription("Students with the lecture open right now");
+    expect(watching).toHaveAttribute("title", "Students with the lecture open right now");
+    expect(within(screen.getByTestId("sum-marks")).getByText("Highlights")).toBeInTheDocument();
+    expect(screen.queryByText("Here now")).toBeNull();
+    expect(screen.queryByText("Marked spots")).toBeNull();
     // s1, s2 and s5: three different students; 3 of 7 is 43%.
     expect(figure("sum-tapped")).toBe("343% of joined");
     expect(within(screen.getByTestId("sum-tapped")).getByText("43% of joined")).toBeInTheDocument();
@@ -1429,7 +1494,8 @@ describe("LectureData hover and focus card", () => {
     const tip = () => screen.getByTestId("bar-tip");
     expect(tip()).toHaveTextContent("Slide 2");
     expect(tip()).toHaveTextContent("2 lost, 2 taps");
-    expect(tip()).toHaveTextContent("1 marked the spot");
+    expect(tip()).toHaveTextContent("1 highlight");
+    expect(within(bar).getByText(", 1 highlight")).toBeInTheDocument();
     expect(tip()).toHaveAttribute("aria-hidden", "true");
     insert(row("c", { slide_number: 2, anon_id: "s3" }));
     expect(tip()).toHaveTextContent("3 lost, 3 taps");
@@ -1437,7 +1503,7 @@ describe("LectureData hover and focus card", () => {
     expect(screen.queryByTestId("bar-tip")).not.toBeInTheDocument();
     fireEvent.pointerEnter(within(slideRow(4)).getByRole("button"));
     expect(tip()).toHaveTextContent("Slide 4");
-    expect(tip()).not.toHaveTextContent("marked the spot");
+    expect(tip()).not.toHaveTextContent("highlight");
     fireEvent.pointerLeave(within(slideRow(4)).getByRole("button"));
     expect(screen.queryByTestId("bar-tip")).not.toBeInTheDocument();
   });

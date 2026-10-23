@@ -19,7 +19,7 @@ type Props = {
   url?: string;
   /** Every counted Mark the spot box on this slide. */
   rects: Rect[];
-  /** "3 marked the spot", or nothing, for the big view's caption. */
+  /** "3 highlights", or nothing, for the big view's caption. */
   marksLabel: string | null;
   /** Called when the big view opens (the data view pins the slide then, so it never swaps). */
   onOpen?: () => void;

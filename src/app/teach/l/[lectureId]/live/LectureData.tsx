@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
@@ -20,6 +20,8 @@ import {
 } from "@/lib/stats";
 import { useSlideUrls } from "@/lib/useSlideUrls";
 import { useHereCount } from "@/lib/useHere";
+import { WATCHING_HINT } from "@/lib/watching";
+import { returnToFullscreen } from "@/lib/fullscreenReturn";
 import { SlideFocus } from "./SlideFocus";
 
 const RETRY_FIRST_MS = 1000;
@@ -51,7 +53,7 @@ type Props = {
   initialCurrentSlide?: number;
   /** After the lecture ends here, a link goes back to this course. */
   courseId?: string;
-  /** The join code, shown in the live heading as "Code 482 916". */
+  /** The join code, shown in the live heading as "Code: 482 916". */
   code?: string | null;
   /** Open the End class confirm on load (the url has ?end=1). Only a live lecture uses it. */
   confirmEndOnLoad?: boolean;
@@ -158,14 +160,36 @@ const spacedCode = (code: string) => (code.length === 6 ? `${code.slice(0, 3)} $
 const backToSlidesClass = `${buttonPrimaryClass} w-auto! px-6`;
 const endButtonClass = `${buttonSecondaryClass} h-12! shrink-0 px-5`;
 
-/** "3 marked the spot", or null when nobody did. */
-const marked = (n: number) => (n > 0 ? `${n} marked the spot` : null);
+/**
+ * "3 highlights", or null when there are none: the Mark the spot boxes on lost taps, which the
+ * teacher screens call Highlights (Marko did not read "Marked spots").
+ */
+const highlights = (n: number) => (n > 0 ? `${n} ${n === 1 ? "highlight" : "highlights"}` : null);
 
-/** One number in the summary row: a quiet label over a Geist Light number. */
-function Figure({ label, value, extra, testId }: { label: string; value: React.ReactNode; extra?: React.ReactNode; testId: string }) {
+/**
+ * One number in the summary row: a quiet label over a Geist Light number. `describedBy` points
+ * the label at a description outside the list (with `hint` as its hover text).
+ */
+function Figure({
+  label,
+  value,
+  extra,
+  testId,
+  hint,
+  describedBy,
+}: {
+  label: string;
+  value: React.ReactNode;
+  extra?: React.ReactNode;
+  testId: string;
+  hint?: string;
+  describedBy?: string;
+}) {
   return (
     <div data-testid={testId} className="flex min-w-0 flex-col gap-1">
-      <dt className="type-small text-secondary">{label}</dt>
+      <dt title={hint} aria-describedby={describedBy} className="type-small text-secondary">
+        {label}
+      </dt>
       <dd className="flex min-w-0 items-baseline gap-2">
         <span className={typeof value === "number" ? "type-number-s text-ink" : "type-body text-secondary"}>{value}</span>
         {extra}
@@ -216,6 +240,7 @@ export function LectureData({
   };
   // Who has the lecture open right now (Realtime Presence, as the projector counts it).
   const here = useHereCount(lectureId, live);
+  const watchingHint = useId();
   const [tip, setTip] = useState<Tip | null>(null);
   const chartBox = useRef<HTMLDivElement>(null);
   const endButton = useRef<HTMLButtonElement>(null);
@@ -253,21 +278,22 @@ export function LectureData({
       setFailed(true);
     };
 
+    // The three reads run side by side and each shows what it brings as soon as it is back:
+    // the summary and the chart need only the taps, so they never wait for the joined count or
+    // the lecture's row (Marko saw "Loading..." for seconds on the first open). Any read that
+    // fails keeps what is on screen and they all go again after the backoff.
     async function refetch() {
       clearTimeout(timer);
       timer = undefined;
       const touched = new Set<string>();
       inflight.add(touched);
       const joinedMark = joinedCount.begin();
-      try {
-        const [list, count, lecture] = await Promise.all([
-          readTaps(supabase, lectureId),
-          readJoined(supabase, lectureId),
-          live ? readLecture(supabase, lectureId) : Promise.resolve(null),
-        ]);
+      let failedAny = false;
+      const fail = () => {
+        failedAny = true;
+      };
+      const tapsRead = readTaps(supabase, lectureId).then((list) => {
         if (cancelled) return;
-        failures = 0;
-        setFailed(false);
         setTaps((prev) => {
           const next = new Map(list.map((r) => [r.id, r]));
           for (const id of touched) {
@@ -276,21 +302,33 @@ export function LectureData({
           }
           return next;
         });
-        joinedCount.settle(count, joinedMark);
-        if (lecture) {
-          if (lecture.status === "ended") {
-            setLive(false);
-            setJustEnded(true);
-          } else if (!touched.has("lecture")) {
-            setCurrent(lecture.current_slide);
-          }
-        }
         setLoaded(true);
-      } catch {
-        // Keep what is on screen and try again.
-        retry();
+      }, fail);
+      const joinedRead = readJoined(supabase, lectureId).then((count) => {
+        if (!cancelled) joinedCount.settle(count, joinedMark);
+      }, fail);
+      const lectureRead = live
+        ? readLecture(supabase, lectureId).then((lecture) => {
+            if (cancelled) return;
+            if (lecture.status === "ended") {
+              setLive(false);
+              setJustEnded(true);
+            } else if (!touched.has("lecture")) {
+              setCurrent(lecture.current_slide);
+            }
+          }, fail)
+        : Promise.resolve();
+      try {
+        await Promise.all([tapsRead, joinedRead, lectureRead]);
       } finally {
         inflight.delete(touched);
+      }
+      if (cancelled) return;
+      if (failedAny) {
+        retry();
+      } else {
+        failures = 0;
+        setFailed(false);
       }
     }
 
@@ -585,7 +623,12 @@ export function LectureData({
                   </span>
                 )
               )}
-              {live && code && <span>Code {spacedCode(code)}</span>}
+              {/* "Code: 235 978", the number in ink weight so it reads as the code (Marko, hand test 2). */}
+              {live && code && (
+                <span data-testid="heading-code">
+                  Code: <span className="type-small-strong text-ink">{spacedCode(code)}</span>
+                </span>
+              )}
             </p>
             {endError && (
               <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
@@ -597,7 +640,7 @@ export function LectureData({
           <div className="min-w-0 flex-1" />
           {/* The way back to the projector (no Esc shortcut): a plain link, so fullscreen stays. */}
           {live && (
-            <Link href={`/teach/l/${lectureId}/present`} className={`${backToSlidesClass} ml-auto`}>
+            <Link href={`/teach/l/${lectureId}/present`} onClick={() => returnToFullscreen(lectureId)} className={`${backToSlidesClass} ml-auto`}>
               Back to slides
             </Link>
           )}
@@ -676,14 +719,21 @@ export function LectureData({
         children && <div className="px-4 pt-8 pb-6 sm:px-12">{children}</div>
       )}
 
-      {/* The lecture in numbers. Joined and here also stand for the header's old "N joined". */}
+      {/* The lecture in numbers. Joined and watching also stand for the header's old "N joined". */}
+      {loaded && hereNow !== null && (
+        <span hidden id={watchingHint}>
+          {WATCHING_HINT}
+        </span>
+      )}
       {loaded && (
         <dl
           data-testid="summary"
           className="grid animate-fade-in grid-cols-2 gap-x-8 gap-y-5 border-t border-hairline px-4 py-6 sm:grid-cols-3 sm:px-12 lg:flex lg:flex-wrap lg:gap-x-12"
         >
           <Figure testId="sum-joined" label="Joined" value={joined ?? "–"} />
-          {hereNow !== null && <Figure testId="sum-here" label="Here now" value={hereNow} />}
+          {hereNow !== null && (
+            <Figure testId="sum-here" label="Watching now" value={hereNow} hint={WATCHING_HINT} describedBy={watchingHint} />
+          )}
           <Figure
             testId="sum-tapped"
             label="Students who tapped"
@@ -696,7 +746,7 @@ export function LectureData({
           />
           <Figure testId="sum-taps" label="Lost taps" value={totalTaps} />
           <Figure testId="sum-notes" label="Notes" value={noteCount} />
-          <Figure testId="sum-marks" label="Marked spots" value={markCount} />
+          <Figure testId="sum-marks" label="Highlights" value={markCount} />
           <Figure
             testId="sum-most"
             label="Most lost slide"
@@ -788,7 +838,7 @@ export function LectureData({
                             <span data-testid="counts">
                               {stat.students} lost, {plural(stat.taps, "tap", "taps")}
                             </span>
-                            {markN > 0 && <span>{`, ${marked(markN)}`}</span>}
+                            {markN > 0 && <span>{`, ${highlights(markN)}`}</span>}
                             {isRed && (
                               <>
                                 {", "}
@@ -874,7 +924,7 @@ export function LectureData({
                       {tipStat.students} lost, {plural(tipStat.taps, "tap", "taps")}
                     </span>
                     {(marks.get(tip.n) ?? 0) > 0 && (
-                      <span className="type-small text-secondary">{marked(marks.get(tip.n)!)}</span>
+                      <span className="type-small text-secondary">{highlights(marks.get(tip.n)!)}</span>
                     )}
                   </div>
                 )}
@@ -939,13 +989,13 @@ export function LectureData({
                   firstLine={selectedSlide.first_line}
                   url={slideUrls[selected]}
                   rects={selectedRects}
-                  marksLabel={marked(marks.get(selected) ?? 0)}
+                  marksLabel={highlights(marks.get(selected) ?? 0)}
                   onOpen={() => setPicked(selected)}
                   ratio={slideRatio}
                   onRatio={setSlideRatio}
                 />
                 <p data-testid="panel-marks" className="type-small text-secondary">
-                  {marked(marks.get(selected) ?? 0) ?? "Nobody marked the spot"}
+                  {highlights(marks.get(selected) ?? 0) ?? "No highlights"}
                 </p>
               </div>
               {/* Notes: a heading over a hairline, then one row per note, hairlines between. */}
