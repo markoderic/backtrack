@@ -372,20 +372,24 @@ describe("CourseBody: Students can see slides until", () => {
     });
     const html = renderToStaticMarkup(await CourseBody({ params }));
     expect(html).toContain("Students can see slides until");
-    expect(html).toMatch(/<option value="semester" selected="">End of semester<\/option>/);
+    // The app's own popup button (no native select), showing the choice.
+    expect(html).not.toContain("<select");
+    expect(html).toMatch(/<button[^>]*aria-haspopup="listbox"[^>]*data-testid="access-trigger"[^>]*><span[^>]*>End of semester<\/span>/);
     expect(html).toContain('value="2026-12-11"');
     expect(selectCalls.filter(([t]) => t === "courses")).toEqual([
-      ["courses", "id, name, archived, student_access, semester_end, color, section, meet_days, start_minute, end_minute"],
+      ["courses", "id, name, archived, student_access, semester_end, access_days, access_until, color, section, meet_days, start_minute, end_minute"],
     ]);
   });
 
   it("before migration 0016 reads the course again without the new columns and leaves the setting out", async () => {
     maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.color does not exist" } })
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.student_access does not exist" } })
       .mockResolvedValueOnce({ data: { id: "c1", name: "IMS 452", archived: false }, error: null });
     const html = renderToStaticMarkup(await CourseBody({ params }));
     expect(selectCalls.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
+      "id, name, archived, student_access, semester_end, access_days, access_until, color, section, meet_days, start_minute, end_minute",
       "id, name, archived, student_access, semester_end, color, section, meet_days, start_minute, end_minute",
       "id, name, archived, student_access, semester_end",
       "id, name, archived",
@@ -420,7 +424,7 @@ describe("CourseBody: color, section and schedule (batch D)", () => {
     maybeSingle.mockResolvedValue({ data: row, error: null });
     await CourseBody({ params });
     expect(selectCalls.filter(([t]) => t === "courses").map(([, c]) => c)).toEqual([
-      "id, name, archived, student_access, semester_end, color, section, meet_days, start_minute, end_minute",
+      "id, name, archived, student_access, semester_end, access_days, access_until, color, section, meet_days, start_minute, end_minute",
     ]);
   });
 
@@ -449,6 +453,7 @@ describe("CourseBody: color, section and schedule (batch D)", () => {
 
   it("after 0016 but before 0018: the slide setting shows, the details do not", async () => {
     maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.color does not exist" } })
       .mockResolvedValueOnce({
         data: { id: "c1", name: "IMS 452", archived: false, student_access: "always", semester_end: null },
@@ -458,5 +463,67 @@ describe("CourseBody: color, section and schedule (batch D)", () => {
     expect(html).toContain("Students can see slides until");
     expect(html).not.toContain('data-testid="course-details"');
     expect(html).not.toContain("data-course-color");
+  });
+});
+
+describe("CourseBody: batch H (0019 options, spacing)", () => {
+  const row = {
+    id: "c1",
+    name: "IMS 452 Senior Design",
+    archived: false,
+    student_access: "custom_days",
+    semester_end: null,
+    access_days: 10,
+    access_until: null,
+    color: "#2f6db5",
+    section: null,
+    meet_days: null,
+    start_minute: null,
+    end_minute: null,
+  };
+
+  it("after 0019: a custom number of days shows Custom with its days, and a picked color paints the bar", async () => {
+    maybeSingle.mockResolvedValue({ data: row, error: null });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toMatch(/data-testid="access-trigger"[^>]*><span[^>]*>Custom<\/span>/);
+    expect(html).toMatch(/aria-label="Days after each class"[^>]*value="10"/);
+    expect(html).toMatch(/data-course-color="#2f6db5"[^>]*style="background-color:#2f6db5"/);
+  });
+
+  it("after 0019: a custom date shows Custom with its date", async () => {
+    maybeSingle.mockResolvedValue({
+      data: { ...row, student_access: "custom_date", access_days: null, access_until: "2027-03-03" },
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(html).toMatch(/aria-label="Last day students can see the slides"[^>]*value="2027-03-03"/);
+  });
+
+  it("before 0019: reads the course again without 0019's columns and still shows the setting and the details", async () => {
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.access_days does not exist" } })
+      .mockResolvedValueOnce({
+        data: { ...row, student_access: "30d", access_days: undefined, access_until: undefined, color: "teal" },
+        error: null,
+      });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    expect(selectCalls.filter(([t]) => t === "courses")).toHaveLength(2);
+    expect(html).toMatch(/data-testid="access-trigger"[^>]*><span[^>]*>30 days after each class<\/span>/);
+    expect(html).toContain("bg-course-teal");
+  });
+
+  it("the setting sits close under the last lecture row (no big gap before and after the divider)", async () => {
+    maybeSingle.mockResolvedValue({ data: row, error: null });
+    lectures.mockResolvedValue({
+      data: [{ id: "l1", name: "Lecture 1", status: "ended", lecture_date: "2026-10-21", started_at: "2026-10-21T14:00:00Z", slide_count: 3 }],
+      error: null,
+    });
+    const html = renderToStaticMarkup(await CourseBody({ params }));
+    const wrap = html.match(/<div data-testid="slide-access-wrap" class="([^"]*)"/)?.[1] ?? "";
+    expect(wrap.split(" ")).toContain("pt-2");
+    const form = html.match(/<form[^>]*data-testid="slide-access"[^>]*class="([^"]*)"/)?.[1] ?? "";
+    expect(form.split(" ")).toContain("pt-5");
+    expect(form.split(" ")).not.toContain("pt-8");
+    expect(html).not.toMatch(/<div class="pt-12"><form/);
   });
 });

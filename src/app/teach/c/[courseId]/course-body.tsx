@@ -12,7 +12,7 @@ import { LECTURE_DELETED } from "../../delete-lecture-copy";
 import { PastLectures, type PastLecture } from "./PastLectures";
 import { SlideAccess } from "./SlideAccess";
 import { isStudentAccess, todayInOxford } from "@/lib/slideAccess";
-import { DETAIL_COLUMNS, colorClass, readDetails } from "@/lib/courseDetails";
+import { DETAIL_COLUMNS, OPTION_COLUMNS, colorPaint, readDetails } from "@/lib/courseDetails";
 import { CourseDetailsEditor } from "./CourseDetails";
 
 const PAGE = 1000;
@@ -40,6 +40,8 @@ type CourseRow = {
   archived: boolean;
   student_access?: unknown;
   semester_end?: string | null;
+  access_days?: unknown;
+  access_until?: unknown;
   color?: unknown;
   section?: unknown;
   meet_days?: unknown;
@@ -152,10 +154,12 @@ export async function CourseBody({
   // the query asks for the teacher's own course explicitly as well.
   const readCourse = (columns: string) =>
     supabase.from("courses").select(columns).eq("id", courseId).eq("teacher_id", user.id).maybeSingle();
-  // Newest columns first. Before migration 0018 (color, section, schedule) and 0016 (who can see
-  // slides) those columns are not there yet: the course is read again without them, and the page
-  // leaves out what they drive. 22P02 is a malformed uuid in the url: no second read.
+  // Newest columns first. Before migration 0019 (custom slide access, more colors), 0018 (color,
+  // section, schedule) and 0016 (who can see slides) those columns are not there yet: the course is
+  // read again without them, and the page leaves out what they drive (before 0019 it offers the
+  // old choices and colors). 22P02 is a malformed uuid in the url: no second read.
   const columnSets = [
+    `id, name, archived, student_access, semester_end, ${OPTION_COLUMNS}, ${DETAIL_COLUMNS}`,
     `id, name, archived, student_access, semester_end, ${DETAIL_COLUMNS}`,
     "id, name, archived, student_access, semester_end",
     "id, name, archived",
@@ -200,6 +204,9 @@ export async function CourseBody({
   const { code, title } = splitCourseName(course.name);
   // Present once 0018 is in (the column comes back, even when empty).
   const details = "color" in course ? readDetails(course as Record<string, unknown>) : null;
+  // Present once 0019 is in: the new slide access choices and colors can be saved.
+  const options = "access_days" in course;
+  const paint = details ? colorPaint(details.color) : null;
 
   return (
     <TeacherPage crumbs={[{ label: "Courses", href: "/teach" }, { label: code }]} teacherName={teacherName}>
@@ -208,11 +215,12 @@ export async function CourseBody({
         <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
           {/* On a phone the name gets the whole row and Start lecture goes under it. */}
           <div className="flex min-w-0 flex-1 basis-full gap-4 sm:basis-0">
-            {details && (
+            {details && paint && (
               <span
                 aria-hidden
                 data-course-color={details.color ?? "none"}
-                className={`w-1.5 shrink-0 self-stretch rounded-full ${colorClass(details.color)}`}
+                className={`w-1.5 shrink-0 self-stretch rounded-full ${paint.className}`}
+                style={paint.style}
               />
             )}
             <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -238,7 +246,7 @@ export async function CourseBody({
 
         {details && (
           <div className="pt-4">
-            <CourseDetailsEditor courseId={course.id} code={code} details={details} />
+            <CourseDetailsEditor courseId={course.id} code={code} details={details} options={options} />
           </div>
         )}
 
@@ -256,7 +264,7 @@ export async function CourseBody({
         )}
 
         {past.length === 0 ? (
-          <div className="flex flex-col gap-2 py-16">
+          <div className="flex flex-col gap-2 pt-16 pb-6">
             <h2 className="type-title text-ink">No lectures yet</h2>
             <p className="type-body text-secondary">
               Start one when class begins. Past lectures and their data collect here.
@@ -278,11 +286,15 @@ export async function CourseBody({
         )}
 
         {isStudentAccess(course.student_access) && (
-          <div className="pt-12">
+          // Close under the last lecture row (Marko: "a lot of freaking space" there before).
+          <div data-testid="slide-access-wrap" className="pt-2">
             <SlideAccess
               courseId={course.id}
               access={course.student_access}
               semesterEnd={course.semester_end ?? null}
+              accessDays={typeof course.access_days === "number" ? course.access_days : null}
+              accessUntil={typeof course.access_until === "string" ? course.access_until : null}
+              options={options}
               today={todayInOxford()}
             />
           </div>

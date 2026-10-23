@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { defaultSemesterEnd, isStudentAccess, todayInOxford } from "./slideAccess";
+import { accessChoices, choiceOf, defaultSemesterEnd, isStudentAccess, todayInOxford } from "./slideAccess";
 
 describe("defaultSemesterEnd", () => {
   it("spring runs to May 15, fall to Dec 18, late December to the next May 15", () => {
@@ -21,9 +21,24 @@ describe("todayInOxford", () => {
 });
 
 describe("isStudentAccess", () => {
-  it("takes only the three choices", () => {
-    expect(["semester", "30d", "always"].every(isStudentAccess)).toBe(true);
-    expect(isStudentAccess("forever")).toBe(false);
-    expect(isStudentAccess(undefined)).toBe(false);
+  it("takes the three choices from 0016 and the three from 0019, nothing else", () => {
+    expect(["semester", "30d", "always", "7d", "custom_days", "custom_date"].every(isStudentAccess)).toBe(true);
+    for (const bad of ["forever", "custom", "14d", "", undefined, null]) expect(isStudentAccess(bad)).toBe(false);
+  });
+});
+
+describe("accessChoices", () => {
+  it("after 0019 five choices (the two custom values are one, Custom); before it the first three", () => {
+    expect(accessChoices(true).map((c) => c.label)).toEqual([
+      "End of semester",
+      "30 days after each class",
+      "A week after each class",
+      "Always",
+      "Custom",
+    ]);
+    expect(accessChoices(false).map((c) => c.value)).toEqual(["semester", "30d", "always"]);
+    expect(choiceOf("custom_days")).toBe("custom");
+    expect(choiceOf("custom_date")).toBe("custom");
+    expect(choiceOf("7d")).toBe("7d");
   });
 });
