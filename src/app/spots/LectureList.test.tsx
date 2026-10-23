@@ -20,9 +20,9 @@ vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ auth:
 
 import { LectureList } from "./LectureList";
 
-const joined = (id: string, name: string, date: string, joinedAt: string) => ({
+const joined = (id: string, name: string, date: string, joinedAt: string, status = "ended") => ({
   joined_at: joinedAt,
-  lectures: { id, name, lecture_date: date },
+  lectures: { id, name, lecture_date: date, status },
 });
 
 beforeEach(() => {
@@ -53,6 +53,50 @@ describe("LectureList", () => {
     expect(within(items[0]).getByRole("link")).toHaveAttribute("href", "/spots/l3");
     expect(within(items[0]).getByText("Oct 26")).toBeInTheDocument();
     expect(from).toHaveBeenCalledWith("participants");
+  });
+
+  describe("a lecture that is live right now", () => {
+    beforeEach(() => {
+      result.mockResolvedValue({
+        data: [
+          joined("l3", "Lecture 3, Oct 26", "2026-10-26", "2026-10-26T14:00:00Z"),
+          joined("live", "Week 9: Inventory", "2026-10-20", "2026-10-20T14:00:00Z", "live"),
+          joined("l2", "Lecture 2, Oct 21", "2026-10-21", "2026-10-21T14:00:00Z"),
+        ],
+        error: null,
+      });
+    });
+
+    it("asks for each lecture's status", async () => {
+      render(<LectureList />);
+      await screen.findAllByRole("listitem");
+      expect(select).toHaveBeenCalledWith("joined_at, lectures(id, name, lecture_date, status)");
+    });
+
+    it("comes first in the list, whatever its date, marked Live now", async () => {
+      render(<LectureList />);
+      const items = await screen.findAllByRole("listitem");
+      expect(items[0]).toHaveTextContent("Week 9: Inventory");
+      expect(within(items[0]).getByText("Live now")).toBeInTheDocument();
+      expect(items[1]).toHaveTextContent("Lecture 3, Oct 26");
+      for (const other of items.slice(1)) expect(within(other).queryByText("Live now")).not.toBeInTheDocument();
+      // Ink, never the lost red.
+      const marker = items[0].querySelector("[data-live-now]") as HTMLElement;
+      expect(marker.className).toContain("text-ink");
+      expect(marker.innerHTML).not.toContain("lost");
+    });
+
+    it("has a black Back to lecture button that goes back into class, and its row still opens its spots", async () => {
+      render(<LectureList />);
+      const [first, second] = await screen.findAllByRole("listitem");
+      const back = within(first).getByRole("link", { name: /^Back to lecture/ });
+      expect(back).toHaveAttribute("href", "/l/live");
+      expect(back).toHaveTextContent("Back to lecture");
+      expect(back.className).toContain("bg-ink");
+      expect(back.className).toContain("text-surface");
+      expect(within(first).getAllByRole("link").map((l) => l.getAttribute("href"))).toEqual(["/spots/live", "/l/live"]);
+      expect(within(second).queryByRole("link", { name: /^Back to lecture/ })).not.toBeInTheDocument();
+    });
   });
 
   it("asks only for the signed in user's own participant rows", async () => {

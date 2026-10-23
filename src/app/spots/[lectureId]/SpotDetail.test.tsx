@@ -41,7 +41,6 @@ function show(
     focusOnOpen: o.focusOnOpen,
     onNoteSaved: vi.fn(),
     onHighlightSaved: vi.fn(),
-    onMoved: vi.fn(async () => {}),
     onRemoved: vi.fn(),
     onBack: vi.fn(),
     onPrevSpot: o.onPrevSpot,
@@ -51,7 +50,6 @@ function show(
   return { ...props, ...view };
 }
 
-const move = () => screen.getByRole("button", { name: "Move to slide 6" });
 const shownSrc = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
@@ -135,56 +133,62 @@ describe("SpotDetail: the page itself", () => {
   });
 });
 
-describe("SpotDetail: move the marker", () => {
-  it("updates slide_number to one less, for the right row, then reports the move", async () => {
-    const { onMoved } = show();
-    fireEvent.click(move());
-    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(6));
-    expect(from).toHaveBeenCalledWith("lost_taps");
-    expect(update).toHaveBeenCalledWith({ slide_number: 6 });
-    expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]);
-  });
-
-  it("shows the slide the marker moved to", async () => {
+describe("SpotDetail: no Move to slide", () => {
+  it("offers no Move to slide (the spot stays on the slide it was made on) and never changes slide_number", () => {
     show();
-    fireEvent.click(move());
-    await waitFor(() => expect(shownSrc()).toBe("https://signed/6.webp"));
-  });
-
-  it("is not offered on slide 1", () => {
-    show({ spot: { ...lostSpot, slideNumber: 1 } });
     expect(screen.queryByRole("button", { name: /Move to slide/ })).not.toBeInTheDocument();
-    expect(update).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Move/)).not.toBeInTheDocument();
+    for (const b of screen.getAllByRole("button")) fireEvent.click(b);
+    for (const call of update.mock.calls as unknown as [Record<string, unknown>][]) expect(call[0]).not.toHaveProperty("slide_number");
+  });
+});
+
+describe("SpotDetail: Back to lecture", () => {
+  it("while the lecture is live, a black Back to lecture goes back into class", () => {
+    show({ liveSlide: 12 });
+    const back = screen.getByRole("link", { name: "Back to lecture" });
+    expect(back).toHaveAttribute("href", `/l/${LECTURE}`);
+    expect(back.className).toContain("bg-ink");
+    expect(back.className).toContain("text-surface");
+    expect(back.className).not.toContain("bg-surface");
   });
 
-  it("says plainly when the database refuses, and does not report a move", async () => {
-    selectAfter.mockResolvedValue({ data: null, error: { message: "permission denied" } });
-    const { onMoved } = show();
-    fireEvent.click(move());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not move the marker");
-    expect(onMoved).not.toHaveBeenCalled();
-    expect(shownSrc()).toBe("https://signed/7.webp");
-    expect(move()).toBeEnabled();
+  it("is not there once the lecture has ended", () => {
+    show({ liveSlide: null });
+    expect(screen.queryByRole("link", { name: "Back to lecture" })).not.toBeInTheDocument();
+  });
+});
+
+describe("SpotDetail: every button on screen", () => {
+  it("sizes the slide to the window's height, so the buttons under it stay on screen", () => {
+    const { container } = show();
+    const frame = container.querySelector("[data-spot-slide]") as HTMLElement;
+    expect(frame.style.width).toContain("100dvh");
+    expect(frame.style.width).toContain("var(--spot-room)");
+    // The room kept for the rest: two rows of buttons on a phone, one from 640, beside the slide from 1024.
+    const main = screen.getByRole("main");
+    for (const room of ["[--spot-room:352px]", "sm:[--spot-room:300px]", "lg:[--spot-room:236px]"]) expect(main.className).toContain(room);
   });
 
-  it("treats an update that changed no row as a failure", async () => {
-    selectAfter.mockResolvedValue({ data: [], error: null });
-    const { onMoved } = show();
-    fireEvent.click(move());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not move the marker");
-    expect(onMoved).not.toHaveBeenCalled();
+  it("puts the buttons right after the slide (beside it on a wide screen), before the note", () => {
+    const { container } = show({ spot: { ...lostSpot, note: "a long note" } });
+    const actions = container.querySelector("[data-spot-actions]") as HTMLElement;
+    const note = container.querySelector("[data-note]") as HTMLElement;
+    expect(actions.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const side = container.querySelector("[data-spot-side]") as HTMLElement;
+    expect(side).toContainElement(actions);
+    expect(side.className).toContain("lg:w-80");
+    expect(side.parentElement!.className).toContain("lg:flex-row");
   });
 
-  it("can not be pressed twice while it is saving", async () => {
-    let finish!: (v: unknown) => void;
-    selectAfter.mockReturnValue(new Promise((r) => (finish = r)));
-    show();
-    fireEvent.click(move());
-    expect(move()).toBeDisabled();
-    fireEvent.click(move());
-    expect(update).toHaveBeenCalledTimes(1);
-    finish({ data: [{ id: "tap-1" }], error: null });
-    await waitFor(() => expect(move()).toBeEnabled());
+  it("takes the slide's own shape from the image", () => {
+    const { container } = show();
+    const img = screen.getByRole("img") as HTMLImageElement;
+    Object.defineProperty(img, "naturalWidth", { value: 1024, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 768, configurable: true });
+    fireEvent.load(img);
+    const frame = container.querySelector("[data-spot-slide]") as HTMLElement;
+    expect(frame.style.width).toContain("* 1.3333");
   });
 });
 
@@ -398,7 +402,7 @@ describe("SpotDetail: the note", () => {
 describe("SpotDetail: remove", () => {
   it("every action is a white button, never underlined text", () => {
     show();
-    const names = ["Add a note", "Mark the spot", "Move to slide 6", "Remove"];
+    const names = ["Add a note", "Mark the spot", "Remove"];
     for (const name of names) {
       const b = screen.getByRole("button", { name });
       expect(b.className, name).toContain("bg-surface");
@@ -649,32 +653,17 @@ describe("SpotDetail: the mark", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the mark");
     expect(onHighlightSaved).not.toHaveBeenCalled();
   });
-
-  it("moving the marker takes the highlight off the row, as it belonged to the slide it was drawn on", async () => {
-    const { onMoved, container } = show({ spot: withRect });
-    fireEvent.click(move());
-    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(6));
-    expect(update).toHaveBeenCalledWith({ slide_number: 6, hl_x: null, hl_y: null, hl_w: null, hl_h: null });
-    expect(boxes(container)).toHaveLength(0);
-  });
-
-  it("moving the marker of a spot with no highlight changes only the slide", async () => {
-    const { onMoved } = show();
-    fireEvent.click(move());
-    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(6));
-    expect(update).toHaveBeenCalledWith({ slide_number: 6 });
-  });
 });
 
 describe("SpotDetail: a slide that is no longer available", () => {
-  it("says so in place of the slide, and keeps the note, the count and the marker", () => {
+  it("says so in place of the slide, and keeps the note, the count and Remove", () => {
     show({ spot: { ...lostSpot, note: "my note" }, expired: true });
     expect(screen.getByText("This slide is no longer available.")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText("my note")).toBeInTheDocument();
     expect(screen.getByText("6 people got lost here")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit note" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Move to slide 6" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
     // Nothing to browse or mark without the slide.
     expect(screen.queryByRole("button", { name: "Next slide" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /mark/i })).not.toBeInTheDocument();

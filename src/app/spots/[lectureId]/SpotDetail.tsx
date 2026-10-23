@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
+import Link from "next/link";
 import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import type { Rect } from "@/lib/rect";
@@ -46,8 +47,6 @@ type Props = {
   onNoteSaved: (note: string | null) => void;
   /** Called after the spot's mark was saved (a box) or cleared (null). */
   onHighlightSaved?: (rect: Rect | null) => void;
-  /** Called after the rows were updated. Resolves when the counts were read again. */
-  onMoved: (newSlide: number) => Promise<void>;
   /** Called after the spot was removed (its rows are marked undone, like Undo). */
   onRemoved?: () => void;
   onBack: () => void;
@@ -86,6 +85,15 @@ export const NO_LONGER_AVAILABLE = "This slide is no longer available.";
 
 const NO_HIGHLIGHT = { hl_x: null, hl_y: null, hl_w: null, hl_h: null };
 
+/**
+ * What sits above and below the slide in one column, so the slide is sized to leave every button on
+ * screen (header 64, top 8, the number and title 76, gaps, the arrows row 44, the buttons, bottom 24).
+ * Phone: the buttons take two rows (352). From 640: one row (300). From 1024 the buttons sit beside
+ * the slide, so only the header, title and arrows count (236).
+ */
+const SPOT_ROOM = "[--spot-room:352px] sm:[--spot-room:300px] lg:[--spot-room:236px]";
+const WIDE = 16 / 9;
+
 /** 36 px icon buttons (a 44 px hit area on a touch screen), for browsing the slides. */
 const iconButton =
   "press touch-target relative flex size-9 shrink-0 items-center justify-center rounded-md text-ink hover:bg-surface focus-ring " +
@@ -104,12 +112,15 @@ function Alert({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One spot: its slide, how many got lost on it, the note, the mark and the marker. The note
+ * One spot: its slide, how many got lost on it, the note and the mark. The note
  * and Mark the spot work as on the live screen: Add a note opens a 3 line field (Enter saves,
  * Shift+Enter is a new line, Esc drops it); Mark the spot takes one drag on the slide and saves
- * it when you let go, and Clear mark takes it off.
+ * it when you let go, and Clear mark takes it off. Every button stays on screen without scrolling:
+ * the slide is sized to the window's height, and from 1024 px the buttons sit beside it. While the
+ * lecture is live, Back to lecture (black) goes back into class.
  */
 export function SpotDetail({
+  lectureId,
   spot,
   firstLine,
   students,
@@ -121,14 +132,15 @@ export function SpotDetail({
   liveSlide = null,
   onNoteSaved,
   onHighlightSaved,
-  onMoved,
   onRemoved,
   onBack,
   onPrevSpot,
   onNextSpot,
 }: Props) {
-  // The slide on screen. Browsing moves this; only "Move to slide n" moves the marker.
+  // The slide on screen. Browsing moves this; the spot stays on its slide.
   const [viewing, setViewing] = useState(spot.slideNumber);
+  // The slide's own shape, from the image once it loads.
+  const [ratio, setRatio] = useState(WIDE);
   const url = expired ? undefined : urlFor(viewing);
   // While the lecture is live, the last slide a student may see is the live one.
   const lastSlide = liveSlide ?? slideCount ?? spot.slideNumber;
@@ -169,9 +181,6 @@ export function SpotDetail({
   const onSpotSlide = viewing === spot.slideNumber;
   if (marking && !onSpotSlide) setMarking(false);
 
-  const [moving, setMoving] = useState(false);
-  const [moveError, setMoveError] = useState(false);
-
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState(false);
@@ -210,24 +219,6 @@ export function SpotDetail({
   async function change(ids: string[], patch: Record<string, number | string | boolean | null>): Promise<boolean> {
     const { data, error } = await createBrowserSupabase().from("lost_taps").update(patch).in("id", ids).select("id");
     return !error && !!data && data.length === ids.length;
-  }
-
-  async function moveMarker() {
-    if (moving || spot.slideNumber <= 1) return;
-    setMoving(true);
-    setMoveError(false);
-    const next = spot.slideNumber - 1;
-    try {
-      // A mark is a part of the slide it was drawn on, so it does not come along.
-      if (!(await change(spot.ids, { slide_number: next, ...(rect ? NO_HIGHLIGHT : {}) }))) throw new Error("not changed");
-      setRect(null);
-      await onMoved(next);
-      setViewing(next);
-    } catch {
-      setMoveError(true);
-    } finally {
-      setMoving(false);
-    }
   }
 
   async function remove() {
@@ -325,6 +316,7 @@ export function SpotDetail({
   const lost = spot.kind === "lost";
   const counter = draft !== null && draft.length >= NOTE_COUNTER_FROM ? NOTE_MAX - draft.length : null;
   const canMark = onSpotSlide && !expired && !!url;
+  const live = liveSlide !== null;
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
@@ -333,6 +325,12 @@ export function SpotDetail({
           <Icon name="back" />
         </button>
         <div className="min-w-0 flex-1" />
+        {live && (
+          // While the lecture is live: the way back into class, the one black button here.
+          <Link href={`/l/${lectureId}`} className={`${buttonPrimarySmallClass} shrink-0`}>
+            Back to lecture
+          </Link>
+        )}
         <button
           ref={prevRef}
           type="button"
@@ -357,7 +355,7 @@ export function SpotDetail({
         </button>
       </header>
 
-      <main className="mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-10 pt-2">
+      <main className={`mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-6 pt-2 lg:max-w-300 ${SPOT_ROOM}`}>
         <div className="flex min-w-0 items-center gap-4">
           <span aria-hidden data-spot-number="" className={`shrink-0 type-number-l ${lost ? "text-lost" : "text-ink"}`}>
             {spot.slideNumber}
@@ -373,163 +371,175 @@ export function SpotDetail({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <div className="relative w-full overflow-hidden rounded-sm bg-surface shadow-slide">
-            {expired ? (
-              <div data-slide-gone="" className="flex aspect-video w-full items-center justify-center px-6 text-center">
-                <p className="type-body text-secondary">{NO_LONGER_AVAILABLE}</p>
-              </div>
-            ) : url ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img ref={imageRef} src={url} alt={`Slide ${viewing}`} draggable={false} className="block h-auto w-full" />
-                {onSpotSlide && (
-                  <HighlightLayer
-                    imageRef={imageRef}
-                    marking={marking}
-                    markingKind={spot.kind}
-                    onMark={(r) => void saveMark(r)}
-                    onCancel={() => {
-                      setMarking(false);
-                      markButtonRef.current?.focus();
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-6">
+          <div data-spot-stage="" className="flex min-w-0 flex-col gap-2 lg:flex-1">
+            {/* As wide as the column, but never so tall that the buttons leave the screen. */}
+            <div
+              data-spot-slide=""
+              className="relative max-w-full overflow-hidden rounded-sm bg-surface shadow-slide"
+              style={{ width: `min(100%, max(12rem, calc((100dvh - var(--spot-room)) * ${ratio.toFixed(4)})))` } as CSSProperties}
+            >
+              {expired ? (
+                <div data-slide-gone="" className="flex aspect-video w-full items-center justify-center px-6 text-center">
+                  <p className="type-body text-secondary">{NO_LONGER_AVAILABLE}</p>
+                </div>
+              ) : url ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    ref={imageRef}
+                    src={url}
+                    alt={`Slide ${viewing}`}
+                    draggable={false}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
                     }}
-                    shown={rect ? { kind: spot.kind, rect } : null}
+                    className="block h-auto w-full"
                   />
+                  {onSpotSlide && (
+                    <HighlightLayer
+                      imageRef={imageRef}
+                      marking={marking}
+                      markingKind={spot.kind}
+                      onMark={(r) => void saveMark(r)}
+                      onCancel={() => {
+                        setMarking(false);
+                        markButtonRef.current?.focus();
+                      }}
+                      shown={rect ? { kind: spot.kind, rect } : null}
+                    />
+                  )}
+                </>
+              ) : (
+                <div className="aspect-video w-full" />
+              )}
+            </div>
+
+            {!expired && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="Previous slide"
+                  disabled={viewing <= 1}
+                  onClick={() => setViewing((v) => v - 1)}
+                  className={`${iconButton} -ml-2`}
+                >
+                  <Icon name="back" />
+                </button>
+                {/* Which slide the arrows are on; the number only, never a total. */}
+                <p className="min-w-12 text-center type-small text-secondary tabular-nums">Slide {viewing}</p>
+                <button
+                  type="button"
+                  aria-label="Next slide"
+                  disabled={viewing >= lastSlide}
+                  onClick={() => setViewing((v) => Math.min(v + 1, lastSlide))}
+                  className={iconButton}
+                >
+                  <Icon name="forward" />
+                </button>
+                {!onSpotSlide && (
+                  <div className="flex min-w-0 animate-fade-in items-center pl-3">
+                    <button type="button" onClick={() => setViewing(spot.slideNumber)} className={buttonSecondaryClass}>
+                      Back to slide {spot.slideNumber}
+                    </button>
+                  </div>
                 )}
-              </>
-            ) : (
-              <div className="aspect-video w-full" />
+              </div>
             )}
           </div>
 
-          {!expired && (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                aria-label="Previous slide"
-                disabled={viewing <= 1}
-                onClick={() => setViewing((v) => v - 1)}
-                className={`${iconButton} -ml-2`}
-              >
-                <Icon name="back" />
-              </button>
-              {/* Which slide the arrows are on; the number only, never a total. */}
-              <p className="min-w-12 text-center type-small text-secondary tabular-nums">Slide {viewing}</p>
-              <button
-                type="button"
-                aria-label="Next slide"
-                disabled={viewing >= lastSlide}
-                onClick={() => setViewing((v) => Math.min(v + 1, lastSlide))}
-                className={iconButton}
-              >
-                <Icon name="forward" />
-              </button>
-              {!onSpotSlide && (
-                <div className="flex min-w-0 animate-fade-in items-center pl-3">
-                  <button type="button" onClick={() => setViewing(spot.slideNumber)} className={buttonSecondaryClass}>
-                    Back to slide {spot.slideNumber}
+          {/* The spot's buttons first (right under the slide, or beside it from 1024 px), then the note. */}
+          <div data-spot-side="" className="flex w-full max-w-120 flex-col gap-3 lg:w-80 lg:shrink-0">
+            {confirmRemove ? (
+              <div className="flex animate-fade-in flex-wrap items-center gap-x-4 gap-y-3">
+                <p className="type-small text-ink">Remove this spot?</p>
+                <button type="button" onClick={() => void remove()} disabled={removing} className={buttonSecondaryClass}>
+                  Yes, remove
+                </button>
+                <button
+                  ref={keepRef}
+                  type="button"
+                  onClick={() => {
+                    setConfirmRemove(false);
+                    setRemoveError(false);
+                  }}
+                  disabled={removing}
+                  className={buttonSecondaryClass}
+                >
+                  Keep it
+                </button>
+              </div>
+            ) : (
+              <div data-spot-actions="" className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2">
+                {!editing && (
+                  <button ref={noteButtonRef} type="button" onClick={startNote} className={buttonSecondaryClass}>
+                    {note ? "Edit note" : "Add a note"}
+                  </button>
+                )}
+                {canMark && !editing && (
+                  <button
+                    ref={markButtonRef}
+                    type="button"
+                    onClick={onMarkButton}
+                    disabled={savingMark}
+                    aria-pressed={marking}
+                    className={`${buttonSecondaryClass} ${marking ? "border-ink" : ""}`}
+                  >
+                    {marking ? "Stop marking" : rect ? "Clear mark" : "Mark the spot"}
+                  </button>
+                )}
+                {onRemoved && (
+                  <button ref={removeRef} type="button" onClick={() => setConfirmRemove(true)} className={buttonSecondaryClass}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            )}
+            {markError && <Alert>Could not save the mark. Try again.</Alert>}
+            {removeError && <Alert>Could not remove the spot. Try again.</Alert>}
+
+            {editing ? (
+              <form onSubmit={(e) => void saveNote(e)} className="flex animate-rise-in flex-col gap-2">
+                <label htmlFor={fieldId} className="type-small-strong text-ink">
+                  Your note
+                </label>
+                <textarea
+                  ref={textareaRef}
+                  id={fieldId}
+                  rows={3}
+                  maxLength={NOTE_MAX}
+                  enterKeyHint="done"
+                  value={draft}
+                  readOnly={savingNote}
+                  onChange={(e) => setDraft(e.target.value.slice(0, NOTE_MAX))}
+                  onKeyDown={onNoteKeyDown}
+                  className="block min-h-[5.5rem] w-full resize-none rounded-md border border-hairline bg-surface px-3 py-2 type-body text-ink outline-hidden transition-colors duration-(--dur-fast) focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)]"
+                />
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {counter !== null && (
+                    <span data-counter="" className="mr-auto type-caption text-secondary">
+                      {counter} left
+                    </span>
+                  )}
+                  <button type="button" onClick={closeNote} className={buttonSecondaryClass}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={savingNote} className={buttonPrimarySmallClass}>
+                    Save note
                   </button>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex w-full max-w-120 flex-col gap-3">
-          {editing ? (
-            <form onSubmit={(e) => void saveNote(e)} className="flex animate-rise-in flex-col gap-2">
-              <label htmlFor={fieldId} className="type-small-strong text-ink">
-                Your note
-              </label>
-              <textarea
-                ref={textareaRef}
-                id={fieldId}
-                rows={3}
-                maxLength={NOTE_MAX}
-                enterKeyHint="done"
-                value={draft}
-                readOnly={savingNote}
-                onChange={(e) => setDraft(e.target.value.slice(0, NOTE_MAX))}
-                onKeyDown={onNoteKeyDown}
-                className="block min-h-[5.5rem] w-full resize-none rounded-md border border-hairline bg-surface px-3 py-2 type-body text-ink outline-hidden transition-colors duration-(--dur-fast) focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)]"
-              />
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {counter !== null && (
-                  <span data-counter="" className="mr-auto type-caption text-secondary">
-                    {counter} left
-                  </span>
-                )}
-                <button type="button" onClick={closeNote} className={buttonSecondaryClass}>
-                  Cancel
-                </button>
-                <button type="submit" disabled={savingNote} className={buttonPrimarySmallClass}>
-                  Save note
-                </button>
-              </div>
-            </form>
-          ) : (
-            note && (
-              <div data-note="" className="flex flex-col gap-1 border-t border-hairline pt-3">
-                <p className="type-caption text-secondary">Your note</p>
-                <p className="break-words whitespace-pre-wrap type-body text-ink">{note}</p>
-              </div>
-            )
-          )}
-          {noteError && <Alert>Could not save the note. Try again.</Alert>}
-
-          {confirmRemove ? (
-            <div className="flex animate-fade-in flex-wrap items-center gap-x-4 gap-y-3">
-              <p className="type-small text-ink">Remove this spot?</p>
-              <button type="button" onClick={() => void remove()} disabled={removing} className={buttonSecondaryClass}>
-                Yes, remove
-              </button>
-              <button
-                ref={keepRef}
-                type="button"
-                onClick={() => {
-                  setConfirmRemove(false);
-                  setRemoveError(false);
-                }}
-                disabled={removing}
-                className={buttonSecondaryClass}
-              >
-                Keep it
-              </button>
-            </div>
-          ) : (
-            <div data-spot-actions="" className="grid grid-cols-2 gap-2">
-              {!editing && (
-                <button ref={noteButtonRef} type="button" onClick={startNote} className={buttonSecondaryClass}>
-                  {note ? "Edit note" : "Add a note"}
-                </button>
-              )}
-              {canMark && !editing && (
-                <button
-                  ref={markButtonRef}
-                  type="button"
-                  onClick={onMarkButton}
-                  disabled={savingMark}
-                  aria-pressed={marking}
-                  className={`${buttonSecondaryClass} ${marking ? "border-ink" : ""}`}
-                >
-                  {marking ? "Stop marking" : rect ? "Clear mark" : "Mark the spot"}
-                </button>
-              )}
-              {spot.slideNumber > 1 && (
-                <button type="button" onClick={() => void moveMarker()} disabled={moving} className={buttonSecondaryClass}>
-                  Move to slide {spot.slideNumber - 1}
-                </button>
-              )}
-              {onRemoved && (
-                <button ref={removeRef} type="button" onClick={() => setConfirmRemove(true)} className={buttonSecondaryClass}>
-                  Remove
-                </button>
-              )}
-            </div>
-          )}
-          {markError && <Alert>Could not save the mark. Try again.</Alert>}
-          {moveError && <Alert>Could not move the marker. Try again.</Alert>}
-          {removeError && <Alert>Could not remove the spot. Try again.</Alert>}
+              </form>
+            ) : (
+              note && (
+                <div data-note="" className="flex flex-col gap-1 border-t border-hairline pt-3">
+                  <p className="type-caption text-secondary">Your note</p>
+                  <p className="break-words whitespace-pre-wrap type-body text-ink">{note}</p>
+                </div>
+              )
+            )}
+            {noteError && <Alert>Could not save the note. Try again.</Alert>}
+          </div>
         </div>
         {/* Always there, so a screen reader says each save (a new line each time). */}
         <p role="status" aria-atomic="false" className="sr-only">

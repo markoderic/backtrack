@@ -233,12 +233,23 @@ describe("SpotsView: the list", () => {
     expect(item.querySelectorAll("[data-highlight-box]")).toHaveLength(1);
   });
 
-  it("during a live lecture a white Back to lecture button goes back into class", async () => {
+  it("during a live lecture a black Back to lecture button goes back into class", async () => {
     show({ liveSlide: 6 });
     await ready();
     const back = screen.getByRole("link", { name: "Back to lecture" });
     expect(back).toHaveAttribute("href", `/l/${LECTURE}`);
-    expect(back.className).toContain("bg-surface");
+    expect(back.className).toContain("bg-ink");
+    expect(back.className).toContain("text-surface");
+    expect(back.className).not.toContain("bg-surface");
+  });
+
+  it("during a live lecture an open spot has the black Back to lecture too", async () => {
+    show({ liveSlide: 12 });
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: /Slide 9/ }));
+    const back = screen.getByRole("link", { name: "Back to lecture" });
+    expect(back).toHaveAttribute("href", `/l/${LECTURE}`);
+    expect(back.className).toContain("bg-ink");
   });
 
   it("after the lecture there is no Back to lecture", async () => {
@@ -394,19 +405,10 @@ describe("SpotsView: opening a spot", () => {
     expect(await ready()).toHaveLength(3);
   });
 
-  it("moving the marker updates the row, asks for the counts again and shows the new slide's count", async () => {
+  it("an open spot has no Move to slide, and nothing changes a spot's slide", async () => {
     await open("9");
-    expect(rpc).toHaveBeenCalledTimes(1);
-    rpc.mockResolvedValue({ data: allStats({ 3: 4, 5: 2, 8: 3 }), error: null });
-    fireEvent.click(screen.getByRole("button", { name: "Move to slide 8" }));
-    expect(await screen.findByText("3 people got lost here")).toBeInTheDocument();
-    expect(update).toHaveBeenCalledWith({ slide_number: 8 });
-    expect(eqId).toHaveBeenCalledWith("id", ["b"]);
-    expect(rpc).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
-    const items = await screen.findAllByRole("listitem");
-    expect(items[2]).toHaveTextContent("Slide 8");
-    expect(items[2]).toHaveTextContent("Base case");
+    expect(screen.queryByRole("button", { name: /Move to slide/ })).not.toBeInTheDocument();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("a saved note shows in the list", async () => {
@@ -596,17 +598,6 @@ describe("SpotsView: highlights", () => {
     expect(boxes()[0].style.left).toBe("50%");
     vi.restoreAllMocks();
   });
-
-  it("moving the marker clears the highlight, in the list state too", async () => {
-    tables.lost_taps = { data: [withBox("b", 9, "2026-10-26T14:20:00Z", HL)], error: null };
-    await open("9");
-    rpc.mockResolvedValue({ data: allStats({ 8: 3 }), error: null });
-    fireEvent.click(screen.getByRole("button", { name: "Move to slide 8" }));
-    await screen.findByText("3 people got lost here");
-    expect(update).toHaveBeenCalledWith({ slide_number: 8, hl_x: null, hl_y: null, hl_w: null, hl_h: null });
-    expect(boxes()).toHaveLength(0);
-    expect(screen.getByRole("button", { name: "Mark the spot" })).toBeInTheDocument();
-  });
 });
 
 describe("SpotsView: after the course's time to see slides is over", () => {
@@ -649,20 +640,3 @@ describe("SpotsView: after the course's time to see slides is over", () => {
   });
 });
 
-describe("SpotsView: moving onto a slide that has a spot", () => {
-  it("the two become one spot, and it stays open", async () => {
-    tables.lost_taps = {
-      data: [tap("on8", 8, "2026-10-26T14:10:00Z", { note: "eight" }), tap("on9", 9, "2026-10-26T14:20:00Z")],
-      error: null,
-    };
-    show();
-    await ready();
-    fireEvent.click(screen.getByRole("button", { name: /Slide 9/ }));
-    rpc.mockResolvedValue({ data: allStats({ 8: 1 }), error: null });
-    fireEvent.click(screen.getByRole("button", { name: "Move to slide 8" }));
-    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Base case"));
-    expect(screen.getByText("eight")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
-    expect(await screen.findAllByRole("listitem")).toHaveLength(1);
-  });
-});

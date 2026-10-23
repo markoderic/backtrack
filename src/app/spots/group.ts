@@ -12,17 +12,17 @@ export type SpotRow = {
 
 /**
  * One spot per slide. The live screen takes one tap per slide, but an older lecture can hold
- * several rows on one slide (taps from before that, or a marker moved onto a slide that had
- * one). They show once: lost when any of them is lost, with the latest note and mark.
+ * several rows on one slide (taps from before that, or moved there by the old "Move to slide",
+ * now gone). They show once: lost when any of them is lost, with the latest note and mark.
  *
  * `id` is the row that changes take (the latest lost row, else the latest save); `ids` is every
- * row on the slide, for Remove, Move and clearing a note or a mark, so nothing older comes back.
+ * row on the slide, for Remove and clearing a note or a mark, so nothing older comes back.
  */
 export type Spot = {
   id: string;
   ids: string[];
   kind: "lost" | "save";
-  /** The slide the marker is on now. Moving the marker changes this. */
+  /** The slide the spot is on (lost_taps.slide_number). */
   slideNumber: number;
   /** The latest note on the slide's rows (the main row's own first). */
   note: string | null;

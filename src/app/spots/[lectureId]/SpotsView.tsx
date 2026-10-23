@@ -15,7 +15,7 @@ import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { formatClock } from "../time";
 import { groupBySlide, type Spot, type SpotRow } from "../group";
-import { buttonSecondaryClass } from "@/components/ButtonPrimary";
+import { buttonPrimarySmallClass } from "@/components/ButtonPrimary";
 import { SpotDetail, backButtonClass, countLine, highlightClass, whenLine } from "./SpotDetail";
 
 type Props = {
@@ -205,24 +205,6 @@ export function SpotsView({
     };
   }, [lectureId, userId]);
 
-  async function onMoved(spot: Spot, newSlide: number) {
-    const ids = new Set(spot.ids);
-    // The spot keeps its place as the one open: after the move its main row is still spot.id.
-    try {
-      const students = await loadStudents(lectureId);
-      setLoaded((l) =>
-        l && {
-          ...l,
-          students,
-          // Every row of the spot moves; the mark stays behind (it was drawn on the slide the marker left).
-          rows: l.rows.map((r) => (ids.has(r.id) ? { ...r, slideNumber: newSlide, rect: null } : r)),
-        },
-      );
-    } catch (e) {
-      setFatal(e instanceof Error ? e : new Error(String(e)));
-    }
-  }
-
   // A note or a mark goes on the main row; clearing one clears it on every row of the slide.
   function onNoteSaved(spot: Spot, note: string | null) {
     const ids = new Set(spot.ids);
@@ -285,7 +267,7 @@ export function SpotsView({
   // One spot per slide (an older lecture may hold several rows on one slide).
   const spots = useMemo(() => groupBySlide(loaded?.rows ?? []), [loaded]);
   const expired = !!loaded && !live && !loaded.slidesShown;
-  // By any of its rows: a marker moved onto a slide that had a spot joins that spot.
+  // By any of its rows (an older lecture can hold several on one slide).
   const openIndex = openId === null ? -1 : spots.findIndex((s) => s.ids.includes(openId));
   const current = openIndex >= 0 ? spots[openIndex] : undefined;
   const follow = live && <LiveFollow lectureId={lectureId} initialLive={liveSlide} onLive={setFollowedLive} />;
@@ -298,8 +280,7 @@ export function SpotsView({
       <>
         {follow}
         <SpotDetail
-          // A new key when another spot joins this one (its marker moved onto it), so the note and mark are read again.
-          key={`${openSpot.id}:${openSpot.ids.length}`}
+          key={openSpot.id}
           lectureId={lectureId}
           spot={openSpot}
           firstLine={loaded.firstLines[openSpot.slideNumber]}
@@ -312,7 +293,6 @@ export function SpotsView({
           focusOnOpen={openedBy}
           onNoteSaved={(note) => onNoteSaved(openSpot, note)}
           onHighlightSaved={(rect) => onHighlightSaved(openSpot, rect)}
-          onMoved={(n) => onMoved(openSpot, n)}
           onRemoved={() => void onRemoved(openSpot)}
           onBack={() => back(openSpot.id)}
           onPrevSpot={prev ? () => open(prev.id, "prev") : undefined}
@@ -346,8 +326,8 @@ export function SpotsView({
           </div>
           <div className="min-w-0 flex-1" />
           {live && (
-            // Opened from the lecture while it is live: the way back into class.
-            <Link href={`/l/${lectureId}`} className={`${buttonSecondaryClass} shrink-0`}>
+            // Opened from the lecture while it is live: the way back into class, the one black button here.
+            <Link href={`/l/${lectureId}`} className={`${buttonPrimarySmallClass} shrink-0`}>
               Back to lecture
             </Link>
           )}

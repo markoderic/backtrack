@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { ButtonPrimaryLink } from "@/components/ButtonPrimary";
+import { ButtonPrimaryLink, buttonPrimarySmallClass } from "@/components/ButtonPrimary";
 import { backButtonClass } from "./[lectureId]/SpotDetail";
 import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
@@ -17,11 +17,14 @@ type Item = {
   joinedAt: string;
   /** How many slides have a spot (one per slide, as on the lecture's page), or null when unknown. */
   spots: number | null;
+  /** The lecture is going on right now. */
+  live: boolean;
 };
 
+type JoinedLecture = { id: string; name: string; lecture_date: string; status?: string };
 type JoinedRow = {
   joined_at: string;
-  lectures: { id: string; name: string; lecture_date: string } | { id: string; name: string; lecture_date: string }[] | null;
+  lectures: JoinedLecture | JoinedLecture[] | null;
 };
 
 /**
@@ -48,7 +51,7 @@ async function spotCounts(userId: string): Promise<Map<string, Set<number>> | nu
   }
 }
 
-/** Every lecture this browser joined, newest first. */
+/** Every lecture this browser joined: the live ones first, then newest first. */
 async function loadJoined(): Promise<Item[]> {
   const supabase = createBrowserSupabase();
   const {
@@ -62,7 +65,7 @@ async function loadJoined(): Promise<Item[]> {
   // Own rows only: a teacher can read every participant of their lectures, which would list each lecture once per student.
   const { data, error } = await supabase
     .from("participants")
-    .select("joined_at, lectures(id, name, lecture_date)")
+    .select("joined_at, lectures(id, name, lecture_date, status)")
     .eq("anon_id", session.user.id);
   if (error) throw new Error(error.message);
 
@@ -77,9 +80,13 @@ async function loadJoined(): Promise<Item[]> {
         date: l.lecture_date,
         joinedAt: row.joined_at,
         spots: counts ? (counts.get(l.id)?.size ?? 0) : null,
+        live: l.status === "live",
       });
   }
-  return items.sort((a, b) => b.date.localeCompare(a.date) || b.joinedAt.localeCompare(a.joinedAt));
+  // A lecture going on right now comes first: that is where the student goes back to.
+  return items.sort(
+    (a, b) => Number(b.live) - Number(a.live) || b.date.localeCompare(a.date) || b.joinedAt.localeCompare(a.joinedAt),
+  );
 }
 
 export function LectureList() {
@@ -136,7 +143,16 @@ export function LectureList() {
                     href={`/spots/${l.id}`}
                     className="press -mx-2 flex items-center gap-4 rounded-md px-2 py-4 hover:bg-surface/60 focus-ring"
                   >
-                    <span className="min-w-0 flex-1 break-words type-lecture text-ink">{l.name}</span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-1">
+                      {l.live && (
+                        // Ink, not red: red is only ever I'm lost.
+                        <span data-live-now="" className="flex items-center gap-2 type-small-strong text-ink">
+                          <span aria-hidden className="size-2 rounded-full bg-ink" />
+                          Live now
+                        </span>
+                      )}
+                      <span className="break-words type-lecture text-ink">{l.name}</span>
+                    </span>
                     {l.spots !== null && l.spots > 0 && (
                       <span data-spot-count="" className="shrink-0 type-small text-ink">
                         {l.spots === 1 ? "1 spot" : `${l.spots} spots`}
@@ -145,6 +161,14 @@ export function LectureList() {
                     <span className="shrink-0 type-small text-secondary">{formatLectureDate(l.date)}</span>
                     <Icon name="forward" className="text-secondary" />
                   </Link>
+                  {l.live && (
+                    // The way back into class: the one black button on the list.
+                    <div className="pb-4">
+                      <Link href={`/l/${l.id}`} aria-label={`Back to lecture, ${l.name}`} className={buttonPrimarySmallClass}>
+                        Back to lecture
+                      </Link>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
