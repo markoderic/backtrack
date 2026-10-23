@@ -117,11 +117,11 @@ describe("course details", () => {
 });
 
 describe("what the database refuses", () => {
-  it("color: only the eight names", async () => {
+  it("color: the eight names (0019 adds red, orange, pink and #rrggbb: tests/db/options.test.ts)", async () => {
     for (const ok of ["slate", "blue", "indigo", "plum", "teal", "green", "olive", "ochre"]) {
       await set(`color = '${ok}'`);
     }
-    for (const bad of ["red", "lost", "", "#c8371f", "Teal"]) {
+    for (const bad of ["lost", "", "#C8371F", "Teal"]) {
       await expect(set(`color = '${bad}'`), bad).rejects.toThrow(/courses_color_check/);
     }
   });
