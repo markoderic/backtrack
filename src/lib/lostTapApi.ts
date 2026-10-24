@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isRect, type Rect } from "./rect";
 import type { QueueOp, SendResult } from "./tapQueue";
+import { timed } from "./requestTimeout";
 
 /** One of the student's own rows, as the live screen needs it: which slide, what kind, its note and mark. */
 export type OwnTap = { id: string; slide: number; kind: "lost" | "save"; note?: string; rect?: Rect };
@@ -62,7 +63,8 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
             : rect === null
               ? { ...rest, hl_x: null, hl_y: null, hl_w: null, hl_h: null }
               : { ...rest, hl_x: rect.x, hl_y: rect.y, hl_w: rect.w, hl_h: rect.h };
-        return classifySend(await supabase.from("lost_taps").update(patch).eq("id", op.id));
+        // A send that hangs gives up after 15 s: offline, so the queue keeps it and sends it again.
+        return classifySend(await timed(supabase.from("lost_taps").update(patch).eq("id", op.id)));
       }
       // The session is read from the device, so a tap made offline still has its user.
       const {
@@ -75,21 +77,24 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
       }
       if (!session) throw new Error("You are not signed in.");
       const { tap } = op;
+      // A send that hangs gives up after 15 s: offline, so the queue keeps it and sends it again.
       return classifySend(
-        await supabase.from("lost_taps").upsert(
-          {
-            id: tap.id,
-            lecture_id: lectureId,
-            anon_id: session.user.id,
-            kind: tap.kind ?? "lost",
-            tapped_on_slide: tap.tappedOnSlide,
-            slide_number: tap.tappedOnSlide,
-            ...(tap.note ? { note: tap.note } : {}),
-            ...(tap.rect ? { hl_x: tap.rect.x, hl_y: tap.rect.y, hl_w: tap.rect.w, hl_h: tap.rect.h } : {}),
-            tapped_at: tap.tappedAt,
-          },
-          // A resend of the same tap does nothing.
-          { onConflict: "id", ignoreDuplicates: true },
+        await timed(
+          supabase.from("lost_taps").upsert(
+            {
+              id: tap.id,
+              lecture_id: lectureId,
+              anon_id: session.user.id,
+              kind: tap.kind ?? "lost",
+              tapped_on_slide: tap.tappedOnSlide,
+              slide_number: tap.tappedOnSlide,
+              ...(tap.note ? { note: tap.note } : {}),
+              ...(tap.rect ? { hl_x: tap.rect.x, hl_y: tap.rect.y, hl_w: tap.rect.w, hl_h: tap.rect.h } : {}),
+              tapped_at: tap.tappedAt,
+            },
+            // A resend of the same tap does nothing.
+            { onConflict: "id", ignoreDuplicates: true },
+          ),
         ),
       );
     } catch (e) {
@@ -115,12 +120,15 @@ export async function loadOwnTaps(supabase: SupabaseClient, lectureId: string): 
       throw new Error(sessionError.message);
     }
     if (!session) return [];
-    const { data, error, status } = await supabase
-      .from("lost_taps")
-      .select("id, slide_number, kind, note, hl_x, hl_y, hl_w, hl_h")
-      .eq("lecture_id", lectureId)
-      .eq("anon_id", session.user.id)
-      .eq("undone", false);
+    // A read that hangs gives up after 15 s and counts as offline.
+    const { data, error, status } = await timed(
+      supabase
+        .from("lost_taps")
+        .select("id, slide_number, kind, note, hl_x, hl_y, hl_w, hl_h")
+        .eq("lecture_id", lectureId)
+        .eq("anon_id", session.user.id)
+        .eq("undone", false),
+    );
     if (error) {
       if (classifyError(error, status) === "offline") return null;
       throw new Error(error.message);

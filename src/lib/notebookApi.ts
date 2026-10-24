@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyError, classifyThrown } from "./lostTapApi";
 import { classifyWrite, isMissingSchema, type Loaded, type WriteResult } from "./schemaCheck";
+import { timed } from "./requestTimeout";
 
 /**
  * The student's private notebook: one note per slide of a lecture, in the notebook_notes table of
@@ -17,11 +18,10 @@ export type NotebookNote = { slide: number; body: string; updatedAt: string };
 export async function loadNotebook(supabase: SupabaseClient, lectureId: string): Promise<Loaded<NotebookNote[]>> {
   try {
     // Row level security gives only the signed in student's own rows (no teacher policy at all).
-    const { data, error, status } = await supabase
-      .from("notebook_notes")
-      .select("slide_number, body, updated_at")
-      .eq("lecture_id", lectureId)
-      .order("slide_number");
+    // A read that hangs gives up after 15 s and counts as offline (it is tried again).
+    const { data, error, status } = await timed(
+      supabase.from("notebook_notes").select("slide_number, body, updated_at").eq("lecture_id", lectureId).order("slide_number"),
+    );
     if (error) {
       if (isMissingSchema(error)) return { status: "missing" };
       if (classifyError(error, status) === "offline") return { status: "offline" };
@@ -54,11 +54,14 @@ export async function saveNotebookNote(
 ): Promise<WriteResult> {
   try {
     return classifyWrite(
-      await supabase.rpc("save_notebook_note", {
-        p_lecture_id: lectureId,
-        p_slide_number: slide,
-        p_body: Array.from(body).slice(0, NOTEBOOK_MAX).join(""),
-      }),
+      // A save that hangs gives up after 15 s: offline, the text is kept and sent again.
+      await timed(
+        supabase.rpc("save_notebook_note", {
+          p_lecture_id: lectureId,
+          p_slide_number: slide,
+          p_body: Array.from(body).slice(0, NOTEBOOK_MAX).join(""),
+        }),
+      ),
     );
   } catch (e) {
     return classifyThrown(e);
@@ -72,7 +75,7 @@ export async function saveNotebookNote(
 export async function loadNotebookSlides(supabase: SupabaseClient): Promise<Loaded<{ lectureId: string; slide: number }[]>> {
   try {
     // Row level security gives only the signed in student's own rows; a note with no text has no row.
-    const { data, error, status } = await supabase.from("notebook_notes").select("lecture_id, slide_number");
+    const { data, error, status } = await timed(supabase.from("notebook_notes").select("lecture_id, slide_number"));
     if (error) {
       if (isMissingSchema(error)) return { status: "missing" };
       if (classifyError(error, status) === "offline") return { status: "offline" };
@@ -87,6 +90,9 @@ export async function loadNotebookSlides(supabase: SupabaseClient): Promise<Load
     return { status: "offline" };
   }
 }
+
+/** A note that did not save for want of a connection is sent again by itself after these waits (then every 30 s). */
+export const NOTEBOOK_SAVE_RETRY_MS = [2000, 5000, 15000, 30000];
 
 /** Where one slide's note is: waiting for the pause, being sent, saved, or why it is not. */
 export type NoteState = "pending" | "saving" | "saved" | "offline" | "failed" | "missing";
@@ -219,6 +225,9 @@ export class NotebookSaver {
   private seen: Map<number, string> | null = null;
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly sending = new Map<number, Promise<void>>();
+  /** A slide that did not save for want of a connection: its next try by itself, and how many came before. */
+  private readonly retryTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private readonly retries = new Map<number, number>();
 
   constructor({ save, delayMs = 800, onState, onError, storageKey }: SaverOptions) {
     this.save = save;
@@ -287,16 +296,21 @@ export class NotebookSaver {
    */
   release(token: NotebookHold, base: ReadonlyMap<number, string> | null): void {
     const freed = new Set<number>();
+    // A slide can be held by this open and by one that went before (LEFT): it is merged once.
+    const merged = new Set<number>();
     for (const owner of [token, LEFT]) {
       const held = this.holds.get(owner);
       if (!held) continue;
       this.holds.delete(owner);
       for (const [slide, blind] of held) {
         freed.add(slide);
-        if (!blind || !base) continue;
+        if (!blind || !base || merged.has(slide)) continue;
+        merged.add(slide);
         const typed = this.waiting.get(slide);
         const saved = base.get(slide) ?? "";
-        if (typed === undefined || saved.trim() === "" || typed.includes(saved)) continue;
+        // Only a typed text that already starts with the saved one has it (a word of it somewhere in
+        // the typing, like "ok" in "look", is not the saved note).
+        if (typed === undefined || saved.trim() === "" || typed.startsWith(saved)) continue;
         this.waiting.set(slide, typed.trim() === "" ? saved : `${saved}\n${typed}`);
       }
     }
@@ -353,17 +367,13 @@ export class NotebookSaver {
     if (held && !held.has(slide)) held.set(slide, blind ?? !(this.waiting.has(slide) || this.inFlight.has(slide)));
     this.waiting.set(slide, body);
     this.touched.add(slide);
-    if (this.isHeld(slide)) {
-      // Not sent yet: the saved notes are not read. Kept on the device ("Saved on this device").
-      clearTimeout(this.timers.get(slide));
-      this.timers.delete(slide);
-      this.persist();
-      this.onState(slide, "offline");
-      return;
-    }
     this.persist();
-    this.onState(slide, "pending");
+    // While typing nothing shows; after the pause the text goes out, or, while the saved notes are
+    // not read yet (held), says it is kept on the device (send). Once that shows it stays while the
+    // student types on (every key is on the device at once): it never comes and goes with each key.
+    if (!(this.isHeld(slide) && this.lastStates.get(slide) === "offline")) this.onState(slide, "pending");
     clearTimeout(this.timers.get(slide));
+    this.stopRetry(slide);
     this.timers.set(
       slide,
       setTimeout(() => {
@@ -428,21 +438,47 @@ export class NotebookSaver {
 
   /** Stops the timers and drops everything (tests: a fresh saver next time). */
   halt(): void {
-    for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const timer of [...this.timers.values(), ...this.retryTimers.values()]) clearTimeout(timer);
     this.timers.clear();
+    this.retryTimers.clear();
     this.listeners.clear();
   }
 
   /** Stops the timers (the page is going). Waiting text stays in pending() and on the device. */
   dispose(): void {
-    for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const timer of [...this.timers.values(), ...this.retryTimers.values()]) clearTimeout(timer);
     this.timers.clear();
+    this.retryTimers.clear();
     this.persist();
   }
 
+  private stopRetry(slide: number): void {
+    clearTimeout(this.retryTimers.get(slide));
+    this.retryTimers.delete(slide);
+  }
+
+  /** Sends the slide again after a wait that grows (2, 5, 15, then every 30 s) while it does not save. */
+  private retryLater(slide: number): void {
+    this.stopRetry(slide);
+    const n = this.retries.get(slide) ?? 0;
+    this.retries.set(slide, n + 1);
+    this.retryTimers.set(
+      slide,
+      setTimeout(() => {
+        this.retryTimers.delete(slide);
+        void this.send(slide);
+      }, NOTEBOOK_SAVE_RETRY_MS[Math.min(n, NOTEBOOK_SAVE_RETRY_MS.length - 1)]),
+    );
+  }
+
   private send(slide: number): Promise<void> {
-    // Held: an open has not read the saved notes yet; it goes once that read answers.
-    if (this.isHeld(slide)) return Promise.resolve();
+    this.stopRetry(slide);
+    // Held: an open has not read the saved notes yet; it goes once that read answers. Meanwhile it is
+    // kept on the device, and says so.
+    if (this.isHeld(slide)) {
+      if (this.waiting.has(slide) && this.lastStates.get(slide) !== "offline") this.onState(slide, "offline");
+      return Promise.resolve();
+    }
     const busy = this.sending.get(slide);
     // One save of a slide at a time; the newest text goes once the one in flight is back.
     if (busy) return busy.then(() => (this.waiting.has(slide) ? this.send(slide) : undefined));
@@ -460,6 +496,7 @@ export class NotebookSaver {
         this.sending.delete(slide);
         this.inFlight.delete(slide);
         if (result === "ok") {
+          this.retries.delete(slide);
           this.saved.set(slide, body);
           this.persist();
           if (!this.waiting.has(slide)) this.onState(slide, "saved", body);
@@ -468,7 +505,11 @@ export class NotebookSaver {
         // Kept for the next try, unless newer text came in meanwhile.
         if (!this.waiting.has(slide)) this.waiting.set(slide, body);
         this.persist();
-        this.onState(slide, result === "offline" || result === "throttled" ? "offline" : result === "missing" ? "missing" : "failed");
+        const offline = result === "offline" || result === "throttled";
+        this.onState(slide, offline ? "offline" : result === "missing" ? "missing" : "failed");
+        // No connection, or a request that hung and was given up on: tried again by itself too (not
+        // only with the next key, blur or the browser coming back online).
+        if (offline) this.retryLater(slide);
       });
     this.sending.set(slide, run);
     return run;

@@ -3,6 +3,7 @@ import { classifyError, classifyThrown, TAP_LIMIT_CODE } from "./lostTapApi";
 import { isRect, type Rect } from "./rect";
 import type { MarkOp, MarkSendResult } from "./markQueue";
 import { classifyWrite, isMissingSchema, type Loaded, type WriteResult } from "./schemaCheck";
+import { timed } from "./requestTimeout";
 
 /**
  * Marks (highlights) on a slide, in the slide_marks table of migration 0020. A student can have
@@ -94,7 +95,8 @@ export function lostMarkFromRow(r: Row): LostMark | null {
 
 async function read<T>(run: () => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null; status?: number }>, map: (rows: Row[]) => T): Promise<Loaded<T>> {
   try {
-    const { data, error, status } = await run();
+    // A read that hangs gives up after 15 s and counts as offline.
+    const { data, error, status } = await timed(run());
     if (error) {
       if (isMissingSchema(error)) return { status: "missing" };
       if (classifyError(error, status) === "offline") return { status: "offline" };
@@ -109,7 +111,8 @@ async function read<T>(run: () => PromiseLike<{ data: unknown; error: { code?: s
 
 async function write<R extends string>(run: () => PromiseLike<{ error: { code?: string; message: string; status?: number } | null; status?: number }>, limits?: (message: string) => R): Promise<WriteResult | R> {
   try {
-    const res = await run();
+    // A write that hangs gives up after 15 s: offline, so the queue keeps it and sends it again.
+    const res = await timed(run());
     if (res.error?.code === TAP_LIMIT_CODE && limits) return limits(res.error.message ?? "");
     return classifyWrite(res);
   } catch (e) {

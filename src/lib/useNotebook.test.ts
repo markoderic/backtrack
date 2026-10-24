@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { NotebookNote } from "./notebookApi";
 import type { Loaded, WriteResult } from "./schemaCheck";
-import { NOTEBOOK_RETRY_MS, useNotebook } from "./useNotebook";
+import { NOTEBOOK_READ_WAIT_MS, NOTEBOOK_RETRY_MS, useNotebook } from "./useNotebook";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const settle = () => act(async () => {});
@@ -203,6 +203,7 @@ describe("useNotebook: every open waits for its own read (K2 re-review N1, N2, N
     await settle();
     await settle();
     act(() => result.current.set(3, "typed"));
+    await act(async () => result.current.flush());
     expect(result.current.stateOf(3)).toBe("offline");
     await act(async () => {
       window.dispatchEvent(new Event("online"));
@@ -258,15 +259,86 @@ describe("useNotebook: every open waits for its own read (K2 re-review N1, N2, N
     expect(save.mock.calls.some((c) => c[1].includes("Accrual: earned"))).toBe(false);
   });
 
-  it("the saved text is never put in twice when the typed text already holds it", async () => {
+  it("the saved text is never put in twice when the typed text already starts with it", async () => {
     let answer: (v: Loaded<NotebookNote[]>) => void = () => {};
     const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
     const { result } = renderHook(() => useNotebook(LECTURE, { save, load: () => new Promise((r) => (answer = r)) }));
     await settle();
-    act(() => result.current.set(7, "intro: saved part, and more"));
+    act(() => result.current.set(7, "saved part, and more"));
     await act(async () => answer({ status: "ok", data: [note(7, "saved part")] }));
     await settle();
-    expect(save.mock.calls).toEqual([[7, "intro: saved part, and more"]]);
+    expect(save.mock.calls).toEqual([[7, "saved part, and more"]]);
+  });
+
+  it("a saved note that only turns up somewhere inside the typed text is still kept, in front (K2 re-review R6 probe)", async () => {
+    let answer: (v: Loaded<NotebookNote[]>) => void = () => {};
+    const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
+    const { result } = renderHook(() => useNotebook(LECTURE, { save, load: () => new Promise((r) => (answer = r)) }));
+    await settle();
+    // Saved "ok"; typed before the read answered: "look at the 2,400 again" (it has "ok" in "look").
+    act(() => result.current.set(7, "look at the 2,400 again"));
+    await act(async () => answer({ status: "ok", data: [note(7, "ok")] }));
+    await settle();
+    expect(save.mock.calls).toEqual([[7, "ok\nlook at the 2,400 again"]]);
+    expect(result.current.textOf(7)).toBe("ok\nlook at the 2,400 again");
+  });
+
+  it("keys typed before the read answered show nothing while typing; after the pause \"Saved on this device\" shows and stays (nit)", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer: (v: Loaded<NotebookNote[]>) => void = () => {};
+      const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
+      const { result } = renderHook(() => useNotebook(LECTURE, { save, load: () => new Promise((r) => (answer = r)) }));
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      const shown: (string | null)[] = [];
+      for (const text of ["a", "ab", "abc"]) {
+        act(() => result.current.set(4, text));
+        shown.push(result.current.stateOf(4));
+        await act(async () => vi.advanceTimersByTimeAsync(100));
+      }
+      // Typing: nothing said yet (no "Saved on this device" with the first key).
+      expect(shown).toEqual(["pending", "pending", "pending"]);
+      await act(async () => vi.advanceTimersByTimeAsync(800));
+      expect(result.current.stateOf(4)).toBe("offline");
+      // Typing on: it stays, it never goes away and comes back with each key.
+      for (const text of ["abcd", "abcde"]) {
+        act(() => result.current.set(4, text));
+        expect(result.current.stateOf(4)).toBe("offline");
+      }
+      expect(save).not.toHaveBeenCalled();
+      await act(async () => {
+        answer({ status: "ok", data: [] });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(save.mock.calls).toEqual([[4, "abcde"]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a read that never answers does not keep the open holding for good: it is tried again, and the next answer lets the text go (R7)", async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi
+        .fn<Load>()
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValue({ status: "ok", data: [note(2, "saved")] });
+      const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
+      const { result } = renderHook(() => useNotebook(LECTURE, { save, load }));
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      act(() => result.current.set(2, "typed"));
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(save).not.toHaveBeenCalled();
+      // The hung read is given up on; the next try comes after the first wait.
+      await act(async () => vi.advanceTimersByTimeAsync(NOTEBOOK_READ_WAIT_MS + NOTEBOOK_RETRY_MS[0]));
+      expect(load).toHaveBeenCalledTimes(2);
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(save.mock.calls).toEqual([[2, "saved\ntyped"]]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a save that ends while the page is hidden shows as Saved when the page is shown again", async () => {

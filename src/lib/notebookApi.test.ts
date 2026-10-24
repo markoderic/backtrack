@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { WriteResult } from "./schemaCheck";
-import { NotebookSaver, loadNotebook, loadNotebookSlides, notebookKey, saveNotebookNote, type NoteState } from "./notebookApi";
+import {
+  NOTEBOOK_SAVE_RETRY_MS,
+  NotebookSaver,
+  loadNotebook,
+  loadNotebookSlides,
+  notebookKey,
+  saveNotebookNote,
+  type NoteState,
+} from "./notebookApi";
 
 type Res = { data?: unknown; error: { code?: string; message: string } | null; status?: number };
 
@@ -383,5 +391,45 @@ describe("NotebookSaver", () => {
       expect(saver.pending().get(2)).toBe("memory");
       vi.restoreAllMocks();
     });
+
+    it("a slide held by this open and by one that went before is merged with the saved note once", () => {
+      // A closed tab left slide 7 typed blind on the device.
+      localStorage.setItem(KEY, JSON.stringify({ "7": "left" }));
+      localStorage.setItem(`${KEY}:blind`, JSON.stringify([7]));
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "ok");
+      const saver = new NotebookSaver({ save, storageKey: KEY });
+      const open = saver.hold();
+      saver.set(7, "left, and more", open, true);
+      saver.release(open, new Map([[7, "saved"]]));
+      expect(saver.pending().get(7)).toBe("saved\nleft, and more");
+    });
+  });
+
+  it("text that did not go out for want of a connection is sent again by itself after 2, then 5 s (R7)", async () => {
+    const { save, saver, states } = make(["offline", "offline", "ok"]);
+    saver.set(2, "kept");
+    await vi.advanceTimersByTimeAsync(800);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(states.at(-1)).toEqual([2, "offline"]);
+    await vi.advanceTimersByTimeAsync(NOTEBOOK_SAVE_RETRY_MS[0]);
+    expect(save).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(NOTEBOOK_SAVE_RETRY_MS[1]);
+    expect(save.mock.calls).toEqual([
+      [2, "kept"],
+      [2, "kept"],
+      [2, "kept"],
+    ]);
+    expect(states.at(-1)).toEqual([2, "saved"]);
+    // Saved: no more tries.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(save).toHaveBeenCalledTimes(3);
+  });
+
+  it("a refusal is not tried again by itself (it would be refused again)", async () => {
+    const { save, saver } = make(["rejected"]);
+    saver.set(2, "no");
+    await vi.advanceTimersByTimeAsync(800);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });

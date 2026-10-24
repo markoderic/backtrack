@@ -5,6 +5,7 @@ import { loadNotebook, saveNotebookNote, type NotebookHold, type NotebookNote, t
 import { markNotebookMissing, sharedNotebookSaver } from "./sharedQueues";
 import type { Loaded, WriteResult } from "./schemaCheck";
 import { createBrowserSupabase } from "./supabase/browser";
+import { REQUEST_TIMEOUT_MS } from "./requestTimeout";
 
 /**
  * Where the notebook lives: "table" once notebook_notes answered (migration 0020), "device" when it
@@ -21,6 +22,13 @@ type Options = {
 
 /** While an open has not read the saved notes, it reads again after these waits (then every 30 s). */
 export const NOTEBOOK_RETRY_MS = [2000, 5000, 15000, 30000];
+
+/**
+ * The longest one read is waited for before the open tries again (the request itself gives up at
+ * 15 s; this also covers a read that never answers at all), so a hung read never keeps an open
+ * holding its text for good.
+ */
+export const NOTEBOOK_READ_WAIT_MS = REQUEST_TIMEOUT_MS + 1000;
 
 /**
  * The student's private notebook of one lecture: one note per slide, typed straight on the page
@@ -135,7 +143,16 @@ export function useNotebook(lectureId: string, { save, load }: Options = {}) {
       reading = true;
       if (retry) clearTimeout(retry);
       retry = null;
-      const answered = await readNotes().finally(() => {
+      // A read that has not answered in time counts as not answered: the guard lets go and the next
+      // try is planned (if it answers later after all, it still lets go of the hold then).
+      let gaveUp: ReturnType<typeof setTimeout> | undefined;
+      const answered = await Promise.race([
+        readNotes(),
+        new Promise<boolean>((resolve) => {
+          gaveUp = setTimeout(() => resolve(false), NOTEBOOK_READ_WAIT_MS);
+        }),
+      ]).finally(() => {
+        clearTimeout(gaveUp);
         reading = false;
       });
       if (answered || !mounted.current || hold.current !== token) return;
