@@ -454,6 +454,23 @@ describe("LostButton", () => {
       expect(noNoteField()).not.toBeInTheDocument();
     });
 
+    it("its caption fits Slide 12 and Saved on one line (at least 64 px, never wrapped) (K2 re-review N5)", async () => {
+      const { show } = setup({ viewing: 12 });
+      await settle();
+      press();
+      noteField().focus();
+      fireEvent.focus(noteField());
+      typeNote("why");
+      show({ viewing: 13 });
+      saveNote();
+      const caption = document.querySelector("[data-note-slide]")!.parentElement as HTMLElement;
+      expect(caption).toHaveTextContent("Slide 12");
+      expect(caption).toHaveTextContent("Saved");
+      expect(caption.className).toContain("whitespace-nowrap");
+      expect(caption.className).toContain("min-w-16");
+      expect(caption.className).not.toMatch(/(^|\s)w-16(\s|$)/);
+    });
+
     it("goes into the page's slot (the top of the notebook) when the page gives one", async () => {
       const slot = document.createElement("div");
       document.body.appendChild(slot);

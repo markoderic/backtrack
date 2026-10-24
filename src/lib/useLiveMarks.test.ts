@@ -174,4 +174,65 @@ describe("useLiveMarks", () => {
     expect(localStorage.getItem(`backtrack:marks:${LECTURE}`)).toBeNull();
     expect(live.result.current.marks.map((m) => m.id)).toEqual([a]);
   });
+
+  it("My spots deletes a mark already sent while the live screen's run is out: the run sends it, and My spots never shows it again (K2 re-review N3)", async () => {
+    // The lecture's shared queue starts fresh (made from what the device holds: nothing).
+    const { forgetSharedQueues } = await import("./sharedQueues");
+    forgetSharedQueues();
+    const sent: string[] = [];
+    const finishes: ((r: MarkSendResult) => void)[] = [];
+    const mk = (who: string) =>
+      vi.fn<(op: MarkOp) => Promise<MarkSendResult>>((op) => {
+        sent.push(`${who}:${op.op}:${op.op === "add" ? op.mark.id : op.op === "kind" ? op.slide : op.id}`);
+        return new Promise<MarkSendResult>((r) => finishes.push(r));
+      });
+    const c: LiveMark = { id: "c", slide: 7, rect: R, kind: "save" };
+    const load = vi.fn(async () => ({ status: "ok" as const, data: [c] }));
+    const live = renderHook(() => useLiveMarks(LECTURE, { send: mk("live"), load }));
+    await settle();
+    await settle();
+    act(() => {
+      live.result.current.add(7, { ...R, x: 0.5 }, "save");
+    });
+    await settle();
+    const spots = renderHook(() => useLiveMarks(LECTURE, { send: mk("spots"), load }));
+    await settle();
+    await settle();
+    expect(spots.result.current.marks.map((m) => m.id)).toContain("c");
+    act(() => spots.result.current.remove("c"));
+    await act(async () => finishes.shift()!("ok"));
+    await settle();
+    await act(async () => finishes.shift()?.("ok"));
+    await settle();
+    await settle();
+    expect(sent.filter((x) => x.endsWith(":delete:c"))).toHaveLength(1);
+    expect(spots.result.current.marks.map((m) => m.id)).not.toContain("c");
+    expect(live.result.current.marks.map((m) => m.id)).not.toContain("c");
+  });
+
+  it("a note changed in My spots and sent by the live screen's run shows the new text in My spots", async () => {
+    const { forgetSharedQueues } = await import("./sharedQueues");
+    forgetSharedQueues();
+    const finishes: ((r: MarkSendResult) => void)[] = [];
+    const send = vi.fn<(op: MarkOp) => Promise<MarkSendResult>>(() => new Promise<MarkSendResult>((r) => finishes.push(r)));
+    const c: LiveMark = { id: "c", slide: 7, rect: R, kind: "save", note: "old" };
+    const load = vi.fn(async () => ({ status: "ok" as const, data: [c] }));
+    const live = renderHook(() => useLiveMarks(LECTURE, { send, load }));
+    await settle();
+    await settle();
+    act(() => {
+      live.result.current.add(7, { ...R, x: 0.5 }, "save");
+    });
+    await settle();
+    const spots = renderHook(() => useLiveMarks(LECTURE, { send, load }));
+    await settle();
+    await settle();
+    act(() => spots.result.current.setNote("c", "new"));
+    await act(async () => finishes.shift()!("ok"));
+    await settle();
+    await act(async () => finishes.shift()?.("ok"));
+    await settle();
+    await settle();
+    expect(spots.result.current.marks.find((m) => m.id === "c")?.note).toBe("new");
+  });
 });

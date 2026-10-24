@@ -1541,6 +1541,42 @@ describe("StudentLecture notebook (batch K2: typed on the page, one private note
     expect(document.querySelector("[data-notebook-slide]")).toHaveTextContent("");
   });
 
+  it("a slide change the student makes lets go of the notes at once, even when the field keeps the focus (K2 re-review N6)", async () => {
+    show(7);
+    await settle();
+    await act(async () => channelStatus("SUBSCRIBED"));
+    const field = notebook(7);
+    field.focus();
+    fireEvent.change(field, { target: { value: "seven" } });
+    teacherMoves(8);
+    expect(notebook(7)).toBe(field);
+    // A tap on a strip dot (on a phone it may not blur the field).
+    fireEvent.click(within(strip()).getByRole("button", { name: /^Slide 5\b/ }));
+    expect(screen.getByRole("textbox", { name: "Your notes, slide 5" })).toBe(field);
+    expect(document.querySelector("[data-notebook-slide]")).toHaveTextContent("");
+    await waitFor(() => expect(saves()).toEqual([expect.objectContaining({ p_slide_number: 7, p_body: "seven" })]));
+  });
+
+  it("keeps the notes on their slide while an IME composition is open, past the pause", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      show(7);
+      await settle();
+      await act(async () => channelStatus("SUBSCRIBED"));
+      const field = notebook(7);
+      fireEvent.compositionStart(field);
+      fireEvent.change(field, { target: { value: "かいけい" } });
+      teacherMoves(8);
+      await act(async () => vi.advanceTimersByTimeAsync(NOTEBOOK_PIN_MS * 2));
+      expect(screen.getByRole("textbox", { name: "Your notes, slide 7" })).toBe(field);
+      fireEvent.compositionEnd(field);
+      await act(async () => vi.advanceTimersByTimeAsync(NOTEBOOK_PIN_MS));
+      expect(screen.getByRole("textbox", { name: "Your notes, slide 8" })).toBe(field);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("after a pause in typing the notes follow the slide on screen again", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

@@ -109,7 +109,13 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
       console.error(e);
       return;
     }
-    const { refused, retryIn } = result;
+    const { sent, refused, retryIn } = result;
+    // The run may be the other page's (the queue is shared, a flush joins the run already going): what
+    // it sent is in the database, so this screen's copy takes it too (applying an op twice changes nothing).
+    for (const op of sent) {
+      applyMarkOp(base.current, op);
+      if (reads.current > 0) sentLog.current.push(op);
+    }
     if (refused.some((r) => r.result === "missing")) setMode("legacy");
     // A kind op refused is not the student's doing (the next reconcile sends it again); the rest is said.
     const said = refused.filter((r) => r.op.op !== "kind");

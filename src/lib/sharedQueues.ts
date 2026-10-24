@@ -36,8 +36,8 @@ export function sharedMarkQueue(lectureId: string): MarkQueue {
 type SharedNotebook = { saver: NotebookSaver; missing: boolean };
 
 /**
- * The lecture's notebook saver. It starts held: nothing is sent until a page has read the saved
- * notes (useNotebook releases it). It sends with `save` (save_notebook_note, from the page that uses
+ * The lecture's notebook saver. Each open of the notebook holds what it types until its own read of
+ * the saved notes answers (useNotebook: hold, release). It sends with `save` (save_notebook_note, from the page that uses
  * it), and nothing more once the database said the table is not there.
  */
 export function sharedNotebookSaver(lectureId: string, save: (slide: number, body: string) => Promise<WriteResult>): NotebookSaver {
@@ -47,7 +47,6 @@ export function sharedNotebookSaver(lectureId: string, save: (slide: number, bod
       missing: false,
       saver: new NotebookSaver({
         storageKey: notebookKey(lectureId),
-        held: true,
         save: async () => "offline",
         // A bug, not the network: the text is kept and the lecture goes on.
         onError: (e) => console.error(e),

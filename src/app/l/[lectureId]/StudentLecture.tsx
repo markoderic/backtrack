@@ -110,6 +110,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   // field has the focus and was typed in within NOTEBOOK_PIN_MS; let go on blur or after the pause.
   const [notebookPin, setNotebookPin] = useState<number | null>(null);
   const pinTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // An IME composition (Japanese, Chinese ...) is going on in the notebook: the pin waits for its end.
+  const composing = useRef(false);
   useEffect(
     () => () => {
       if (pinTimer.current) clearTimeout(pinTimer.current);
@@ -256,21 +258,34 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
   // The notebook field's slide: the one it is being typed on, else the one on screen.
   const notebookSlide = notebookPin ?? viewing;
-  const typeNotebook = (text: string) => {
-    const slide = notebookPin ?? viewing;
-    if (notebookPin === null) setNotebookPin(slide);
-    notebook.set(slide, cutNote(text, NOTEBOOK_MAX));
+  const armPin = () => {
     if (pinTimer.current) clearTimeout(pinTimer.current);
     pinTimer.current = setTimeout(() => {
       pinTimer.current = null;
+      // Not in the middle of a composition: its candidates may be open for a while.
+      if (composing.current) {
+        armPin();
+        return;
+      }
       setNotebookPin(null);
       void flushNotebookRef.current();
     }, NOTEBOOK_PIN_MS);
   };
-  const leaveNotebook = () => {
+  const typeNotebook = (text: string) => {
+    const slide = notebookPin ?? viewing;
+    if (notebookPin === null) setNotebookPin(slide);
+    notebook.set(slide, cutNote(text, NOTEBOOK_MAX));
+    armPin();
+  };
+  /** The notebook follows the slide on screen again (blur, or the student moving the slide). */
+  const unpinNotebook = () => {
     if (pinTimer.current) clearTimeout(pinTimer.current);
     pinTimer.current = null;
-    setNotebookPin(null);
+    if (notebookPin !== null) setNotebookPin(null);
+  };
+  const leaveNotebook = () => {
+    composing.current = false;
+    unpinNotebook();
     void notebook.flush();
   };
 
@@ -344,6 +359,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   // slide's content mounts again with the short slide and fade (none with reduced motion).
   const [move, setMove] = useState<{ n: number; dir: "next" | "back"; slide: number; done: boolean } | null>(null);
   const moveTo = (target: number, go: () => void) => {
+    // The student moves the slide: the notebook goes with them (a tap may not blur the field on a phone).
+    unpinNotebook();
+    void flushNotebookRef.current();
     if (state && target !== state.viewing && target >= 1 && target <= state.live) {
       const dir = target < state.viewing ? "back" : "next";
       setMove((m) => ({ n: (m?.n ?? 0) + 1, dir, slide: target, done: false }));
@@ -440,6 +458,12 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
             value={notebook.textOf(notebookSlide)}
             onValue={typeNotebook}
             onBlur={leaveNotebook}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
             className="min-h-12 flex-1"
           />
           <div className="flex h-5 shrink-0 items-end justify-between gap-3 pt-1">

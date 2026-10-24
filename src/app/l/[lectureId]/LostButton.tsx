@@ -910,8 +910,9 @@ export function LostButton({
         onBlur={onNoteBlur}
         className="flex-1"
       />
-      {/* A fixed width, so "Saved" coming and going never changes the field's width. */}
-      <span className="flex min-h-6 w-16 shrink-0 items-center justify-end gap-2 type-caption text-secondary">
+      {/* At least 64 px, so "Saved" coming and going does not change the field's width; one line, never
+          wrapped ("Slide 12" and "Saved" together widen it, and the field fits itself again). */}
+      <span className="flex min-h-6 min-w-16 shrink-0 items-center justify-end gap-2 whitespace-nowrap type-caption text-secondary">
         {otherSlide !== null && <span data-note-slide="">Slide {otherSlide}</span>}
         {counter !== null ? (
           <span id={counterId} data-counter="">

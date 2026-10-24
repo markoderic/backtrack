@@ -167,13 +167,14 @@ type SaverOptions = {
    * starts with what was left there and sends it with its first flush.
    */
   storageKey?: string;
-  /**
-   * Starts holding: text typed is kept (on the device too) but nothing is sent until release(),
-   * which the page calls once it has read the saved notes. Text typed before that ("blind", over an
-   * empty looking field) is then laid after the saved text, never over it.
-   */
-  held?: boolean;
 };
+
+/**
+ * One open of the notebook (a page shown) that has not read the saved notes yet: see hold().
+ */
+export type NotebookHold = symbol;
+/** Holds of opens that went away before their read, and blind text a closed tab left on the device. */
+const LEFT: NotebookHold = Symbol("left on the device");
 
 /** Told when a slide's state changes; `body` is the text a save that went through had. */
 export type SaverListener = (slide: number, state: NoteState, body?: string) => void;
@@ -198,10 +199,14 @@ export class NotebookSaver {
   private readonly listeners = new Set<SaverListener>();
   private readonly onError?: SaverOptions["onError"];
   private readonly storageKey?: string;
-  /** Nothing is sent while held (the saved notes are not read yet). */
-  private held: boolean;
-  /** Slides typed on while held: their text goes after the saved text once it is known. */
-  private readonly blind = new Set<number>();
+  /**
+   * The slides held by each open that has not read the saved notes yet: nothing of them is sent until
+   * that open's read answers. `true` marks a slide typed on "blind" (over an empty looking field, the
+   * saver had no text for it): its text then goes after the saved text, never over it.
+   */
+  private readonly holds = new Map<NotebookHold, Map<number, boolean>>();
+  /** The last state of each slide, for a page shown again. */
+  private readonly lastStates = new Map<number, NoteState>();
   /** Text not sent yet, by slide. */
   private readonly waiting = new Map<number, string>();
   /** Text that is out right now, by slide (not saved until the database says so). */
@@ -215,13 +220,12 @@ export class NotebookSaver {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly sending = new Map<number, Promise<void>>();
 
-  constructor({ save, delayMs = 800, onState, onError, storageKey, held = false }: SaverOptions) {
+  constructor({ save, delayMs = 800, onState, onError, storageKey }: SaverOptions) {
     this.save = save;
     this.delayMs = delayMs;
     if (onState) this.listeners.add(onState);
     this.onError = onError;
     this.storageKey = storageKey;
-    this.held = held;
     if (storageKey) {
       const stored = readStored(storageKey);
       this.seen = stored;
@@ -229,13 +233,21 @@ export class NotebookSaver {
         this.waiting.set(slide, body);
         this.touched.add(slide);
       }
-      // Typed blind on a visit that ended before the saved notes were read: still blind.
-      for (const slide of readBlind(storageKey)) if (this.waiting.has(slide)) this.blind.add(slide);
+      // Typed blind on a visit that ended before the saved notes were read: still blind, held until a read.
+      const left = new Map<number, boolean>();
+      for (const slide of readBlind(storageKey)) if (this.waiting.has(slide)) left.set(slide, true);
+      if (left.size > 0) this.holds.set(LEFT, left);
     }
   }
 
   private onState(slide: number, state: NoteState, body?: string): void {
+    this.lastStates.set(slide, state);
     for (const listener of this.listeners) listener(slide, state, body);
+  }
+
+  /** The last state of each slide (a page shown again starts from these). */
+  states(): ReadonlyMap<number, NoteState> {
+    return new Map(this.lastStates);
   }
 
   /** Listens to the slides' states (a page using this saver). Returns the way to stop. */
@@ -251,31 +263,62 @@ export class NotebookSaver {
     this.save = save;
   }
 
-  /** Whether it still waits for the saved notes to be read (nothing is sent meanwhile). */
-  isHeld(): boolean {
-    return this.held;
+  /**
+   * An open of the notebook (a page shown) that has not read the saved notes yet. What it types is
+   * kept (on the device too) but not sent until release() with its read; every open waits for its
+   * own read, so an empty looking field never replaces a saved note.
+   */
+  hold(): NotebookHold {
+    const token: NotebookHold = Symbol("open");
+    this.holds.set(token, new Map());
+    return token;
+  }
+
+  /** Whether some open still holds this slide (its text is not sent yet). */
+  isHeld(slide: number): boolean {
+    for (const held of this.holds.values()) if (held.has(slide)) return true;
+    return false;
   }
 
   /**
-   * The saved notes are read (`base`, by slide), or the notebook table is not there (null): sending
-   * starts. A slide typed on before this keeps its saved text, with what was typed after it (on a
-   * new line), so nothing typed over an empty looking field ever replaces a saved note.
+   * The open read the saved notes (`base`, by slide), or the table is not there (null): its slides,
+   * and what opens that went before their read left held, go out. A slide typed on blind keeps its
+   * saved text, with the typed text after it (on a new line); the saved text is never put in twice.
    */
-  release(base: ReadonlyMap<number, string> | null): void {
-    if (!this.held) return;
-    this.held = false;
-    if (base) {
-      for (const slide of this.blind) {
+  release(token: NotebookHold, base: ReadonlyMap<number, string> | null): void {
+    const freed = new Set<number>();
+    for (const owner of [token, LEFT]) {
+      const held = this.holds.get(owner);
+      if (!held) continue;
+      this.holds.delete(owner);
+      for (const [slide, blind] of held) {
+        freed.add(slide);
+        if (!blind || !base) continue;
         const typed = this.waiting.get(slide);
         const saved = base.get(slide) ?? "";
-        if (typed === undefined || saved.trim() === "" || typed.startsWith(saved)) continue;
+        if (typed === undefined || saved.trim() === "" || typed.includes(saved)) continue;
         this.waiting.set(slide, typed.trim() === "" ? saved : `${saved}\n${typed}`);
       }
     }
-    this.blind.clear();
+    if (freed.size === 0) return;
     this.persist();
-    for (const slide of this.waiting.keys()) this.onState(slide, "pending");
+    for (const slide of freed) if (this.waiting.has(slide) && !this.isHeld(slide)) this.onState(slide, "pending");
   }
+
+  /**
+   * The open goes before its read answered (hidden, closed): its blind slides stay held until any
+   * open's read (here or on the next visit, through the device copy); the rest is free to go.
+   */
+  leave(token: NotebookHold): void {
+    const held = this.holds.get(token);
+    if (!held) return;
+    this.holds.delete(token);
+    const left = this.holds.get(LEFT) ?? new Map<number, boolean>();
+    for (const [slide, blind] of held) if (blind && this.waiting.has(slide)) left.set(slide, true);
+    if (left.size > 0) this.holds.set(LEFT, left);
+    this.persist();
+  }
+
   /**
    * Takes the device copy's changes made by another page since this saver last looked: newer text
    * becomes this saver's waiting text; a slide whose text is gone from there (that page saved it)
@@ -299,16 +342,23 @@ export class NotebookSaver {
     this.seen = stored;
   }
 
-  /** The student typed: this is the slide's whole text now. */
-  set(slide: number, body: string): void {
+  /**
+   * The student typed: this is the slide's whole text now. `hold`: the open it was typed in, while
+   * that open has not read the saved notes (the text is then kept, not sent). `blind`: the field
+   * looked empty when the typing started there (by default: the saver had no text for the slide).
+   */
+  set(slide: number, body: string, hold?: NotebookHold, blind?: boolean): void {
     this.sync();
+    const held = hold === undefined ? undefined : this.holds.get(hold);
+    if (held && !held.has(slide)) held.set(slide, blind ?? !(this.waiting.has(slide) || this.inFlight.has(slide)));
     this.waiting.set(slide, body);
     this.touched.add(slide);
-    if (this.held) {
-      // Not sent yet: the saved notes are not read. Kept (and marked blind) on the device.
-      this.blind.add(slide);
+    if (this.isHeld(slide)) {
+      // Not sent yet: the saved notes are not read. Kept on the device ("Saved on this device").
+      clearTimeout(this.timers.get(slide));
+      this.timers.delete(slide);
       this.persist();
-      this.onState(slide, "pending");
+      this.onState(slide, "offline");
       return;
     }
     this.persist();
@@ -326,10 +376,7 @@ export class NotebookSaver {
   /** Sends every slide's waiting text now, and resolves once all of them are done. */
   async flush(): Promise<void> {
     this.sync();
-    if (this.held) {
-      this.persist();
-      return;
-    }
+    this.persist();
     for (const [slide, timer] of this.timers) {
       clearTimeout(timer);
       this.timers.delete(slide);
@@ -374,7 +421,9 @@ export class NotebookSaver {
     }
     if (changed) this.seen = writeStored(this.storageKey, stored) ? stored : null;
     else if (this.seen !== null) this.seen = stored;
-    writeBlind(this.storageKey, [...this.blind].filter((slide) => stored.has(slide)));
+    const blind = new Set<number>();
+    for (const held of this.holds.values()) for (const [slide, b] of held) if (b && stored.has(slide)) blind.add(slide);
+    writeBlind(this.storageKey, [...blind]);
   }
 
   /** Stops the timers and drops everything (tests: a fresh saver next time). */
@@ -392,6 +441,8 @@ export class NotebookSaver {
   }
 
   private send(slide: number): Promise<void> {
+    // Held: an open has not read the saved notes yet; it goes once that read answers.
+    if (this.isHeld(slide)) return Promise.resolve();
     const busy = this.sending.get(slide);
     // One save of a slide at a time; the newest text goes once the one in flight is back.
     if (busy) return busy.then(() => (this.waiting.has(slide) ? this.send(slide) : undefined));
