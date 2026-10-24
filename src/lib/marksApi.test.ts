@@ -127,8 +127,15 @@ describe("reading marks", () => {
   it("markFromRow and lostMarkFromRow read Realtime records too, and skip what is not a mark", () => {
     expect(markFromRow(row())).toMatchObject({ id: MARK, kind: "save", slide: 4 });
     expect(markFromRow({ id: MARK })).toBeNull();
-    expect(lostMarkFromRow(row())).toMatchObject({ id: MARK, anonId: ME });
+    expect(lostMarkFromRow(row({ kind: "lost" }))).toMatchObject({ id: MARK, anonId: ME });
+    // The teacher's own read never selects kind (only 'lost' rows come back): no kind is fine.
+    const { kind: _kind, ...noKind } = row();
+    void _kind;
+    expect(lostMarkFromRow(noKind)).toMatchObject({ id: MARK });
     expect(lostMarkFromRow({ id: MARK })).toBeNull();
+    // A Realtime record that is not 'lost' (a race the database already settled) is not shown.
+    expect(lostMarkFromRow(row({ kind: "save" }))).toBeNull();
+    expect(lostMarkFromRow(row({ kind: "lost" }))).toMatchObject({ id: MARK });
     // A teacher's Realtime record has no note: nothing breaks.
     const { note: _note, ...noNote } = row({ kind: "lost" });
     void _note;
@@ -155,6 +162,19 @@ describe("writing marks", () => {
     calls = [];
     await addMark(client, { id: MARK, lectureId: LECTURE, slide: 4, rect, kind: "lost", note: "n".repeat(2100) });
     expect((calls.find((c) => c[0] === "upsert")![1] as { note: string }).note).toHaveLength(2000);
+  });
+
+  it("cuts a long note by whole characters, never half an emoji", async () => {
+    result = { error: null, status: 201 };
+    await addMark(client, { id: MARK, lectureId: LECTURE, slide: 4, rect, kind: "lost", note: "😀".repeat(2005) });
+    const note = (calls.find((c) => c[0] === "upsert")![1] as { note: string }).note;
+    expect(Array.from(note)).toHaveLength(2000);
+    expect(note.endsWith("😀")).toBe(true);
+    calls = [];
+    await updateMark(client, MARK, { note: "a" + "😀".repeat(2000) });
+    const updated = (calls[1][1] as { note: string }).note;
+    expect(Array.from(updated)).toHaveLength(2000);
+    expect(/[\uD800-\uDBFF]$/.test(updated)).toBe(false);
   });
 
   it("addMark refuses a box outside the slide without asking the database", async () => {

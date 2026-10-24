@@ -176,15 +176,52 @@ describe("NotebookSaver", () => {
     expect(saver.pending().size).toBe(0);
   });
 
-  it("drops a refused save and says so; says missing before 0020", async () => {
-    const { saver, states } = make(["rejected", "missing"]);
+  it("keeps refused text (and text before 0020) for the next try, and says why", async () => {
+    const { save, saver, states } = make(["rejected", "missing", "ok", "ok"]);
     saver.set(2, "no");
     await vi.advanceTimersByTimeAsync(800);
     expect(states.at(-1)).toEqual([2, "failed"]);
     saver.set(3, "not yet");
     await vi.advanceTimersByTimeAsync(800);
     expect(states.at(-1)).toEqual([3, "missing"]);
+    expect([...saver.pending()]).toEqual([
+      [2, "no"],
+      [3, "not yet"],
+    ]);
+    await saver.flush();
+    expect(save.mock.calls.slice(2)).toEqual([
+      [2, "no"],
+      [3, "not yet"],
+    ]);
     expect(saver.pending().size).toBe(0);
+  });
+
+  it("a save that throws (a bug) keeps the text and reports the error", async () => {
+    const boom = new Error("boom");
+    const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => {
+      throw boom;
+    });
+    const onError = vi.fn();
+    const states: NoteState[] = [];
+    const saver = new NotebookSaver({ save, onError, onState: (_s, st) => states.push(st) });
+    saver.set(2, "kept");
+    await saver.flush();
+    expect(onError).toHaveBeenCalledWith(boom);
+    expect(states.at(-1)).toBe("failed");
+    expect(saver.pending().get(2)).toBe("kept");
+  });
+
+  it("newer text typed while a failing save is out wins over the failed one", async () => {
+    let finish: (r: WriteResult) => void = () => {};
+    const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(() => new Promise<WriteResult>((r) => (finish = r)));
+    const saver = new NotebookSaver({ save, delayMs: 800 });
+    saver.set(2, "old");
+    await vi.advanceTimersByTimeAsync(800);
+    saver.set(2, "new");
+    finish("rejected");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saver.pending().get(2)).toBe("new");
+    saver.dispose();
   });
 
   it("dispose stops the timers and keeps the waiting text", async () => {

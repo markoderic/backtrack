@@ -118,6 +118,25 @@ describe("on top of production (0001 to 0019)", () => {
     expect((await marks()).map((r) => r.id)).toEqual([tap(1)]);
   });
 
+  it("nobody can call the trigger functions or my_slide_marks without signing in", async () => {
+    await setup();
+    const can = async (role: string, fn: string) =>
+      (await db.query<{ ok: boolean }>("select has_function_privilege($1, $2, 'execute') as ok", [role, fn])).rows[0].ok;
+    for (const fn of [
+      "public.notebook_notes_touch()",
+      "public.slide_marks_touch()",
+      "public.slide_marks_limit()",
+      "public.lost_taps_copy_mark()",
+      "public.slide_marks_clear_tap()",
+    ]) {
+      expect(await can("authenticated", fn), fn).toBe(false);
+      expect(await can("anon", fn), fn).toBe(false);
+    }
+    expect(await can("anon", "public.my_slide_marks(uuid)")).toBe(false);
+    expect(await can("authenticated", "public.my_slide_marks(uuid)")).toBe(true);
+    expect(await can("authenticated", "public.save_notebook_note(uuid, int, text)")).toBe(true);
+  });
+
   it("the full migration list (with 0020) can take 0020 again", async () => {
     await setup();
     await expect(db.exec(sql0020)).resolves.toBeTruthy();

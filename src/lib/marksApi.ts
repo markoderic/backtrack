@@ -77,6 +77,8 @@ export function markFromRow(r: Row): Mark | null {
 
 /** One row of the teacher's read (or a Realtime record) as a LostMark, or null if it is not one. */
 export function lostMarkFromRow(r: Row): LostMark | null {
+  // A Realtime record can carry the kind: anything but 'lost' is not the teacher's to show.
+  if (r.kind !== undefined && r.kind !== "lost") return null;
   const rect = rectOf(r);
   if (!rect || typeof r.id !== "string" || typeof r.anon_id !== "string") return null;
   return {
@@ -144,8 +146,9 @@ export function loadLostMarks(supabase: SupabaseClient, lectureId: string): Prom
 
 export type NewMark = { id: string; lectureId: string; slide: number; rect: Rect; kind: MarkKind; note?: string };
 
+/** No note for empty text; past 2000 characters it is cut by whole characters (never half an emoji). */
 const cleanNote = (note: string | null | undefined): string | null =>
-  note === undefined || note === null || note.trim() === "" ? null : note.slice(0, MARK_NOTE_MAX);
+  note === undefined || note === null || note.trim() === "" ? null : Array.from(note).slice(0, MARK_NOTE_MAX).join("");
 
 const limitOf = (message: string): "slide_full" | "lecture_full" => (/in this lecture/i.test(message) ? "lecture_full" : "slide_full");
 

@@ -239,13 +239,43 @@ describe("when, and only lectures the student joined", () => {
     await expect(add(s1, { lecture: NOT_JOINED })).rejects.toThrow(rls);
   });
 
-  it("takes a mark up to 15 minutes after the end, not later", async () => {
+  /** The course's "Students can see slides until" (0016, 0019). */
+  const access = (sql: string) => db.exec(`update public.courses set ${sql} where id = '${COURSE}'`);
+
+  it("takes a mark up to 15 minutes after the end, even once the course hides the slides", async () => {
+    await access("student_access = 'custom_date', access_until = '2020-01-02'");
     await add(s1, { lecture: JUST_ENDED });
     await expect(add(s1, { lecture: ENDED_LONG_AGO })).rejects.toThrow(rls);
     expect(await count(s1, JUST_ENDED)).toBe(1);
   });
 
-  it("changes and deletes its own marks any time after (My spots), like Remove and Edit note", async () => {
+  it("after class, from My spots: takes a mark a week later while the course still shows the slides", async () => {
+    await db.exec(`update public.lectures set ended_at = now() - interval '7 days' where id = '${ENDED_LONG_AGO}'`);
+    // The default: until the end of the semester.
+    await add(s1, { lecture: ENDED_LONG_AGO, kind: "lost", note: "went over it again" });
+    await access("student_access = '30d'");
+    await add(s1, { lecture: ENDED_LONG_AGO, slide: 3 });
+    await access("student_access = 'always'");
+    await add(s1, { lecture: ENDED_LONG_AGO, slide: 4 });
+    expect(await count(s1, ENDED_LONG_AGO)).toBe(3);
+  });
+
+  it("after class: refuses a new mark once the course no longer shows the slides", async () => {
+    await db.exec(`update public.lectures set ended_at = now() - interval '8 days' where id = '${ENDED_LONG_AGO}'`);
+    await access("student_access = '7d'");
+    await expect(add(s1, { lecture: ENDED_LONG_AGO })).rejects.toThrow(rls);
+    await access("student_access = 'custom_date', access_until = '2020-01-02'");
+    await expect(add(s1, { lecture: ENDED_LONG_AGO })).rejects.toThrow(rls);
+    await access("student_access = 'custom_days', access_days = 3, access_until = null");
+    await expect(add(s1, { lecture: ENDED_LONG_AGO })).rejects.toThrow(rls);
+    // Still not for a lecture the student never joined.
+    await access("student_access = 'always', access_days = null");
+    await expect(add(s1, { lecture: NOT_JOINED })).rejects.toThrow(rls);
+    expect(await count(s1, ENDED_LONG_AGO)).toBe(0);
+  });
+
+  it("changes and deletes its own marks any time after (My spots), like Remove and Edit note, even once the slides are hidden", async () => {
+    await access("student_access = 'custom_date', access_until = '2020-01-02'");
     const a = (await seed(s1, 2, () => 2, ENDED_LONG_AGO), await all());
     expect(a).toHaveLength(2);
     expect((await q(s1, "update public.slide_marks set note = 'later', kind = 'lost' where id = $1", [a[0].id])).affected).toBe(1);
@@ -279,8 +309,20 @@ describe("another student", () => {
   });
 });
 
+/** An I'm lost tap of the student on a slide (the teacher sees a 'lost' mark only while one is there). */
+const lostTap = (claims: Claims, slide: number, lecture = LIVE) =>
+  q<{ id: string }>(
+    claims,
+    `insert into public.lost_taps (lecture_id, anon_id, tapped_on_slide, slide_number, tapped_at)
+     values ($1, $2, $3, $3, now()) returning id`,
+    [lecture, claims.sub, slide],
+  ).then((r) => r.rows[0].id);
+
 describe("the teacher", () => {
   beforeEach(async () => {
+    await lostTap(s1, 2);
+    await lostTap(s2, 3);
+    await lostTap(s1, 2, OTHERS_LECTURE);
     await add(s1, { kind: "lost", note: "I'm stuck on this term" });
     await add(s1, { kind: "save", note: "for the exam" });
     await add(s2, { kind: "lost", slide: 3 });
@@ -335,6 +377,34 @@ describe("the teacher", () => {
     expect((await q(marko, "select id from public.slide_marks where id = $1", [save.id])).rows).toHaveLength(1);
     await q(s1, "update public.slide_marks set kind = 'save' where id = $1", [save.id]);
     expect((await q(marko, "select id from public.slide_marks where id = $1", [save.id])).rows).toHaveLength(0);
+  });
+
+  it("sees a 'lost' mark only while that student is lost on that slide (a tap there that is not undone)", async () => {
+    const seen = async () =>
+      (await q<{ anon_id: string; slide_number: number }>(marko, "select anon_id, slide_number from public.slide_marks order by slide_number")).rows.map(
+        (r) => `${r.anon_id === s1.sub ? "s1" : "s2"}:${r.slide_number}`,
+      );
+    expect(await seen()).toEqual(["s1:2", "s2:3"]);
+    // A red mark on a slide where the student has no lost tap: hidden.
+    await add(s2, { kind: "lost", slide: 5 });
+    expect(await seen()).toEqual(["s1:2", "s2:3"]);
+    // The tap comes: the mark shows.
+    const tap5 = await lostTap(s2, 5);
+    expect(await seen()).toEqual(["s1:2", "s2:3", "s2:5"]);
+    // The tap is undone (Undo, or I'm lost pressed again): the mark is gone from the teacher's view.
+    await q(s2, "update public.lost_taps set undone = true where id = $1", [tap5]);
+    expect(await seen()).toEqual(["s1:2", "s2:3"]);
+    // Another student's tap on that slide does not count for s2's mark, and a save tap never counts.
+    await lostTap(s1, 5);
+    await q(s2, "insert into public.lost_taps (lecture_id, anon_id, kind, tapped_on_slide, slide_number, tapped_at) values ($1, $2, 'save', 5, 5, now())", [LIVE, s2.sub]);
+    expect(await seen()).toEqual(["s1:2", "s2:3"]);
+    // Moved one slide earlier (My spots): the tap now counts for slide 4, not 5.
+    const tap5b = await lostTap(s2, 5);
+    expect(await seen()).toEqual(["s1:2", "s2:3", "s2:5"]);
+    await q(s2, "update public.lost_taps set slide_number = 4 where id = $1", [tap5b]);
+    expect(await seen()).toEqual(["s1:2", "s2:3"]);
+    // The student still sees their own mark the whole time.
+    expect((await q(s2, "select slide_number from public.slide_marks where slide_number = 5")).rows).toHaveLength(1);
   });
 
   it("no truncate for anyone", async () => {

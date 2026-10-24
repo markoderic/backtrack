@@ -12,11 +12,13 @@
 -- 2. slide_marks (new table): the boxes a student draws on a slide. Several per slide, each a
 --    rectangle stored as fractions of the slide, with a kind ('lost' red, 'save' yellow) and a
 --    private note up to 2000 characters. At most 30 marks a slide and 300 a lecture for one
---    student. A student adds marks while the lecture is live or up to 15 minutes after it ends
---    (like taps), and changes or deletes their own marks any time (like Remove and Edit note in
---    My spots). The teacher of the course reads the 'lost' marks of their lectures: where the box
---    is, never its note (the note column can not be read by any signed in user directly; a student
---    reads their own notes through my_slide_marks) and never a 'save' mark.
+--    student. A student adds marks while the lecture is live, up to 15 minutes after it ends
+--    (like taps), and after class from My spots for as long as the course lets them see the
+--    slides; they change or delete their own marks any time (like Remove and Edit note in My
+--    spots). The teacher of the course reads a 'lost' mark of their lecture only while that
+--    student is lost on that slide (a lost tap there that is not undone): where the box is, never
+--    its note (the note column can not be read by any signed in user directly; a student reads
+--    their own notes through my_slide_marks), and never a 'save' mark.
 -- 3. The highlight already on a tap (lost_taps.hl_x, hl_y, hl_w, hl_h) keeps working. Every
 --    highlight that is on a tap that is not undone is copied into slide_marks (the mark gets the
 --    tap's id, so running the file twice copies nothing twice), and from now on a highlight
@@ -141,7 +143,9 @@ create or replace trigger slide_marks_touch
 -- a signed in user adding their own mark is counted; owner-side inserts (the copy below) and
 -- marks the tap trigger copies over (pg_trigger_depth() > 1: the highlight of a tap, which 0012
 -- already counts as that tap) are left alone. A resend of a mark that already saved adds no row,
--- so it is never refused. The error is BT429, as for taps, with its own message.
+-- so it is never refused. The error is BT429, as for taps, with its own message. Two marks sent at
+-- the same moment by one student wait for each other (a lock for that student and lecture, held
+-- until the insert commits), so a burst can not slip past the count.
 create or replace function public.slide_marks_limit() returns trigger
 language plpgsql
 security definer
@@ -154,6 +158,8 @@ begin
   if auth.uid() is null or new.anon_id is distinct from auth.uid() or pg_trigger_depth() > 1 then
     return new;
   end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('slide_marks:' || new.lecture_id::text || ':' || new.anon_id::text, 0));
 
   if exists (select 1 from public.slide_marks m where m.id = new.id) then
     return new;
@@ -181,6 +187,11 @@ $$;
 create or replace trigger slide_marks_limit
   before insert on public.slide_marks
   for each row execute function public.slide_marks_limit();
+
+-- Trigger functions only run as triggers; nobody needs to call them.
+revoke all on function public.notebook_notes_touch() from public, anon, authenticated;
+revoke all on function public.slide_marks_touch() from public, anon, authenticated;
+revoke all on function public.slide_marks_limit() from public, anon, authenticated;
 
 -- A student's own marks, with their notes (the only way to read a note). One lecture, or every
 -- lecture when p_lecture_id is null (My lectures). Never anyone else's marks.
@@ -289,8 +300,10 @@ begin
       using (anon_id = auth.uid() and public.joined_lecture(lecture_id));
   end if;
 
-  -- Marks: the student's own rows of lectures they joined; added only while the lecture is live
-  -- or up to 15 minutes after it ended (as taps, 0007), changed or deleted any time.
+  -- Marks: the student's own rows of lectures they joined; added while the lecture is live, up
+  -- to 15 minutes after it ended (as taps, 0007), or after class from My spots while the course
+  -- still lets the student see the slides (student_can_see_lecture, 0016/0019); changed or
+  -- deleted any time.
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'slide_marks' and policyname = 'slide_marks_select_own') then
     create policy slide_marks_select_own on public.slide_marks
       for select to authenticated
@@ -308,7 +321,11 @@ begin
           from public.lectures l
           where l.id = slide_marks.lecture_id
             and slide_marks.slide_number between 1 and l.slide_count
-            and (l.status = 'live' or l.ended_at > now() - interval '15 minutes')
+            and (
+              l.status = 'live'
+              or l.ended_at > now() - interval '15 minutes'
+              or public.student_can_see_lecture(l.id)
+            )
         )
       );
   end if;
@@ -327,11 +344,25 @@ begin
   end if;
 
   -- The teacher reads the 'lost' marks of their own lectures (the box, not the note: see the
-  -- column rights above), never a 'save'.
+  -- column rights above), never a 'save', and only while that student is lost on that slide: a
+  -- lost tap of theirs on it that is not undone (read as the teacher, who may read the lecture's
+  -- lost taps, 0007). A mark whose student took the I'm lost back leaves the teacher's view.
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'slide_marks' and policyname = 'slide_marks_select_teacher') then
     create policy slide_marks_select_teacher on public.slide_marks
       for select to authenticated
-      using (kind = 'lost' and public.owns_lecture(lecture_id));
+      using (
+        kind = 'lost'
+        and public.owns_lecture(lecture_id)
+        and exists (
+          select 1
+          from public.lost_taps t
+          where t.lecture_id = slide_marks.lecture_id
+            and t.anon_id = slide_marks.anon_id
+            and t.slide_number = slide_marks.slide_number
+            and t.kind = 'lost'
+            and not t.undone
+        )
+      );
   end if;
 end
 $policies$;

@@ -75,28 +75,33 @@ type SaverOptions = {
   delayMs?: number;
   /** Told each time a slide's state changes. */
   onState?: (slide: number, state: NoteState) => void;
+  /** Told when save threw instead of answering (a bug, not the network). The text is kept. */
+  onError?: (error: unknown) => void;
 };
 
 /**
  * Saves notebook notes while the student types, without a save button: each change waits for a
  * pause (debounce), then the latest text of that slide is sent. flush() sends everything at once
- * (on blur, a slide change or the page being hidden). A save that could not go out (offline, or a
- * login that needs a moment) stays waiting and goes with the next change or flush; a refused one
- * is dropped. Only the newest text of a slide is ever sent, one save per slide at a time.
+ * (on blur, a slide change or the page being hidden). Text that did not save, for any reason
+ * (offline, a login that needs a moment, a refusal, 0020 not there yet, or a bug), is never
+ * dropped: it stays in pending() and goes again with the next change or flush. Only the newest
+ * text of a slide is ever sent, one save per slide at a time.
  */
 export class NotebookSaver {
   private readonly save: SaverOptions["save"];
   private readonly delayMs: number;
   private readonly onState?: SaverOptions["onState"];
+  private readonly onError?: SaverOptions["onError"];
   /** Text not saved yet, by slide. */
   private readonly waiting = new Map<number, string>();
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly sending = new Map<number, Promise<void>>();
 
-  constructor({ save, delayMs = 800, onState }: SaverOptions) {
+  constructor({ save, delayMs = 800, onState, onError }: SaverOptions) {
     this.save = save;
     this.delayMs = delayMs;
     this.onState = onState;
+    this.onError = onError;
   }
 
   /** The student typed: this is the slide's whole text now. */
@@ -142,20 +147,19 @@ export class NotebookSaver {
     this.waiting.delete(slide);
     this.onState?.(slide, "saving");
     const run = this.save(slide, body)
-      .catch(() => "rejected" as const)
+      .catch((e: unknown) => {
+        this.onError?.(e);
+        return "rejected" as const;
+      })
       .then((result) => {
         this.sending.delete(slide);
         if (result === "ok") {
           if (!this.waiting.has(slide)) this.onState?.(slide, "saved");
           return;
         }
-        if (result === "offline" || result === "throttled") {
-          // Kept for the next try, unless newer text came in meanwhile.
-          if (!this.waiting.has(slide)) this.waiting.set(slide, body);
-          this.onState?.(slide, "offline");
-          return;
-        }
-        this.onState?.(slide, result === "missing" ? "missing" : "failed");
+        // Kept for the next try, unless newer text came in meanwhile.
+        if (!this.waiting.has(slide)) this.waiting.set(slide, body);
+        this.onState?.(slide, result === "offline" || result === "throttled" ? "offline" : result === "missing" ? "missing" : "failed");
       });
     this.sending.set(slide, run);
     return run;
