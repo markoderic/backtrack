@@ -21,6 +21,8 @@ type Options = {
   onRect: (rect: Rect) => void;
   /** Called when a press starts, before the drag. A caller closes what was open. */
   onStart?: () => void;
+  /** Called when a press ends without a box (a click), with where it was as fractions of the slide. */
+  onTap?: (point: { x: number; y: number }) => void;
 };
 
 type Drag = { pointerId: number; start: { x: number; y: number }; layerLeft: number; layerTop: number; box: Box };
@@ -30,15 +32,17 @@ type Drag = { pointerId: number; start: { x: number; y: number }; layerLeft: num
  * (for placing things over it), the box being drawn right now, and the handlers
  * to put on the layer.
  */
-export function useDragRect({ layerRef, imageRef, touch, onRect, onStart }: Options) {
+export function useDragRect({ layerRef, imageRef, touch, onRect, onStart, onTap }: Options) {
   const [box, setBox] = useState<Box | null>(null);
   const [draft, setDraft] = useState<Rect | null>(null);
   const drag = useRef<Drag | null>(null);
   const onRectRef = useRef(onRect);
   const onStartRef = useRef(onStart);
+  const onTapRef = useRef(onTap);
   useEffect(() => {
     onRectRef.current = onRect;
     onStartRef.current = onStart;
+    onTapRef.current = onTap;
   });
 
   const measure = useCallback(() => {
@@ -110,8 +114,10 @@ export function useDragRect({ layerRef, imageRef, touch, onRect, onStart }: Opti
     if (!d || d.pointerId !== e.pointerId) return;
     drag.current = null;
     setDraft(null);
-    const rect = rectFromDrag(d.start, point(d, e), d.box);
+    const end = point(d, e);
+    const rect = rectFromDrag(d.start, end, d.box);
     if (rect) onRectRef.current(rect);
+    else if (d.box.width > 0 && d.box.height > 0) onTapRef.current?.({ x: end.x / d.box.width, y: end.y / d.box.height });
   }
 
   function onPointerCancel(e: PointerEvent) {

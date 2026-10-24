@@ -12,7 +12,7 @@ describe("ImLostButton", () => {
     const b = screen.getByRole("button", { name: "I'm lost" });
     expect(b).toHaveAttribute("type", "button");
     expect(b).toHaveAttribute("data-phase", "default");
-    expect(b).not.toHaveAttribute("aria-disabled");
+    expect(b).toHaveAttribute("aria-pressed", "false");
     expect(b.className).toContain("h-12");
     expect(b.className).toContain("w-full");
     expect(b.className).toContain("rounded-md");
@@ -38,17 +38,29 @@ describe("ImLostButton", () => {
     expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBe(b);
   });
 
-  it("takes no second tap while checked: aria-disabled, focusable, onClick not called", () => {
+  it("is a toggle: while checked it is pressed, focusable, and a press goes to onClick (which takes the tap back)", () => {
     const onClick = vi.fn();
     render(<ImLostButton onClick={onClick} slide={3} checked />);
     const b = screen.getByRole("button", { name: "Lost on slide 3" });
-    expect(b).toHaveAttribute("aria-disabled", "true");
+    expect(b).toHaveAttribute("aria-pressed", "true");
+    expect(b).not.toHaveAttribute("aria-disabled");
     expect(b).not.toBeDisabled();
     b.focus();
     expect(b).toHaveFocus();
-    fireEvent.click(b);
-    expect(onClick).not.toHaveBeenCalled();
+    fireEvent.click(b, { detail: 1 });
+    expect(onClick).toHaveBeenCalledTimes(1);
+    // No press look on the way back: the parent decides what the button shows next.
     expect(b).toHaveAttribute("data-phase", "checked");
+  });
+
+  it("never passes on the second click of a double click, checked or not", () => {
+    const onClick = vi.fn();
+    const { rerender } = render(<ImLostButton onClick={onClick} slide={3} />);
+    fireEvent.click(screen.getByRole("button", { name: "I'm lost" }), { detail: 1 });
+    rerender(<ImLostButton onClick={onClick} slide={3} checked />);
+    fireEvent.click(screen.getByRole("button", { name: "Lost on slide 3" }), { detail: 2 });
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Lost on slide 3" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("goes back to I'm lost when it is no longer checked (Undo, or another slide)", () => {
@@ -56,6 +68,6 @@ describe("ImLostButton", () => {
     rerender(<ImLostButton slide={4} />);
     const b = screen.getByRole("button", { name: "I'm lost" });
     expect(b).toHaveAttribute("data-phase", "default");
-    expect(b).not.toHaveAttribute("aria-disabled");
+    expect(b).toHaveAttribute("aria-pressed", "false");
   });
 });

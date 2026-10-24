@@ -13,16 +13,22 @@ describe("InfoButton", () => {
     expect(screen.queryByText(HELP)).not.toBeInTheDocument();
   });
 
-  it("opens the How it works popover with the three lines", () => {
+  it("opens the How it works popover: I'm lost, Mark with red and yellow, notes and taking back, privacy", () => {
     render(<InfoButton />);
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
     const panel = screen.getByRole("dialog");
     expect(screen.getByRole("button", { name: "Help" })).toHaveAttribute("aria-expanded", "true");
     expect(panel).toHaveTextContent("How it works");
     expect(panel).toHaveTextContent(HELP);
-    expect(panel).toHaveTextContent("After I'm lost, Mark the spot lets you drag over the exact part. Save this keeps a slide just for you.");
+    expect(panel).toHaveTextContent("Save this keeps a slide just for you.");
+    expect(panel).toHaveTextContent(
+      "Turn on Mark and drag over any part of the slide. Yellow marks are just for you. On a slide where you're lost they're red, and your teacher sees the box but never its note.",
+    );
+    expect(panel).toHaveTextContent("Tap a mark to add a note or delete it. Tap I'm lost or Saved for you again to take it back.");
     expect(panel).toHaveTextContent("Nobody sees your name, not even your teacher. Your spots stay in this browser.");
-    expect(panel.querySelectorAll("p")).toHaveLength(4);
+    // The old Mark the spot (only after I'm lost) is gone.
+    expect(panel).not.toHaveTextContent("Mark the spot");
+    expect(panel.querySelectorAll("p")).toHaveLength(5);
   });
 
   it("closes when the button is pressed again", () => {

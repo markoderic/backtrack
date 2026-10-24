@@ -18,6 +18,13 @@
   --color-lost: #c8371f;
   --color-lost-hover: #a92d18;
   --color-lost-tint: #f6dad4;
+  /*
+   * Marks (batch K1) look like a highlighter: a fill with no border, drawn with mix-blend-multiply so
+   * the slide's text under it stays as dark as it was. Yellow (mark) is a mark just for the student;
+   * a mark on a slide where they are lost uses the lost tint. Both keep secondary gray text at 4.5:1
+   * and ink at 7:1 or more (globals.test.ts checks it).
+   */
+  --color-mark: #ffe45c;
 
   /*
    * Course colors (batch D, three more in batch H): eleven swatches for the bar on each course
@@ -349,9 +356,9 @@
     padding: 0 16px 24px;
     overflow-y: auto;
     container-type: size;
-    /* Top bar, the I'm lost panel (I'm lost 48, Save this / Mark the spot 44, the note box 66, the
-       line under it 20, gaps 36: 214), the strip and the gaps between them stay on screen under the slide. */
-    --slide-room: calc(100cqh - 374px);
+    /* Top bar, the I'm lost panel (I'm lost 48, Save this / Mark 44, the note box 66, the line under it
+       with Undo 40, gaps 36: 234), the strip and the gaps between them stay on screen under the slide. */
+    --slide-room: calc(100cqh - 394px);
   }
   [data-lecture-side],
   [data-lecture-stage] {

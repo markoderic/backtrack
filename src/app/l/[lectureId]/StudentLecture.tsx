@@ -13,10 +13,12 @@ import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
+import { useLiveMarks } from "@/lib/useLiveMarks";
 import { useTrackHere } from "@/lib/useHere";
 import { useSlideImages } from "@/lib/useSlideImages";
-import { HighlightLayer } from "./HighlightLayer";
-import { LostButton, type Spot } from "./LostButton";
+import { HighlightLayer, type ShownMark } from "./HighlightLayer";
+import { LostButton, type LegacyMarks, type Spot } from "./LostButton";
+import { MarkPopover } from "./MarkPopover";
 import { SlideStrip, type SpotKind } from "./SlideStrip";
 
 const END_FLUSH_MS = 3000;
@@ -83,19 +85,46 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     if (lastConn === "reconnecting" && conn === "live") setReconnects((n) => n + 1);
   }
 
+  // The student's marks (slide_marks, migration 0020): several per slide, each with a private note.
+  const marks = useLiveMarks(lectureId, { reconnects });
+  // Before 0020 a mark is the one highlight on the slide's spot (lost_taps.hl_*), through the panel.
+  const legacy = marks.mode === "legacy";
+  const legacyRef = useRef<LegacyMarks | null>(null);
+  const onMarkReady = useCallback((api: LegacyMarks) => {
+    legacyRef.current = api;
+  }, []);
+  // I'm lost (or its Undo) turns the slide's marks red; taking it back turns them yellow (one request).
+  const setMarksKind = marks.setKind;
+  const forgetMarks = marks.forget;
+  const spotsRef = useRef<Spot[]>([]);
+  const onLostChange = useCallback(
+    (slide: number, lost: boolean) => {
+      if (legacy) return;
+      setMarksKind(slide, lost ? "lost" : "save");
+      // 0020's trigger deletes the copy of an old highlight (it has the tap's id) when the tap is taken back.
+      if (!lost) forgetMarks(spotsRef.current.filter((s) => s.slide === slide && s.kind === "lost").map((s) => s.id));
+    },
+    [legacy, setMarksKind, forgetMarks],
+  );
+  useEffect(() => {
+    spotsRef.current = spots;
+  }, [spots]);
+
   // A tap still waiting (made offline, or just before the end) is sent before leaving,
   // so it is not lost with this screen. If that takes over 3 seconds, leave anyway:
-  // what is left stays in the queue for the spots page.
+  // what is left stays in the queue for the spots page (marks stay in theirs).
   const flushRef = useRef<((ending?: boolean) => Promise<void>) | null>(null);
   const onFlushReady = useCallback((flush: (ending?: boolean) => Promise<void>) => {
     flushRef.current = flush;
   }, []);
-  // Mark the spot: the panel turns it on, the slide takes the drag, the panel saves the box.
-  const markRef = useRef<((rect: Rect) => void) | null>(null);
-  const onMarkReady = useCallback((mark: (rect: Rect) => void) => {
-    markRef.current = mark;
-  }, []);
+  const flushMarksRef = useRef(marks.flush);
+  useEffect(() => {
+    flushMarksRef.current = marks.flush;
+  }, [marks.flush]);
+  // The Mark tool: the panel turns it on and off, the slide takes the drags.
   const [marking, setMarking] = useState(false);
+  // The mark whose popover is open, and whether it was opened with the keyboard.
+  const [selected, setSelected] = useState<{ id: string; keyboard: boolean } | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   // The slide's own shape, from the image once it loads.
   const [ratio, setRatio] = useState(WIDE);
@@ -121,7 +150,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       routerRef.current.replace(`/spots/${lectureId}`);
     };
     const bound = setTimeout(leave, END_FLUSH_MS);
-    void (flushRef.current?.(true) ?? Promise.resolve()).then(leave);
+    void Promise.all([flushRef.current?.(true) ?? Promise.resolve(), flushMarksRef.current().catch(() => {})]).then(leave);
     return () => {
       left = true;
       clearTimeout(bound);
@@ -134,11 +163,12 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const reconnecting = state?.conn === "reconnecting";
   const live = state?.live ?? initialSlide;
 
-  // Another slide ends marking: the box would belong to the slide just left.
+  // Another slide ends marking (the box would belong to the slide just left) and closes a mark's popover.
   const [markedSlide, setMarkedSlide] = useState(viewing);
   if (markedSlide !== viewing) {
     setMarkedSlide(viewing);
     if (marking) setMarking(false);
+    if (selected) setSelected(null);
   }
 
   // The slide changes at once; the loading text only shows when the image is slow.
@@ -149,7 +179,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   }, [imageKey]);
   const loading = slowKey === imageKey && loadedSrc !== url;
 
-  // The spot on the slide on screen (the I'm lost one, or else the save) and its mark.
+  // The spot on the slide on screen (the I'm lost one, or else the save), and whether it is lost.
   const active = useMemo(() => {
     let lost: Spot | null = null;
     let save: Spot | null = null;
@@ -160,7 +190,47 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     }
     return lost ?? save;
   }, [spots, viewing]);
-  const shown = active?.rect ? { kind: active.kind, rect: active.rect } : null;
+  const lostHere = active?.kind === "lost";
+  // The marks on the slide on screen, red where the student is lost and yellow elsewhere. Before
+  // 0020: the one highlight on the slide's spot. After: only slide_marks (never a tap's highlight).
+  const slideMarks: ShownMark[] = useMemo(() => {
+    const kind = lostHere ? "lost" : "save";
+    if (legacy) return active?.rect ? [{ id: active.id, rect: active.rect, kind }] : [];
+    return marks.marks
+      .filter((m) => m.slide === viewing)
+      .map((m) => (m.note ? { id: m.id, rect: m.rect, kind, note: m.note } : { id: m.id, rect: m.rect, kind }));
+  }, [legacy, active, lostHere, marks.marks, viewing]);
+  const selectedIndex = selected ? slideMarks.findIndex((m) => m.id === selected.id) : -1;
+  const selectedMark = selectedIndex >= 0 ? slideMarks[selectedIndex] : null;
+  // Said to a screen reader when a mark is added or deleted (the panel says the rest).
+  const [markSaid, setMarkSaid] = useState<{ n: number; text: string } | null>(null);
+  const sayMark = (text: string) => setMarkSaid((s) => ({ n: (s?.n ?? 0) + 1, text }));
+
+  function addMark(rect: Rect) {
+    setSelected(null);
+    if (legacy) {
+      legacyRef.current?.add(rect);
+      return;
+    }
+    if (marks.add(viewing, rect, lostHere ? "lost" : "save")) sayMark("Marked.");
+  }
+
+  function deleteMark(id: string) {
+    setSelected(null);
+    if (legacy) legacyRef.current?.clear(id);
+    else {
+      marks.remove(id);
+      sayMark("Mark deleted.");
+    }
+    // The mark is gone: the slide's panel takes the focus.
+    (document.querySelector("[data-lecture-panel]") as HTMLElement | null)?.focus();
+  }
+
+  function closeMark(back: boolean) {
+    const id = selected?.id;
+    setSelected(null);
+    if (back && id) (document.querySelector(`[data-mark="${id}"]`) as HTMLElement | null)?.focus();
+  }
   // One per slide, as on the My spots page (an older lecture may have two rows on one slide).
   const spotCount = spotKinds.size;
 
@@ -228,8 +298,13 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           reconnects={reconnects}
           onFlushReady={onFlushReady}
           marking={marking}
-          onMarkingChange={setMarking}
+          onMarkingChange={(on) => {
+            setMarking(on);
+            if (on) setSelected(null);
+          }}
           onMarkReady={onMarkReady}
+          onLostChange={onLostChange}
+          notice={marks.problem}
           // A refused tap usually means the lecture ended: read the status now, and
           // if it did, leave the same way as when Realtime says so.
           onRejected={recheck}
@@ -252,6 +327,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       {/* Always there, so a screen reader hears when the connection drops (the panel shows it). */}
       <p role="status" className="sr-only">
         {reconnecting ? "Reconnecting." : ""}
+      </p>
+      <p role="status" aria-atomic="false" className="sr-only" data-mark-status="">
+        {markSaid && <span key={markSaid.n}>{markSaid.text}</span>}
       </p>
 
       <div data-lecture-stage="">
@@ -290,11 +368,16 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
                   />
                   <HighlightLayer
                     imageRef={imageRef}
-                    marking={marking && active !== null}
-                    markingKind={active?.kind}
-                    onMark={(rect) => markRef.current?.(rect)}
+                    marking={marking}
+                    markingKind={lostHere ? "lost" : "save"}
+                    marks={slideMarks}
+                    selectedId={selectedMark?.id ?? null}
+                    onSelect={(id, keyboard) => {
+                      setMarking(false);
+                      setSelected(id ? { id, keyboard } : null);
+                    }}
+                    onMark={addMark}
                     onCancel={() => setMarking(false)}
-                    shown={shown}
                   />
                 </>
               )}
@@ -305,7 +388,20 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
               )}
             </div>
           </div>
-          {behind && !marking && (
+          {selectedMark && (
+            // Outside the slide's clipping, so it can sit over the edge of a mark near the bottom.
+            <MarkPopover
+              key={selectedMark.id}
+              mark={selectedMark}
+              n={selectedIndex + 1}
+              noteless={legacy}
+              focusNote={selected?.keyboard}
+              onNote={(text) => marks.setNote(selectedMark.id, text)}
+              onDelete={() => deleteMark(selectedMark.id)}
+              onClose={closeMark}
+            />
+          )}
+          {behind && !marking && !selectedMark && (
             // On a phone, Jump to live floats over the bottom edge of the slide (the sidebar has it on a laptop).
             <button
               type="button"

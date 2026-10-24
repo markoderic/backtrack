@@ -6,6 +6,7 @@ import {
   loadLostMarks,
   loadMyMarks,
   lostMarkFromRow,
+  makeMarkSend,
   markFromRow,
   setSlideMarksKind,
   updateMark,
@@ -238,5 +239,50 @@ describe("writing marks", () => {
     expect(calls).toEqual([["from", "slide_marks"], ["delete"], ["eq", "id", MARK]]);
     result = { error: { code: "42P01", message: "relation does not exist" }, status: 404 };
     expect(await deleteMark(client, MARK)).toBe("missing");
+  });
+});
+
+describe("makeMarkSend (the live screen's mark queue)", () => {
+  const RECT = { x: 0.1, y: 0.2, w: 0.3, h: 0.25 };
+
+  it("sends an add with the browser's id, never a tap's, and the lecture of the screen", async () => {
+    const send = makeMarkSend(client, LECTURE);
+    expect(await send({ op: "add", mark: { id: MARK, slide: 4, rect: RECT, kind: "lost", note: "why" } })).toBe("ok");
+    expect(calls).toEqual([
+      ["from", "slide_marks"],
+      [
+        "upsert",
+        { id: MARK, lecture_id: LECTURE, slide_number: 4, x: 0.1, y: 0.2, w: 0.3, h: 0.25, kind: "lost", note: "why" },
+        { onConflict: "id", ignoreDuplicates: true },
+      ],
+    ]);
+  });
+
+  it("sends a note, a delete and a slide's kind as one request each", async () => {
+    const send = makeMarkSend(client, LECTURE);
+    await send({ op: "note", id: MARK, note: "" });
+    await send({ op: "delete", id: MARK });
+    await send({ op: "kind", slide: 4, kind: "save" });
+    expect(calls).toEqual([
+      ["from", "slide_marks"],
+      ["update", { note: null }],
+      ["eq", "id", MARK],
+      ["from", "slide_marks"],
+      ["delete"],
+      ["eq", "id", MARK],
+      ["from", "slide_marks"],
+      ["update", { kind: "save" }],
+      ["eq", "lecture_id", LECTURE],
+      ["eq", "slide_number", 4],
+      ["neq", "kind", "save"],
+    ]);
+  });
+
+  it("passes on the limits and missing", async () => {
+    const send = makeMarkSend(client, LECTURE);
+    result = { error: { code: "BT429", message: "Too many marks on this slide." }, status: 400 };
+    expect(await send({ op: "add", mark: { id: MARK, slide: 4, rect: RECT, kind: "save" } })).toBe("slide_full");
+    result = { error: { code: "PGRST205", message: "no table" }, status: 404 };
+    expect(await send({ op: "delete", id: MARK })).toBe("missing");
   });
 });

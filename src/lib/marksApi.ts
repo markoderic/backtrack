@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyError, classifyThrown, TAP_LIMIT_CODE } from "./lostTapApi";
 import { isRect, type Rect } from "./rect";
+import type { MarkOp, MarkSendResult } from "./markQueue";
 import { classifyWrite, isMissingSchema, type Loaded, type WriteResult } from "./schemaCheck";
 
 /**
@@ -217,4 +218,24 @@ export function setSlideMarksKind(supabase: SupabaseClient, lectureId: string, s
  */
 export function deleteMark(supabase: SupabaseClient, id: string): Promise<WriteResult> {
   return write(() => supabase.from("slide_marks").delete().eq("id", id));
+}
+
+/**
+ * Sends one queued mark change (src/lib/markQueue.ts) for the live screen. Never throws for a
+ * network failure. A mark is always sent with the id the browser made for it (newId), never a
+ * tap's id: 0020's tap trigger owns the marks that carry a tap's id.
+ */
+export function makeMarkSend(supabase: SupabaseClient, lectureId: string): (op: MarkOp) => Promise<MarkSendResult> {
+  return (op) => {
+    switch (op.op) {
+      case "add":
+        return addMark(supabase, { ...op.mark, lectureId });
+      case "note":
+        return updateMark(supabase, op.id, { note: op.note });
+      case "delete":
+        return deleteMark(supabase, op.id);
+      case "kind":
+        return setSlideMarksKind(supabase, lectureId, op.slide, op.kind);
+    }
+  };
 }

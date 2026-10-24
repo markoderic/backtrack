@@ -10,8 +10,8 @@ type Phase = "default" | "pressed" | "checked";
 
 type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> & {
   /**
-   * This slide already has an I'm lost from this student: the button shows "Lost on slide N"
-   * with a check and takes no second tap (Undo, next to it, gives the button back).
+   * This slide already has an I'm lost from this student: the button shows "Lost on slide N" with a
+   * check (aria-pressed). A press on it then goes to onClick too, which takes the I'm lost back.
    */
   checked?: boolean;
   /** The slide on screen, for the checked label. */
@@ -27,8 +27,9 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> 
  * stays for as long as that slide has the tap. With reduced motion there is no scale; the
  * checked look still shows.
  *
- * While checked it is aria-disabled, not disabled, so keyboard focus stays on it and a
- * second press does nothing. Only the look lives here: what a press records is up to onClick.
+ * It is a toggle (aria-pressed): a press while checked also calls onClick, which takes the tap
+ * back (batch K1). The second click of a double click (detail 2 and up) never reaches onClick,
+ * so a fast double press can not record and take back in one go. Only the look lives here.
  */
 export function ImLostButton({ checked = false, slide, onClick, className = "", ...props }: Props) {
   const [pressed, setPressed] = useState(false);
@@ -45,8 +46,12 @@ export function ImLostButton({ checked = false, slide, onClick, className = "", 
   const checkedLabel = slide !== undefined ? `Lost on slide ${slide}` : "Lost on this slide";
 
   function onPress(e: MouseEvent<HTMLButtonElement>) {
-    // One tap per slide: a checked button takes no second one.
-    if (checked) return;
+    // The second click of a double click lands on the button it just changed: ignore it.
+    if (e.detail > 1) return;
+    if (checked) {
+      onClick?.(e);
+      return;
+    }
     if (timer.current) clearTimeout(timer.current);
     setPressed(true);
     timer.current = setTimeout(() => {
@@ -60,7 +65,8 @@ export function ImLostButton({ checked = false, slide, onClick, className = "", 
     <button
       type="button"
       data-phase={shown}
-      aria-disabled={checked || undefined}
+      data-im-lost=""
+      aria-pressed={checked}
       // Named for its state at once, also during the 120 ms press look.
       aria-label={checked ? checkedLabel : undefined}
       onClick={onPress}
@@ -68,7 +74,7 @@ export function ImLostButton({ checked = false, slide, onClick, className = "", 
         "flex h-12 w-full shrink-0 items-center justify-center gap-2 rounded-md border px-6 type-button whitespace-nowrap " +
         "focus-ring transition-[background-color,color,border-color,scale,outline-color] duration-(--dur-fast) ease-out " +
         (shown === "checked"
-          ? "cursor-default border-lost bg-lost-tint text-lost-hover"
+          ? "border-lost bg-lost-tint text-lost-hover hover:bg-surface motion-safe:active:scale-96"
           : shown === "pressed"
             ? "border-transparent bg-lost-hover text-surface motion-safe:scale-96"
             : "border-transparent bg-lost text-surface hover:bg-lost-hover active:bg-lost-hover motion-safe:active:scale-96") +

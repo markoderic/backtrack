@@ -1,35 +1,67 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
-import { HighlightBoxes } from "@/components/HighlightBoxes";
+import { useEffect, useRef, type MouseEvent, type RefObject } from "react";
 import type { Rect } from "@/lib/rect";
 import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
 
-export type Highlight = { kind: "lost" | "save"; rect: Rect };
+export type MarkKind = "lost" | "save";
+
+/** A mark drawn on the slide: red (lost) or yellow (save). */
+export type ShownMark = { id: string; rect: Rect; kind: MarkKind; note?: string };
+
+/** A fraction as a css percentage, without float noise (0.3 * 100 is 30.000000000000004). */
+const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
+
+/** The highlighter look (globals.css: --color-mark and --color-lost-tint, multiply, no border). */
+export function markClass(kind: MarkKind): string {
+  return `mix-blend-multiply ${kind === "lost" ? "bg-lost-tint" : "bg-mark"}`;
+}
+
+/** What a screen reader hears for a mark: its number, red marks say lost, and its note if it has one. */
+export function markLabel(mark: ShownMark, n: number): string {
+  return `Mark ${n}${mark.kind === "lost" ? ", lost" : ""}${mark.note ? `: ${mark.note}` : ""}`;
+}
 
 type Props = {
   /** The slide image this layer sits over. */
   imageRef: RefObject<HTMLImageElement | null>;
-  /** Mark the spot is on: a drag (mouse, pen or finger) draws a box, and letting go saves it. */
+  /** The Mark tool is on: a drag (mouse, pen or finger) draws a box, and letting go adds a mark. */
   marking: boolean;
-  /** What is being marked, for the short instruction shown while marking. */
-  markingKind?: Highlight["kind"];
+  /** The kind a new mark gets (red on a slide where the student is lost), for the drag and the hint. */
+  markingKind?: MarkKind;
+  /** The student's marks on this slide. */
+  marks?: ShownMark[];
+  /** The mark whose popover is open. */
+  selectedId?: string | null;
+  /** A mark was clicked or tapped (null: the selection goes). `keyboard` when it came from Enter or Space. */
+  onSelect?: (id: string | null, keyboard: boolean) => void;
   /** The box the student let go on. */
   onMark: (rect: Rect) => void;
   /** Esc while marking. */
   onCancel: () => void;
-  /** The mark already on this slide's spot, drawn in its kind's look. */
-  shown?: Highlight | null;
+  /** One mark drawn without a popover (My spots, until batch K2 gives it several). */
+  shown?: { kind: MarkKind; rect: Rect } | null;
 };
 
 /**
- * Sits over the slide image. It takes nothing until Mark the spot is on (the I'm lost
- * panel turns it on after a tap); the slide then takes a drag with a mouse, a pen or a
- * finger, draws a dashed box, and saves it the moment the drag ends. A click, or a drag
- * under 2% of the slide in both directions, saves nothing and leaves marking on. Esc
- * stops marking. There is no keyboard shortcut. A saved mark is drawn in its kind's look.
+ * Sits over the slide image and draws the student's marks, like a highlighter (a fill, no border).
+ * Each mark is a button: a click, a tap or Enter selects it (its popover opens; the page draws it).
+ * While the Mark tool is on, the slide takes a drag with a mouse, a pen or a finger and adds a mark
+ * the moment the drag ends; the tool stays on for the next one. A click on a mark while marking
+ * selects it; a click elsewhere, or a drag under 2% of the slide in both directions, adds nothing.
+ * Esc stops marking. There is no keyboard shortcut.
  */
-export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark, onCancel, shown = null }: Props) {
+export function HighlightLayer({
+  imageRef,
+  marking,
+  markingKind = "save",
+  marks = [],
+  selectedId = null,
+  onSelect,
+  onMark,
+  onCancel,
+  shown = null,
+}: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
   const onCancelRef = useRef(onCancel);
   useEffect(() => {
@@ -43,10 +75,17 @@ export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark
     onRect: (rect) => {
       if (marking) onMark(rect);
     },
+    // A click on a mark while marking selects it (the last one drawn is on top).
+    onTap: (p) => {
+      if (!marking) return;
+      const hit = [...marks]
+        .reverse()
+        .find((m) => p.x >= m.rect.x && p.x <= m.rect.x + m.rect.w && p.y >= m.rect.y && p.y <= m.rect.y + m.rect.h);
+      if (hit) onSelect?.(hit.id, false);
+    },
   });
 
-  // Marking ended (Esc, Undo, another slide) maybe in the middle of a drag: drop it, so no
-  // dashed box is left on the slide and the next Mark the spot starts clean.
+  // Marking ended (Esc, another slide) maybe in the middle of a drag: drop it, so no box is left half drawn.
   useEffect(() => {
     if (!marking) cancel();
   }, [marking, cancel]);
@@ -59,6 +98,11 @@ export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [marking]);
+
+  const onMarkClick = (id: string) => (e: MouseEvent) => {
+    // detail 0: Enter or Space, so the popover takes the focus.
+    onSelect?.(id === selectedId ? null : id, e.detail === 0);
+  };
 
   return (
     <div
@@ -74,19 +118,49 @@ export function HighlightLayer({ imageRef, marking, markingKind = "lost", onMark
     >
       {/* The box of the slide itself, so the rects are fractions of the slide and not of the space around it. */}
       <div className="absolute" style={slideBoxStyle(box)}>
-        {draft ? (
-          // Dashed while the drag goes on.
-          <HighlightBoxes rects={[draft]} boxClassName="rounded-xs border-[1.5px] border-dashed border-ink bg-ink/5" />
-        ) : shown ? (
-          <HighlightBoxes
-            rects={[shown.rect]}
-            boxClassName={
-              shown.kind === "lost"
-                ? "rounded-xs border-2 border-lost bg-lost-tint mix-blend-multiply animate-fade-in"
-                : "rounded-xs border-[1.5px] border-ink animate-fade-in"
-            }
+        {marks.map((m, i) => {
+          const selected = m.id === selectedId;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              data-mark={m.id}
+              data-highlight-box=""
+              data-kind={m.kind}
+              data-selected={selected ? "" : undefined}
+              aria-label={markLabel(m, i + 1)}
+              aria-haspopup="dialog"
+              aria-expanded={selected}
+              onClick={onMarkClick(m.id)}
+              className={
+                `absolute animate-fade-in rounded-xs ${markClass(m.kind)} ` +
+                // While marking, the drag goes to the layer under the marks.
+                (marking ? "pointer-events-none " : "pointer-events-auto cursor-pointer ") +
+                "outline-offset-1 focus-visible:outline-2 focus-visible:outline-ink " +
+                (selected ? `outline-2 ${m.kind === "lost" ? "outline-lost" : "outline-ink"}` : "")
+              }
+              style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h) }}
+            />
+          );
+        })}
+        {shown && (
+          <div
+            aria-hidden
+            data-highlight-box=""
+            data-kind={shown.kind}
+            className={`pointer-events-none absolute animate-fade-in rounded-xs ${markClass(shown.kind)}`}
+            style={{ left: pct(shown.rect.x), top: pct(shown.rect.y), width: pct(shown.rect.w), height: pct(shown.rect.h) }}
           />
-        ) : null}
+        )}
+        {draft && (
+          // The box as it is drawn, in the look it will have.
+          <div
+            aria-hidden
+            data-mark-draft=""
+            className={`pointer-events-none absolute rounded-xs opacity-80 ${markClass(markingKind)}`}
+            style={{ left: pct(draft.x), top: pct(draft.y), width: pct(draft.w), height: pct(draft.h) }}
+          />
+        )}
       </div>
       {marking && !draft && (
         <p

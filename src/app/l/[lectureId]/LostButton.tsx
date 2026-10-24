@@ -6,6 +6,7 @@ import {
   useId,
   useRef,
   useState,
+  type FocusEvent,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -19,12 +20,20 @@ import { LEGACY_NOTE_MAX, noteCounterFrom } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
 import { TapQueue, isTapLimit, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
+import { useShownAgain } from "@/lib/useShownAgain";
 
 /**
- * Undo is offered this long after a tap, and only while the slide it was made on stays on screen
- * (the Saved line closes on the next slide). The tap itself stays saved; My spots can remove it later.
+ * Undo is offered this long after a tap or after taking one back, also once the student has moved
+ * to another slide ("Undo slide 7" then). The tap itself stays saved; My spots can remove it later.
  */
 export const UNDO_MS = 10_000;
+/**
+ * A press on the checked I'm lost (or Saved for you) takes the tap back, but not this soon after
+ * the press that made it: a quick second tap meant as one press records once and takes nothing back.
+ */
+export const UNTOGGLE_GUARD_MS = 600;
+/** A tap made on this screen this recently is kept when a fresh read does not have it yet. */
+const FRESH_MS = 5000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
 /** A tap the server kept turning away (login gone, or too many requests), dropped after a few tries. */
@@ -33,8 +42,21 @@ const TOO_MANY = "Too many taps. Try again in a minute.";
 const TOO_MANY_LECTURE = "Too many taps in this lecture.";
 
 type Kind = "lost" | "save";
-/** One of the student's rows that is not undone: its slide, kind, and the note and mark on it. */
+/**
+ * One of the student's rows that is not undone: its slide, kind, and the note and mark on it. The mark
+ * (rect) is the one highlight a tap had before migration 0020; the page only uses it while the
+ * database has no slide_marks (marks then live in their own table).
+ */
 export type Spot = { id: string; slide: number; kind: Kind; note?: string; rect?: Rect };
+
+/**
+ * The marks before migration 0020: one per slide, on the slide's spot (lost_taps.hl_*). add puts the
+ * box on the slide's spot, or saves the slide (Save this) with it when it has none; clear takes it off.
+ */
+export type LegacyMarks = { add: (rect: Rect) => void; clear: (id: string) => void };
+
+/** An Undo on offer: of a tap made here ("tap"), or of taking a tap back ("removed"). */
+type UndoEntry = { key: string; type: "tap" | "removed"; kind: Kind; slide: number; ids: string[]; spots: Spot[]; at: number };
 
 type Props = {
   lectureId: string;
@@ -55,14 +77,19 @@ type Props = {
    * a refusal then sets the rejected key for the spots page. The page may wait on it.
    */
   onFlushReady?: (flush: (ending?: boolean) => Promise<void>) => void;
-  /** Whether the slide is taking a drag for Mark the spot (the page owns it; the slide layer draws). */
+  /** Whether the Mark tool is on (the page owns it; the slide layer draws). The Mark button toggles it. */
   marking?: boolean;
   onMarkingChange?: (on: boolean) => void;
+  /** Gives the page the marks of the time before migration 0020 (one per slide, on the tap). */
+  onMarkReady?: (marks: LegacyMarks) => void;
   /**
-   * Gives the page a way to save the box dragged on the slide as the mark of this slide's
-   * spot. It is saved at once (an update of the row), with Clear mark to take it back.
+   * Called when the student's own action makes a slide lost (I'm lost, Undo of a removal) or not
+   * lost any more (Undo, pressing the checked button, a tap the database refused). The page turns
+   * the slide's marks red or yellow.
    */
-  onMarkReady?: (mark: (rect: Rect) => void) => void;
+  onLostChange?: (slide: number, lost: boolean) => void;
+  /** A message from the page to show in the line under the box (a mark that did not save). */
+  notice?: { n: number; text: string } | null;
   /**
    * Called when the database refuses a send while the page is open (not in the flush
    * the page runs while leaving). Usually the lecture ended, so the page checks.
@@ -130,6 +157,10 @@ function isDirty(taps: ReadonlyMap<string, Spot>, draft: Draft): boolean {
   return spot ? text !== (spot.note ?? "") : text !== "";
 }
 
+/** The slides of the lost taps among refused or dropped ops. */
+const lostSlidesOf = (dropped: QueueOp[]) =>
+  dropped.flatMap((op) => (op.op === "insert" && (op.tap.kind ?? "lost") === "lost" ? [op.tap.tappedOnSlide] : []));
+
 /** The second click of a double click (on the button that just took the first one's place). */
 const isRepeatClick = (e: MouseEvent) => e.detail > 1;
 
@@ -160,6 +191,8 @@ export function LostButton({
   marking = false,
   onMarkingChange,
   onMarkReady,
+  onLostChange,
+  notice = null,
   onTap,
   onRejected,
   idle,
@@ -170,22 +203,25 @@ export function LostButton({
   const tapsRef = useRef(taps);
   // The note being typed. It stays when the slide changes, so a note typed while the teacher moves on is not lost.
   const [draft, setDraft] = useState<Draft | null>(null);
-  // Taps made on this screen less than 10 s ago, while their slide stayed on screen: these offer Undo.
-  const [undoable, setUndoable] = useState<ReadonlySet<string>>(new Set());
+  // Taps made on this screen, and taps taken back, less than 10 s ago: these offer Undo (by entry key).
+  const [undos, setUndos] = useState<ReadonlyMap<string, UndoEntry>>(new Map());
   const undoTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  // When each tap's Undo ends (ms). Kept apart from the timers: Next hides a page it keeps alive
+  // When each Undo ends (ms). Kept apart from the timers: Next hides a page it keeps alive
   // (Activity) by taking its effects down, so the timers stop; on the way back the time left is armed again.
   const undoUntil = useRef(new Map<string, number>());
-  const dropUndo = useCallback((id: string) => {
-    undoUntil.current.delete(id);
-    undoTimers.current.delete(id);
-    setUndoable((s) => {
-      if (!s.has(id)) return s;
-      const next = new Set(s);
-      next.delete(id);
+  const dropUndo = useCallback((key: string) => {
+    undoUntil.current.delete(key);
+    clearTimeout(undoTimers.current.get(key));
+    undoTimers.current.delete(key);
+    setUndos((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
       return next;
     });
   }, []);
+  // When each tap made here was made, and its slide and kind (the untoggle guard, and a fresh read).
+  const madeAt = useRef(new Map<string, number>());
   const armUndo = useCallback(
     (id: string, ms: number) => {
       clearTimeout(undoTimers.current.get(id));
@@ -222,6 +258,7 @@ export function LostButton({
   const onSpotsRef = useRef(onSpots);
   const onRejectedRef = useRef(onRejected);
   const onMarkingChangeRef = useRef(onMarkingChange);
+  const onLostChangeRef = useRef(onLostChange);
   const mounted = useRef(false);
   const loaded = useRef(false);
   const loading = useRef(false);
@@ -241,6 +278,7 @@ export function LostButton({
     onSpotsRef.current = onSpots;
     onRejectedRef.current = onRejected;
     onMarkingChangeRef.current = onMarkingChange;
+    onLostChangeRef.current = onLostChange;
   });
 
   // Made on first use, in the browser, never while rendering: the queue reads localStorage.
@@ -256,7 +294,26 @@ export function LostButton({
       for (const id of gone) next.delete(id);
       return next;
     });
+    // An Undo for a tap that is gone has nothing left to undo.
+    setUndos((m) => {
+      const stale = [...m.values()].filter((e) => e.type === "tap" && e.ids.every((id) => gone.has(id)));
+      if (stale.length === 0) return m;
+      const next = new Map(m);
+      for (const e of stale) {
+        next.delete(e.key);
+        undoUntil.current.delete(e.key);
+      }
+      return next;
+    });
     return gone;
+  }, []);
+
+  /** Tells the page which of these slides have no I'm lost left once `gone` is taken out. */
+  const lostGone = useCallback((slides: Iterable<number>, gone: ReadonlySet<string>) => {
+    for (const slide of new Set(slides)) {
+      const left = [...tapsRef.current.values()].some((t) => t.slide === slide && t.kind === "lost" && !gone.has(t.id));
+      if (!left) onLostChangeRef.current?.(slide, false);
+    }
   }, []);
 
   /**
@@ -306,6 +363,7 @@ export function LostButton({
       // need not check and the spots page gets no note. The taps behind it go on.
       if (gaveUp.length > 0 && mounted.current) {
         const lost = dropTaps(gaveUp.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
+        lostGone(lostSlidesOf(gaveUp), lost);
         keepNotes(gaveUp);
         if (refused.length === 0) setRejected(lost.size > 0 ? TAP_FAILED : CHANGE_FAILED);
       }
@@ -317,6 +375,7 @@ export function LostButton({
       if ((ending || !mounted.current) && !tooMany) markRejected(lectureId);
       if (!mounted.current) return;
       const gone = dropTaps(refused.flatMap((op) => (op.op === "insert" ? [op.tap.id] : [])));
+      lostGone(lostSlidesOf(refused), gone);
       keepNotes(refused);
       if (gone.size > 0 && !tooMany) refusedTap.current = true;
       const capped = refused.some((op) => limitedOps.current.get(op) === "capped");
@@ -325,52 +384,84 @@ export function LostButton({
     } catch (e) {
       fail(e);
     }
-  }, [queue, lectureId, dropTaps, keepNotes, fail]);
+  }, [queue, lectureId, dropTaps, lostGone, keepNotes, fail]);
 
   useEffect(() => {
     flushRef.current = flush;
     onFlushReady?.(flush);
   }, [onFlushReady, flush]);
 
-  const loadSaved = useCallback(async () => {
-    if (loaded.current || loading.current) return;
-    loading.current = true;
-    try {
-      const rows = await loadOwnRef.current();
-      if (!mounted.current || rows === null) return; // offline: try again on the next trigger
-      loaded.current = true;
-      const saved = new Map<string, Spot>();
-      for (const r of rows) {
-        if (takenBack.current.has(r.id)) continue;
-        const spot: Spot = { id: r.id, slide: r.slide, kind: r.kind ?? "lost" };
-        if (r.note) spot.note = r.note;
-        if (r.rect) spot.rect = r.rect;
-        saved.set(r.id, spot);
+  /**
+   * Reads the student's rows. The first read adds them to what this screen shows. A later one
+   * (`fresh`: the page is shown again, e.g. back from My spots, where a spot or its mark may have
+   * been removed) replaces them: what the database says, with what still waits in the queue on top,
+   * and a tap made here a moment ago that the read may not have yet.
+   */
+  const loadSaved = useCallback(
+    async (fresh = false) => {
+      if ((loaded.current && !fresh) || loading.current) return;
+      loading.current = true;
+      try {
+        const rows = await loadOwnRef.current();
+        if (!mounted.current || rows === null) return; // offline: try again on the next trigger
+        const first = !loaded.current;
+        loaded.current = true;
+        const saved = new Map<string, Spot>();
+        for (const r of rows) {
+          if (takenBack.current.has(r.id)) continue;
+          const spot: Spot = { id: r.id, slide: r.slide, kind: r.kind ?? "lost" };
+          if (r.note) spot.note = r.note;
+          if (r.rect) spot.rect = r.rect;
+          saved.set(r.id, spot);
+        }
+        // Changes still in the queue are newer than what the database had.
+        const withQueued = pendingSpots(queue().pending(), saved);
+        if (first) {
+          setTaps((prev) => {
+            const next = new Map(prev);
+            // A row already shown here is the newer one (made or changed on this screen).
+            for (const [id, spot] of withQueued) if (!next.has(id) && !takenBack.current.has(id)) next.set(id, spot);
+            return next;
+          });
+          return;
+        }
+        const now = Date.now();
+        const next = new Map<string, Spot>();
+        for (const [id, spot] of tapsRef.current) {
+          const made = madeAt.current.get(id);
+          if (!withQueued.has(id) && made !== undefined && now - made < FRESH_MS) next.set(id, spot);
+        }
+        for (const [id, spot] of withQueued) if (!takenBack.current.has(id)) next.set(id, spot);
+        setTaps(next);
+        // An Undo for a tap that is not there any more (removed in My spots) goes with it.
+        setUndos((m) => {
+          const stale = [...m.values()].filter((e) => e.type === "tap" && !e.ids.some((id) => next.has(id)));
+          if (stale.length === 0) return m;
+          const kept = new Map(m);
+          for (const e of stale) {
+            kept.delete(e.key);
+            undoUntil.current.delete(e.key);
+          }
+          return kept;
+        });
+      } catch (e) {
+        fail(e);
+      } finally {
+        loading.current = false;
       }
-      // Changes still in the queue are newer than what the database had.
-      const withQueued = pendingSpots(queue().pending(), saved);
-      setTaps((prev) => {
-        const next = new Map(prev);
-        // A row already shown here is the newer one (made or changed on this screen).
-        for (const [id, spot] of withQueued) if (!next.has(id) && !takenBack.current.has(id)) next.set(id, spot);
-        return next;
-      });
-    } catch (e) {
-      fail(e);
-    } finally {
-      loading.current = false;
-    }
-  }, [fail, queue]);
+    },
+    [fail, queue],
+  );
 
   // On mount: show the taps left over from the last visit, send them, and load the saved rows.
   useEffect(() => {
     mounted.current = true;
     const timers = undoTimers.current;
     // Shown again after being hidden: each Undo gets the time it had left, or goes if that ran out.
-    for (const [id, until] of undoUntil.current) {
+    for (const [key, until] of undoUntil.current) {
       const left = until - Date.now();
-      if (left > 0) armUndo(id, left);
-      else dropUndo(id);
+      if (left > 0) armUndo(key, left);
+      else dropUndo(key);
     }
     // Taps left from the last visit get their dots back (read after the first render, as storage is only there in the browser).
     void Promise.resolve().then(() => {
@@ -406,58 +497,114 @@ export function LostButton({
     void loadSaved();
   }, [reconnects, flush, loadSaved]);
 
+  // Back on screen (Next kept the page alive while My spots was open, or the tab was in the
+  // background): read the rows again, so a spot or mark removed there is gone here too.
+  useShownAgain(() => {
+    void flush();
+    void loadSaved(true);
+  });
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadSaved(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadSaved]);
+
   useEffect(() => {
     tapsRef.current = taps;
     onSpotsRef.current([...taps.values()]);
   }, [taps]);
 
-  // Another slide on screen: the Saved line closes and Undo goes with it (the taps stay saved).
-  // A note box left as it was (nothing typed) follows the new slide.
+  // Another slide on screen: a note box left as it was (nothing typed) follows the new slide. Undo
+  // stays for its 10 seconds and then names its slide.
   const [shownSlide, setShownSlide] = useState(viewing);
   if (shownSlide !== viewing) {
     setShownSlide(viewing);
-    // (A deadline left behind only arms a timer that finds nothing to take away.)
-    if (undoable.size > 0) setUndoable(new Set());
     if (draft && !isDirty(taps, draft)) setDraft(null);
   }
 
   const lostSpot = latest(taps, viewing, "lost");
   const saveSpot = latest(taps, viewing, "save");
-  // The spot the tools work on: the I'm lost one, or else the save.
-  const active = lostSpot ?? saveSpot;
-  const canUndo = !!active && undoable.has(active.id);
 
-  /** Offers Undo on a new tap for 10 s. */
-  function offerUndo(id: string) {
-    setUndoable((s) => new Set(s).add(id));
-    undoUntil.current.set(id, Date.now() + UNDO_MS);
-    armUndo(id, UNDO_MS);
+  // The Undo on offer: the newest one for the slide on screen, else the newest one at all.
+  const entries = [...undos.values()].sort((a, b) => a.at - b.at);
+  const undoEntry = entries.filter((e) => e.slide === viewing).at(-1) ?? entries.at(-1) ?? null;
+
+  /** Offers Undo for 10 s. It takes the place of an older Undo for the same slide and kind. */
+  function offerUndo(entry: Omit<UndoEntry, "key" | "at">) {
+    const key = newId();
+    for (const e of undos.values()) if (e.slide === entry.slide && e.kind === entry.kind) dropUndo(e.key);
+    setUndos((m) => {
+      const next = new Map(m);
+      for (const [k, e] of m) if (e.slide === entry.slide && e.kind === entry.kind) next.delete(k);
+      return next.set(key, { ...entry, key, at: Date.now() });
+    });
+    undoUntil.current.set(key, Date.now() + UNDO_MS);
+    armUndo(key, UNDO_MS);
   }
 
-  function record(kind: Kind, slide = viewing, note?: string) {
+  function record(kind: Kind, slide = viewing, note?: string, rect?: Rect) {
     const id = newId();
     // Recorded and queued first; everything you see follows.
     const tap: PendingTap = { id, tappedOnSlide: slide, tappedAt: new Date().toISOString() };
     if (kind === "save") tap.kind = "save";
     if (note) tap.note = note;
+    if (rect) tap.rect = rect;
+    const wasLost = !!latest(taps, slide, "lost");
     queue().enqueue(tap);
-    setTaps((prev) => new Map(prev).set(id, note ? { id, slide, kind, note } : { id, slide, kind }));
+    madeAt.current.set(id, Date.now());
+    const spot: Spot = { id, slide, kind };
+    if (note) spot.note = note;
+    if (rect) spot.rect = rect;
+    setTaps((prev) => new Map(prev).set(id, spot));
     setRejected(null);
-    // Undo belongs to the Saved line of the slide on screen.
-    if (slide === viewing) offerUndo(id);
+    offerUndo({ type: "tap", kind, slide, ids: [id], spots: [spot] });
     say(`Saved slide ${slide}${kind === "save" ? ", just for you" : ""}.${note ? " Note saved." : ""}`);
     void flush();
     onTap?.(kind);
+    if (kind === "lost" && !wasLost) onLostChangeRef.current?.(slide, true);
   }
 
-  // One tap per slide: a second I'm lost (or a second save) on the same slide records nothing.
+  /** True right after the press that made this slide's spot of that kind (a quick second tap). */
+  function justMade(spot: Spot): boolean {
+    const made = madeAt.current.get(spot.id);
+    return made !== undefined && Date.now() - made < UNTOGGLE_GUARD_MS;
+  }
+
+  /**
+   * Takes back the slide's I'm lost (or its save): its rows are marked undone, as Undo does, and
+   * "Removed" offers Undo for 10 s. Sent as an update even when the tap has not gone out yet, so
+   * Undo can bring it back with another update.
+   */
+  function takeBack(kind: Kind) {
+    const rows = [...taps.values()].filter((t) => t.slide === viewing && t.kind === kind);
+    if (rows.length === 0) return;
+    for (const t of rows) queue().update(t.id, { undone: true });
+    const gone = dropTaps(rows.map((t) => t.id));
+    offerUndo({ type: "removed", kind, slide: viewing, ids: rows.map((t) => t.id), spots: rows });
+    if (kind === "lost") lostGone([viewing], gone);
+    say("Removed.");
+    void flush();
+  }
+
+  // One tap per slide: I'm lost on a lost slide (the checked button) takes it back instead.
   function pressLost() {
-    if (lostSpot) return;
+    if (lostSpot) {
+      if (!justMade(lostSpot)) takeBack("lost");
+      return;
+    }
     record("lost");
   }
 
-  function pressSave() {
-    if (lostSpot || saveSpot) return;
+  function pressSave(e: MouseEvent) {
+    if (isRepeatClick(e)) return;
+    if (saveSpot) {
+      if (!justMade(saveSpot)) takeBack("save");
+      return;
+    }
+    // A lost slide is in My spots already.
+    if (lostSpot) return;
     record("save");
   }
 
@@ -472,18 +619,34 @@ export function LostButton({
   }
 
   function undo(e: MouseEvent) {
-    if (isRepeatClick(e) || !active || !canUndo) return;
-    // Every row of that kind on this slide (a slide can hold two from before this screen took one per slide).
-    const ids = [...taps.values()].filter((t) => t.slide === viewing && t.kind === active.kind).map((t) => t.id);
-    for (const id of ids) {
-      // An unsent tap is simply taken out. A sent one gets an update that marks it undone.
-      if (!queue().cancel(id)) queue().update(id, { undone: true });
+    const entry = undoEntry;
+    if (isRepeatClick(e) || !entry) return;
+    dropUndo(entry.key);
+    if (entry.type === "tap") {
+      // Every row of that kind on its slide (a slide can hold two from before this screen took one per slide).
+      const ids = [...taps.values()].filter((t) => t.slide === entry.slide && t.kind === entry.kind).map((t) => t.id);
+      for (const id of ids) {
+        // An unsent tap is simply taken out. A sent one gets an update that marks it undone.
+        if (!queue().cancel(id)) queue().update(id, { undone: true });
+      }
+      const gone = dropTaps(ids);
+      if (entry.kind === "lost") lostGone([entry.slide], gone);
+    } else {
+      // Taken back a moment ago: the same rows come back (an update each), with their note and mark.
+      for (const id of entry.ids) {
+        queue().update(id, { undone: false });
+        takenBack.current.delete(id);
+      }
+      const wasLost = !!latest(taps, entry.slide, "lost");
+      setTaps((prev) => {
+        const next = new Map(prev);
+        for (const spot of entry.spots) next.set(spot.id, spot);
+        return next;
+      });
+      if (entry.kind === "lost" && !wasLost) onLostChangeRef.current?.(entry.slide, true);
     }
-    dropTaps(ids);
-    for (const id of ids) dropUndo(id);
-    onMarkingChangeRef.current?.(false);
     say("Undone.");
-    // Undo was pressed on purpose: I'm lost is back and takes the focus.
+    // Undo was pressed on purpose: I'm lost takes the focus.
     focusNext.current = "lost";
     void flush();
   }
@@ -525,25 +688,31 @@ export function LostButton({
     }
   }
 
+  // The Mark tool, always there: on, the slide takes drags (each one a mark); off again with a second press.
   function onMarkButton(e: MouseEvent) {
-    if (isRepeatClick(e) || !active) return;
-    if (marking) {
-      onMarkingChangeRef.current?.(false);
-    } else if (active.rect) {
-      change(active, { rect: null });
-      say("Mark cleared.");
-    } else {
-      onMarkingChangeRef.current?.(true);
-    }
+    if (isRepeatClick(e)) return;
+    onMarkingChangeRef.current?.(!marking);
   }
 
-  // The page calls this when a drag on the slide ends: the box is this slide's mark, saved now.
+  // Before migration 0020 the page keeps one mark per slide on the slide's spot (lost_taps.hl_*).
   useEffect(() => {
-    onMarkReady?.((rect) => {
-      if (!active) return;
-      change(active, { rect });
-      onMarkingChangeRef.current?.(false);
-      say("Spot marked.");
+    onMarkReady?.({
+      add: (rect) => {
+        const spot = spotOn(taps, viewing);
+        if (spot) {
+          change(spot, { rect });
+          say("Marked.");
+        } else {
+          // A slide with no spot yet is saved with the mark (just for the student).
+          record("save", viewing, undefined, rect);
+        }
+      },
+      clear: (id) => {
+        const spot = taps.get(id);
+        if (!spot) return;
+        change(spot, { rect: null });
+        say("Mark deleted.");
+      },
     });
   });
 
@@ -574,7 +743,23 @@ export function LostButton({
 
   const counter = draft && draft.text.length >= noteCounterFrom(noteMax) ? noteMax - draft.text.length : null;
   const otherSlide = draft && draft.slide !== viewing ? draft.slide : null;
-  const savedForYou = active?.kind === "save" && !lostSpot;
+  // What the Undo line says, and its button: "Undo" for the slide on screen, "Undo slide 7" for another.
+  const undoHere = undoEntry?.slide === viewing;
+  const undoText = !undoEntry
+    ? null
+    : undoEntry.type === "removed"
+      ? "Removed"
+      : `Saved${undoHere ? ` slide ${undoEntry.slide}` : ""}${undoEntry.kind === "save" ? ", just for you" : ""}`;
+  const message = rejected ?? notice?.text ?? null;
+  // Remembers which tool has focus, so focus can go to the panel when that tool goes away.
+  const trackFocus = {
+    onFocus: (e: FocusEvent<HTMLElement>) => {
+      toolFocus.current = e.target;
+    },
+    onBlur: (e: FocusEvent<HTMLElement>) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) toolFocus.current = null;
+    },
+  };
 
   return (
     <section
@@ -585,38 +770,33 @@ export function LostButton({
       className="flex min-w-0 flex-col gap-3 rounded-md focus-ring focus-visible:outline-offset-4"
     >
       <ImLostButton ref={lostRef} onClick={pressLost} checked={!!lostSpot} slide={viewing} />
-      <div
-        data-tools=""
-        className="flex flex-col gap-3"
-        onFocus={(e) => {
-          toolFocus.current = e.target;
-        }}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) toolFocus.current = null;
-        }}
-      >
-        {/* One 44 px row, always there: Save this, or once the slide has a spot, Mark the spot and (for 10 s) Undo. */}
-        {active ? (
-          <div data-spot-row="" className="grid animate-rise-in grid-cols-2 gap-2 select-none">
-            <button
-              type="button"
-              onClick={onMarkButton}
-              aria-pressed={marking}
-              className={`${buttonSecondaryClass} ${marking ? "border-ink" : ""} ${canUndo ? "" : "col-span-2"}`}
-            >
-              {marking ? "Stop marking" : active.rect ? "Clear mark" : "Mark the spot"}
-            </button>
-            {canUndo && (
-              <button type="button" onClick={undo} className={buttonSecondaryClass}>
-                Undo
-              </button>
-            )}
-          </div>
-        ) : (
-          <button type="button" onClick={pressSave} className={`${buttonSecondaryClass} w-full select-none`}>
-            Save this
+      <div data-tools="" className="flex flex-col gap-3" {...trackFocus}>
+        {/* One 44 px row, always there: Save this (a toggle: Saved for you) and the Mark tool. */}
+        <div data-spot-row="" className="grid grid-cols-2 gap-2 select-none">
+          <button
+            type="button"
+            onClick={pressSave}
+            aria-pressed={!!saveSpot}
+            // A lost slide is in My spots already: nothing to save until the I'm lost is taken back.
+            disabled={!!lostSpot && !saveSpot}
+            data-save=""
+            className={`${buttonSecondaryClass} ${saveSpot ? "border-ink" : ""}`}
+          >
+            {saveSpot && <span aria-hidden className="size-2.5 shrink-0 rounded-full border-[1.5px] border-ink" />}
+            {saveSpot ? "Saved for you" : "Save this"}
           </button>
-        )}
+          <button
+            type="button"
+            onClick={onMarkButton}
+            aria-pressed={marking}
+            data-mark-tool=""
+            className={marking ? markToolOnClass : buttonSecondaryClass}
+          >
+            {/* A swatch of the highlighter: red on a slide where the student is lost, else yellow. */}
+            <span aria-hidden data-swatch={lostSpot ? "lost" : "save"} className={`h-3 w-4 shrink-0 rounded-xs ${lostSpot ? "bg-lost-tint" : "bg-mark"}`} />
+            Mark
+          </button>
+        </div>
         {/* The note box, always there. On a slide with no spot yet, saving a note records I'm lost with it. */}
         <form data-note-box="" onSubmit={saveNote} className="flex items-end gap-2">
           <textarea
@@ -646,35 +826,53 @@ export function LostButton({
           </button>
         </form>
       </div>
-      {/* One line under the box, always reserved: a refusal, the note's slide and length, the save, or Reconnecting…. */}
-      <div data-panel-line="" className="min-h-5">
-        {rejected ? (
-          <p role="alert" className="flex animate-fade-in items-start gap-2 type-small text-ink">
-            <Icon name="alert" size={18} className="mt-px shrink-0" />
-            {rejected}
-          </p>
-        ) : otherSlide !== null || counter !== null ? (
-          <p className="flex gap-3 type-caption text-secondary">
-            {otherSlide !== null && <span>Note for slide {otherSlide}</span>}
-            {counter !== null && (
-              <span id={counterId} data-counter="" className="ml-auto">
-                {counter} left
-              </span>
-            )}
-          </p>
-        ) : noted ? (
-          // Seen, not read out twice: the status line below already says it.
-          <p key={noted.n} aria-hidden data-noted="" className="flex animate-fade-in items-center gap-2 type-small text-secondary">
-            <Icon name="check" size={16} />
-            {noted.text}
-          </p>
-        ) : savedForYou ? (
-          <p className="flex animate-fade-in items-center gap-2 type-small-strong text-ink">
-            <span aria-hidden className="size-2.5 rounded-full border-[1.5px] border-ink" />
-            Saved slide {viewing}, just for you
-          </p>
-        ) : (
-          idle
+      {/* One 40 px line under the box, always reserved: a message, the note's slide and length, the save, or
+          Reconnecting…, with Undo at its end for 10 s after a tap or after taking one back (on any slide). */}
+      <div data-panel-line="" className="flex min-h-10 items-center gap-3" {...trackFocus}>
+        <div className="min-w-0 flex-1">
+          {message ? (
+            <p role="alert" className="flex animate-fade-in items-start gap-2 type-small text-ink">
+              <Icon name="alert" size={18} className="mt-px shrink-0" />
+              {message}
+            </p>
+          ) : otherSlide !== null || counter !== null ? (
+            <p className="flex gap-3 type-caption text-secondary">
+              {otherSlide !== null && <span>Note for slide {otherSlide}</span>}
+              {counter !== null && (
+                <span id={counterId} data-counter="" className="ml-auto">
+                  {counter} left
+                </span>
+              )}
+            </p>
+          ) : noted ? (
+            // Seen, not read out twice: the status line below already says it.
+            <p key={noted.n} aria-hidden data-noted="" className="flex animate-fade-in items-center gap-2 type-small text-secondary">
+              <Icon name="check" size={16} />
+              {noted.text}
+            </p>
+          ) : idle ? (
+            idle
+          ) : undoText ? (
+            <p key={undoEntry?.key} aria-hidden data-undo-line="" className="flex animate-rise-in items-center gap-2 type-small-strong text-ink">
+              {undoEntry?.type === "removed" ? null : undoEntry?.kind === "lost" ? (
+                <span className="size-2.5 shrink-0 rounded-full bg-lost" />
+              ) : (
+                <span className="size-2.5 shrink-0 rounded-full border-[1.5px] border-ink" />
+              )}
+              <span className="truncate">{undoText}</span>
+            </p>
+          ) : null}
+        </div>
+        {undoEntry && (
+          <button
+            key={undoEntry.key}
+            type="button"
+            onClick={undo}
+            data-undo=""
+            className="press focus-ring flex h-10 shrink-0 animate-fade-in items-center rounded-md border border-hairline bg-surface px-3 type-button whitespace-nowrap text-ink hover:border-strip hover:bg-bg"
+          >
+            {undoHere ? "Undo" : `Undo slide ${undoEntry.slide}`}
+          </button>
         )}
       </div>
       {/* Always there, so a screen reader says each save, note, mark and Undo (a new line each time). */}
@@ -684,3 +882,8 @@ export function LostButton({
     </section>
   );
 }
+
+/** The Mark tool while it is on: the secondary button's shape, filled with ink. */
+const markToolOnClass =
+  "press focus-ring inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-ink bg-ink px-3 " +
+  "type-button whitespace-nowrap text-surface hover:bg-ink-hover";
