@@ -6,6 +6,7 @@ import {
   highlightsBySlide,
   redSlides,
   marksBySlide,
+  redMarksBySlide,
   studentsWhoTapped,
   type TapRow,
 } from "./stats";
@@ -238,5 +239,50 @@ describe("studentsWhoTapped", () => {
       ),
     ).toBe(2);
     expect(studentsWhoTapped([], 5)).toBe(0);
+  });
+});
+
+describe("redMarksBySlide (batch L)", () => {
+  const tap = (id: string, anon: string, slide: number, o: Partial<TapRow> = {}): TapRow => ({
+    id,
+    anon_id: anon,
+    kind: "lost",
+    slide_number: slide,
+    note: null,
+    undone: false,
+    tapped_at: "2026-10-26T10:00:00Z",
+    ...o,
+  });
+  const mark = (id: string, anonId: string, slide: number, x: number, createdAt = "2026-10-26T10:00:01Z") => ({
+    id,
+    anonId,
+    slide,
+    rect: { x, y: 0.1, w: 0.2, h: 0.2 },
+    createdAt,
+  });
+
+  it("shows a mark only while its student has a counted lost tap on that slide, oldest first", () => {
+    const taps = [tap("a", "s1", 2), tap("b", "s2", 2, { undone: true }), tap("c", "s3", 3, { kind: "save" }), tap("d", "s4", 4)];
+    const out = redMarksBySlide(
+      [
+        mark("m2", "s1", 2, 0.5, "2026-10-26T10:00:09Z"),
+        mark("m1", "s1", 2, 0.1, "2026-10-26T10:00:02Z"),
+        mark("m3", "s2", 2, 0.3),
+        mark("m4", "s3", 3, 0.3),
+        mark("m5", "s4", 4, 0.3),
+        mark("m6", "s4", 9, 0.3),
+        mark("m7", "s1", 4, 0.3),
+      ],
+      taps,
+      5,
+    );
+    expect([...out.keys()].sort()).toEqual([2, 4]);
+    expect(out.get(2)!.map((r) => r.x)).toEqual([0.1, 0.5]);
+    expect(out.get(4)!.map((r) => r.x)).toEqual([0.3]);
+  });
+
+  it("a tap moved to another slide takes its student's marks on the old slide off", () => {
+    const out = redMarksBySlide([mark("m1", "s1", 3, 0.1)], [tap("a", "s1", 2)], 5);
+    expect(out.size).toBe(0);
   });
 });

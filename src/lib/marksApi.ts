@@ -131,21 +131,36 @@ export function loadMyMarks(supabase: SupabaseClient, lectureId: string | null):
   );
 }
 
-/** The 'lost' marks of a lecture, for its teacher (the data view). Never a 'save', never a note. */
-export function loadLostMarks(supabase: SupabaseClient, lectureId: string): Promise<Loaded<LostMark[]>> {
-  return read(
-    () =>
-      supabase
-        .from("slide_marks")
-        .select(TEACHER_COLUMNS)
-        .eq("lecture_id", lectureId)
-        // Row level security already gives the teacher only 'lost' marks; this also keeps out the
-        // teacher's own 'save' marks if they joined their own lecture as a student.
-        .eq("kind", "lost")
-        .order("slide_number")
-        .order("created_at"),
-    (rows) => rows.map(lostMarkFromRow).filter((m): m is LostMark => m !== null),
-  );
+/** The API gives at most this many rows a call, so the teacher's read goes in pages. */
+const PAGE = 1000;
+
+/**
+ * The 'lost' marks of a lecture, for its teacher (the data view). Never a 'save', never a note.
+ * Row level security (0020) gives a teacher a 'lost' mark only while that student has a lost tap
+ * that is not undone on that slide. Read in pages of 1000 (a big class can have more).
+ */
+export async function loadLostMarks(supabase: SupabaseClient, lectureId: string): Promise<Loaded<LostMark[]>> {
+  const out: LostMark[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const page = await read(
+      () =>
+        supabase
+          .from("slide_marks")
+          .select(TEACHER_COLUMNS)
+          .eq("lecture_id", lectureId)
+          // Row level security already gives the teacher only 'lost' marks; this also keeps out the
+          // teacher's own 'save' marks if they joined their own lecture as a student.
+          .eq("kind", "lost")
+          .order("slide_number")
+          .order("created_at")
+          .order("id")
+          .range(from, from + PAGE - 1),
+      (rows) => ({ marks: rows.map(lostMarkFromRow).filter((m): m is LostMark => m !== null), count: rows.length }),
+    );
+    if (page.status !== "ok") return page;
+    out.push(...page.data.marks);
+    if (page.data.count < PAGE) return { status: "ok", data: out };
+  }
 }
 
 export type NewMark = { id: string; lectureId: string; slide: number; rect: Rect; kind: MarkKind; note?: string };

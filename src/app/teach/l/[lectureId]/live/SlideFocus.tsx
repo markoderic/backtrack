@@ -1,14 +1,23 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import type { Rect } from "@/lib/rect";
+import { boxOpacity, overlapDepth } from "@/lib/markDepth";
 
-/** Every student's box, translucent: where most people pointed comes out darkest (Figma 34:862). */
-const BOX = "rounded-xs bg-lost/20";
+/**
+ * Every student's red mark, in the student's highlighter red (--color-mark-lost), with no border
+ * (batch L). The boxes stack inside their own layer with darken, so a pile of boxes only gets more
+ * opaque, never darker than one full mark; the layer is then multiplied over the slide like a
+ * highlighter (the text under it is multiplied too and stays readable, globals.test.ts). Each box's
+ * opacity drops as more boxes stack up (boxOpacity), so where most people pointed comes out
+ * darkest step by step, and a box drawn alone among many is still there to see.
+ */
+const BOX = "rounded-xs bg-mark-lost mix-blend-darken";
+const LAYER = "isolate mix-blend-multiply";
 /** The shape a slide is drawn at until its image says otherwise. */
 const WIDE = 16 / 9;
 
@@ -17,7 +26,7 @@ type Props = {
   firstLine: string;
   /** The signed image url, once there is one. Until then (or with no image) a blank slide. */
   url?: string;
-  /** Every counted Mark the spot box on this slide. */
+  /** Every red mark shown on this slide (each one a box). */
   rects: Rect[];
   /** "3 highlights", or nothing, for the big view's caption. */
   marksLabel: string | null;
@@ -39,7 +48,7 @@ function Blank({ firstLine }: { firstLine: string }) {
 }
 
 /**
- * The selected slide, large, with every student's Mark the spot box on it. It fills the
+ * The selected slide, large, with every student's red mark on it. It fills the
  * panel's width at the slide's own shape (the last image's shape until this one loads, so
  * nothing below jumps); pressing it opens the slide bigger still, over the page. The big view
  * is a modal dialog: Esc, Close or a press on the dimmed page close it, Tab stays on Close (also
@@ -49,6 +58,9 @@ function Blank({ firstLine }: { firstLine: string }) {
 export function SlideFocus({ number, firstLine, url, rects, marksLabel, onOpen, ratio: guess, onRatio }: Props) {
   const [open, setOpen] = useState(false);
   const [own, setOwn] = useState<number | null>(null);
+  // How deep the boxes stack on this slide sets how see-through each one is.
+  const depth = useMemo(() => overlapDepth(rects), [rects]);
+  const boxes = <HighlightBoxes rects={rects} boxClassName={BOX} className={LAYER} opacity={boxOpacity(depth)} />;
   const ratio = own ?? guess ?? WIDE;
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -111,7 +123,7 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel, onOpen, 
       ) : (
         <Blank firstLine={firstLine} />
       )}
-      <HighlightBoxes rects={rects} boxClassName={BOX} />
+      {boxes}
     </div>
   );
 
@@ -130,7 +142,7 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel, onOpen, 
           <Blank firstLine={firstLine} />
         </div>
       )}
-      <HighlightBoxes rects={rects} boxClassName={BOX} />
+      {boxes}
     </div>
   );
 

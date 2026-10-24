@@ -23,7 +23,7 @@ let calls: [string, ...unknown[]][] = [];
 let result: Res | (() => Promise<Res>) = { data: [], error: null, status: 200 };
 function chain(): Record<string, unknown> {
   const c: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "neq", "order", "update", "delete", "upsert", "insert"]) {
+  for (const m of ["select", "eq", "neq", "order", "range", "update", "delete", "upsert", "insert"]) {
     c[m] = (...args: unknown[]) => {
       calls.push([m, ...args]);
       return c;
@@ -123,6 +123,21 @@ describe("reading marks", () => {
         },
       ],
     });
+  });
+
+  it("loadLostMarks reads every page when a lecture has more than 1000 red marks", async () => {
+    const many = (n: number, start: number) =>
+      Array.from({ length: n }, (_, i) => row({ kind: "lost", id: `77777777-7777-7777-7777-${String(start + i).padStart(12, "0")}` }));
+    const pages = [many(1000, 0), many(3, 1000)];
+    result = () => Promise.resolve({ data: pages.shift() ?? [], error: null });
+    const got = await loadLostMarks(client, LECTURE);
+    expect(got.status === "ok" && got.data.length).toBe(1003);
+    expect(calls.filter((c) => c[0] === "range")).toEqual([
+      ["range", 0, 999],
+      ["range", 1000, 1999],
+    ]);
+    // A stable order, so no mark is read twice or skipped between pages.
+    expect(calls.filter((c) => c[0] === "order").map((c) => c[1])).toEqual(["slide_number", "created_at", "id", "slide_number", "created_at", "id"]);
   });
 
   it("markFromRow and lostMarkFromRow read Realtime records too, and skip what is not a mark", () => {

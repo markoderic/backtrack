@@ -7,6 +7,10 @@ type Props = {
   rects: Rect[];
   /** Classes for each box. The default is translucent, so boxes that overlap get darker. */
   boxClassName?: string;
+  /** Each box's opacity (the data view lowers it as more boxes stack up). */
+  opacity?: number;
+  /** Classes for the layer that holds the boxes (how the whole stack blends with the slide). */
+  className?: string;
 };
 
 /**
@@ -14,15 +18,15 @@ type Props = {
  * exactly the size of the slide image: the rects are fractions of that box. It
  * never takes a click, so the slide under it still does.
  */
-export function HighlightBoxes({ rects, boxClassName = "border border-red-500 bg-red-500/25" }: Props) {
+export function HighlightBoxes({ rects, boxClassName = "border border-red-500 bg-red-500/25", opacity, className = "" }: Props) {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0">
+    <div aria-hidden data-highlight-layer="" className={`pointer-events-none absolute inset-0 ${className}`}>
       {rects.map((r, i) => (
         <div
           key={i}
           data-highlight-box=""
           className={`absolute ${boxClassName}`}
-          style={{ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h) }}
+          style={{ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h), opacity }}
         />
       ))}
     </div>

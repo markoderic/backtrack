@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
@@ -11,19 +11,28 @@ import { Icon } from "@/components/Icon";
 import {
   highlightsBySlide,
   notesBySlide,
+  redMarksBySlide,
   redSlides,
   slideStats,
   studentsWhoTapped,
   topThree,
   type TapRow,
 } from "@/lib/stats";
+import { loadLostMarks, lostMarkFromRow, type LostMark } from "@/lib/marksApi";
 import { useSlideUrls } from "@/lib/useSlideUrls";
 import { useHereCount } from "@/lib/useHere";
 import { WATCHING_HINT, WATCHING_SPOKEN } from "@/lib/watching";
 import { returnToFullscreen } from "@/lib/fullscreenReturn";
 import { SlideFocus } from "./SlideFocus";
+import type { Rect } from "@/lib/rect";
 
 const RETRY_FIRST_MS = 1000;
+/**
+ * After a lost tap changes (added, undone, brought back, moved), the red marks are read again this
+ * long after the last such change: the database shows a student's red marks to the teacher only
+ * while that student is lost on the slide, and Realtime sends no mark event when that changes.
+ */
+export const MARKS_RELOAD_MS = 300;
 const RETRY_MAX_MS = 10000;
 const PAGE = 1000;
 
@@ -160,7 +169,7 @@ const backToSlidesClass = `${buttonPrimaryClass} w-auto! px-6`;
 const endButtonClass = `${buttonSecondaryClass} h-12! shrink-0 px-5`;
 
 /**
- * "3 highlights", or null when there are none: the Mark the spot boxes on lost taps, which the
+ * "3 highlights", or null when there are none: the students' red marks (one box each), which the
  * teacher screens call Highlights (Marko did not read "Marked spots").
  */
 const highlights = (n: number) => (n > 0 ? `${n} ${n === 1 ? "highlight" : "highlights"}` : null);
@@ -198,6 +207,43 @@ function Figure({
   );
 }
 
+/**
+ * A note to the teacher can be 2000 characters (0020). A note longer than this, or with more lines,
+ * shows its first four lines with Show more, so one long note never pushes the rest off the panel.
+ */
+export const NOTE_CLAMP_CHARS = 280;
+const NOTE_CLAMP_LINES = 4;
+
+/** One note to the teacher: whole when short; a long one cut to four lines, with Show more / Show less. */
+function NoteText({ text }: { text: string }) {
+  const long = text.length > NOTE_CLAMP_CHARS || text.split("\n").length > NOTE_CLAMP_LINES;
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
+      <span
+        id={id}
+        data-testid="note"
+        data-clamped={long && !open ? "true" : undefined}
+        className={`w-full type-body break-words whitespace-pre-line text-ink ${long && !open ? "line-clamp-4" : ""}`}
+      >
+        {text}
+      </span>
+      {long && (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => setOpen((o) => !o)}
+          className={`${buttonSecondaryClass} h-8! px-2.5 type-small-strong`}
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Where the hover/focus card over a bar sits, in px inside the chart box. */
 type Tip = { n: number; left: number; top: number };
 /** Half the card's widest width: its middle never comes closer than this to the chart's sides. */
@@ -219,6 +265,10 @@ export function LectureData({
   const [live, setLive] = useState(mode === "live");
   const [justEnded, setJustEnded] = useState(false);
   const [taps, setTaps] = useState<Map<string, TapRow>>(new Map());
+  // The red marks (slide_marks, 0020) the teacher may see, by id. Where the boxes come from: the
+  // marks table, or before 0020 the one highlight on each tap ("taps"); unknown until the first read.
+  const [lostMarks, setLostMarks] = useState<Map<string, LostMark>>(new Map());
+  const [marksFrom, setMarksFrom] = useState<"unknown" | "table" | "taps">("unknown");
   const [joined, setJoined] = useState<number | null>(null);
   const [current, setCurrent] = useState(initialCurrentSlide ?? 1);
   const [loaded, setLoaded] = useState(false);
@@ -265,6 +315,11 @@ export function LectureData({
     // For each read still running: what Realtime changed meanwhile. Those win
     // over what the read brings back, which may be older.
     const inflight = new Set<Set<string>>();
+    // The same for the red marks: ids Realtime changed (or deleted) while a marks read was out.
+    const marksInflight = new Set<Set<string>>();
+    let marksTimer: ReturnType<typeof setTimeout> | undefined;
+    let marksBusy = false;
+    let marksAgain = false;
     // The joined count: a join event adds one at once and a recount follows, so it can't
     // stay one too high when an event is for a student a read already counted.
     const joinedCount = createJoinedCounter(() => readJoined(supabase, lectureId), setJoined);
@@ -275,6 +330,61 @@ export function LectureData({
       timer = setTimeout(refetch, Math.min(RETRY_FIRST_MS * 2 ** failures, RETRY_MAX_MS));
       failures++;
       setFailed(true);
+    };
+
+    /**
+     * Reads the red marks the teacher may see. Before 0020 (no slide_marks table) the boxes come
+     * from the taps' own highlight. Any other failure keeps what is on screen.
+     */
+    async function readMarks(): Promise<boolean> {
+      const touched = new Set<string>();
+      marksInflight.add(touched);
+      try {
+        const res = await loadLostMarks(supabase, lectureId);
+        if (cancelled) return true;
+        if (res.status === "missing") {
+          setMarksFrom("taps");
+          return true;
+        }
+        if (res.status === "offline") return false;
+        setLostMarks((prev) => {
+          const next = new Map(res.data.map((m) => [m.id, m]));
+          // What Realtime said meanwhile is newer than the read: kept, deleted ones stay deleted.
+          for (const id of touched) {
+            const own = prev.get(id);
+            if (own) next.set(id, own);
+            else next.delete(id);
+          }
+          return next;
+        });
+        setMarksFrom("table");
+        return true;
+      } catch {
+        return false;
+      } finally {
+        marksInflight.delete(touched);
+      }
+    }
+
+    // Reads the red marks again shortly after a lost tap changed (one read for a burst of taps, and
+    // never two at once: a change during a read asks for one more after it).
+    const reloadMarksSoon = () => {
+      clearTimeout(marksTimer);
+      marksTimer = setTimeout(async () => {
+        if (marksBusy) {
+          marksAgain = true;
+          return;
+        }
+        marksBusy = true;
+        try {
+          do {
+            marksAgain = false;
+            if (!(await readMarks())) retry();
+          } while (marksAgain && !cancelled);
+        } finally {
+          marksBusy = false;
+        }
+      }, MARKS_RELOAD_MS);
     };
 
     // The three reads run side by side and each shows what it brings as soon as it is back:
@@ -306,6 +416,9 @@ export function LectureData({
       const joinedRead = readJoined(supabase, lectureId).then((count) => {
         if (!cancelled) joinedCount.settle(count, joinedMark);
       }, fail);
+      const marksRead = readMarks().then((ok) => {
+        if (!ok) fail();
+      });
       const lectureRead = live
         ? readLecture(supabase, lectureId).then((lecture) => {
             if (cancelled) return;
@@ -318,7 +431,7 @@ export function LectureData({
           }, fail)
         : Promise.resolve();
       try {
-        await Promise.all([tapsRead, joinedRead, lectureRead]);
+        await Promise.all([tapsRead, joinedRead, marksRead, lectureRead]);
       } finally {
         inflight.delete(touched);
       }
@@ -337,6 +450,35 @@ export function LectureData({
       if (row.kind !== "lost") return;
       touch(row.id);
       setTaps((prev) => new Map(prev).set(row.id, row));
+      // The student's red marks on that slide may have just become visible to the teacher (or not).
+      reloadMarksSoon();
+    };
+    const touchMark = (id: string) => marksInflight.forEach((t) => t.add(id));
+    // A red mark added, moved or changed: shown as it is now; one that is no longer 'lost' goes.
+    const putMark = (payload: { new: unknown }) => {
+      const record = payload.new as Record<string, unknown> | null;
+      if (!record || typeof record.id !== "string") return;
+      const id = record.id;
+      touchMark(id);
+      const mark = lostMarkFromRow(record);
+      setLostMarks((prev) => {
+        const next = new Map(prev);
+        if (mark) next.set(id, mark);
+        else next.delete(id);
+        return next;
+      });
+    };
+    // A deleted mark: the event carries only its id.
+    const dropMark = (payload: { old: unknown }) => {
+      const id = (payload.old as { id?: unknown } | null)?.id;
+      if (typeof id !== "string") return;
+      touchMark(id);
+      setLostMarks((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
     };
 
     // Opened once Realtime has the teacher's token (see openChannel), so the
@@ -355,6 +497,23 @@ export function LectureData({
             "postgres_changes",
             { event: "UPDATE", schema: "public", table: "lost_taps", filter: `lecture_id=eq.${lectureId}` },
             put,
+          )
+          // Red marks (0020): the teacher's row level security sends only 'lost' ones of a student who is
+          // lost on that slide; a delete comes with only the id (replica identity full keeps the filter).
+          .on(
+            "postgres_changes",
+            { event: "INSERT", schema: "public", table: "slide_marks", filter: `lecture_id=eq.${lectureId}` },
+            putMark,
+          )
+          .on(
+            "postgres_changes",
+            { event: "UPDATE", schema: "public", table: "slide_marks", filter: `lecture_id=eq.${lectureId}` },
+            putMark,
+          )
+          .on(
+            "postgres_changes",
+            { event: "DELETE", schema: "public", table: "slide_marks", filter: `lecture_id=eq.${lectureId}` },
+            dropMark,
           )
           .on(
             "postgres_changes",
@@ -388,6 +547,7 @@ export function LectureData({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      clearTimeout(marksTimer);
       joinedCount.stop();
       close?.();
     };
@@ -505,9 +665,19 @@ export function LectureData({
   // Red bars: the three highest different counts that are at least half the highest, ties all red (see redSlides).
   const red = useMemo(() => redSlides(stats), [stats]);
   const most = Math.max(0, ...stats.map((s) => s.students));
-  const boxes = useMemo(() => highlightsBySlide(rows), [rows]);
-  // Highlights per slide: the number of Mark the spot boxes drawn on it (the brief's count), not
-  // the number of people, so the caption always matches the boxes on the slide.
+  // The red marks of students who are lost on the slide (0020's marks table); before 0020 the one
+  // highlight on each tap. Never a save, never a note.
+  const boxes = useMemo(
+    () =>
+      marksFrom === "table"
+        ? redMarksBySlide(lostMarks.values(), rows, slides.length)
+        : marksFrom === "taps"
+          ? highlightsBySlide(rows)
+          : new Map<number, Rect[]>(),
+    [marksFrom, lostMarks, rows, slides.length],
+  );
+  // Highlights per slide: the number of red marks drawn on it (one box each), not the number of
+  // people, so the caption always matches the boxes on the slide.
   const marks = useMemo(() => new Map(Array.from(boxes, ([n, list]) => [n, list.length])), [boxes]);
   const noteMap = useMemo(() => notesBySlide(rows), [rows]);
 
@@ -744,7 +914,7 @@ export function LectureData({
           />
           <Figure testId="sum-taps" label="Lost taps" value={totalTaps} />
           <Figure testId="sum-notes" label="Notes" value={noteCount} />
-          <Figure testId="sum-marks" label="Highlights" value={markCount} />
+          <Figure testId="sum-marks" label="Highlights" value={marksFrom === "unknown" ? "–" : markCount} />
           <Figure
             testId="sum-most"
             label="Most lost slide"
@@ -1023,9 +1193,7 @@ export function LectureData({
                       const at = noteTime(note.at);
                       return (
                         <li key={note.id} className="flex items-baseline gap-4 py-3">
-                          <span data-testid="note" className="min-w-0 flex-1 type-body break-words whitespace-pre-line text-ink">
-                            {note.text}
-                          </span>
+                          <NoteText text={note.text} />
                           {at && <span className="shrink-0 type-caption text-secondary">{at}</span>}
                         </li>
                       );

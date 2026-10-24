@@ -115,3 +115,28 @@ export function studentsWhoTapped(taps: TapRow[], slideCount: number): number {
   for (const t of taps) if (counts(t) && t.slide_number >= 1 && t.slide_number <= slideCount) people.add(t.anon_id);
   return people.size;
 }
+
+/** A red mark as the data view holds it (marksApi's LostMark): whose, which slide, and the box. */
+export type RedMark = { id: string; anonId: string; slide: number; rect: Rect; createdAt: string };
+
+/**
+ * The red ('lost') marks shown on each slide, oldest first (batch L). A mark shows only while its
+ * student has a lost tap on that slide that is not undone, as 0020's row level security has it:
+ * Realtime sends no mark event when that student's tap is undone, taken back or moved, so the tap
+ * events (which do come) take the mark off the screen at once. Slides outside 1 to slideCount are
+ * left out.
+ */
+export function redMarksBySlide(marks: Iterable<RedMark>, taps: TapRow[], slideCount: number): Map<number, Rect[]> {
+  const lost = new Set<string>();
+  for (const t of taps) if (counts(t)) lost.add(`${t.anon_id}:${t.slide_number}`);
+  const shown = [...marks]
+    .filter((m) => m.slide >= 1 && m.slide <= slideCount && lost.has(`${m.anonId}:${m.slide}`) && isRect(m.rect))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const out = new Map<number, Rect[]>();
+  for (const m of shown) {
+    const list = out.get(m.slide) ?? [];
+    list.push(m.rect);
+    out.set(m.slide, list);
+  }
+  return out;
+}

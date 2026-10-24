@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   filters: {} as Record<string, unknown>,
   status: null as ((s: string) => void) | null,
   tapsQuery: vi.fn(),
+  marksQuery: vi.fn(),
   participantsQuery: vi.fn(),
   lectureQuery: vi.fn(),
   rpc: vi.fn(),
@@ -55,7 +56,14 @@ function from(table: string) {
       return b;
     },
     then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
-      const run = table === "lost_taps" ? h.tapsQuery : table === "participants" ? h.participantsQuery : h.lectureQuery;
+      const run =
+        table === "lost_taps"
+          ? h.tapsQuery
+          : table === "slide_marks"
+            ? h.marksQuery
+            : table === "participants"
+              ? h.participantsQuery
+              : h.lectureQuery;
       return Promise.resolve(run(q)).then(res, rej);
     },
   };
@@ -82,7 +90,7 @@ vi.mock("@/lib/useHere", () => ({
   useHereCount: (lectureId: string, enabled: boolean) => h.here(lectureId, enabled),
 }));
 
-import { LectureData, hideNotesKey } from "./LectureData";
+import { LectureData, MARKS_RELOAD_MS, hideNotesKey } from "./LectureData";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const slides = Array.from({ length: 5 }, (_, i) => ({ number: i + 1, first_line: `Heading ${i + 1}` }));
@@ -136,6 +144,8 @@ beforeEach(() => {
     data: [row("a", { slide_number: 2 }), row("b", { slide_number: 2, anon_id: "s2" }), row("c", { slide_number: 4 })],
     error: null,
   });
+  // Before migration 0020 unless a test says otherwise: no marks table, the boxes come from the taps.
+  h.marksQuery.mockReset().mockResolvedValue({ data: null, error: { code: "PGRST205", message: "Could not find the table" }, status: 404 });
   h.participantsQuery.mockReset().mockResolvedValue({ count: 7, error: null });
   h.lectureQuery.mockReset().mockResolvedValue({ data: { current_slide: 3, status: "live" }, error: null });
   h.rpc.mockReset().mockResolvedValue({ data: null, error: null });
@@ -553,6 +563,44 @@ describe("LectureData live", () => {
         get.mockRestore();
         set.mockRestore();
       }
+    });
+
+    it("a long note (up to 2000 characters) shows four lines with Show more; short ones show whole; Hide notes still hides it", async () => {
+      const long = `${"The adjusting entry for wages owed at the end of the month confuses me. ".repeat(27)}End.`;
+      expect(long.length).toBeGreaterThan(1900);
+      expect(long.length).toBeLessThanOrEqual(2000);
+      h.tapsQuery.mockResolvedValue({
+        data: [
+          row("a", { slide_number: 2, note: long, tapped_at: "2026-10-26T14:40:00Z" }),
+          row("b", { slide_number: 2, note: "too fast", anon_id: "s2", tapped_at: "2026-10-26T14:41:00Z" }),
+          row("c", { slide_number: 2, note: "one\ntwo\nthree\nfour\nfive", anon_id: "s3", tapped_at: "2026-10-26T14:42:00Z" }),
+        ],
+        error: null,
+      });
+      renderLive({ teacherId: "t1" });
+      await waitFor(() => expect(noteTexts()).toHaveLength(3));
+      const [first, second, third] = within(panel()).getAllByTestId("note");
+      // The whole text is there (for a screen reader and for copying); the view is cut to four lines.
+      expect(first.textContent).toBe(long);
+      expect(first.className).toContain("line-clamp-4");
+      expect(second.className).not.toContain("line-clamp");
+      expect(third.className).toContain("line-clamp-4");
+      const more = within(panel()).getAllByRole("button", { name: "Show more" });
+      expect(more).toHaveLength(2);
+      expect(more[0]).toHaveAttribute("aria-expanded", "false");
+      expect(more[0]).toHaveAttribute("aria-controls", first.id);
+      fireEvent.click(more[0]);
+      expect(first.className).not.toContain("line-clamp");
+      expect(within(panel()).getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+      // The other long note stays cut.
+      expect(third.className).toContain("line-clamp-4");
+      fireEvent.click(within(panel()).getByRole("button", { name: "Show less" }));
+      expect(within(panel()).getAllByTestId("note")[0].className).toContain("line-clamp-4");
+      // Hide notes hides the long ones and their buttons too.
+      fireEvent.click(within(panel()).getByRole("button", { name: "Hide notes" }));
+      expect(noteTexts()).toEqual([]);
+      expect(within(panel()).queryByRole("button", { name: "Show more" })).toBeNull();
+      expect(within(panel()).getByTestId("notes-hidden")).toHaveTextContent("3 notes hidden");
     });
 
     it("is there in past mode too", async () => {
@@ -1167,8 +1215,9 @@ describe("LectureData highlights", () => {
     expect(copy.parentElement?.contains(boxesOn(2)[0])).toBe(true);
     expect(boxesOn(2)[0].style.left).toBe("10%");
     expect(boxesOn(2)[1].style.left).toBe("20%");
-    expect(boxesOn(2)[0].className).toMatch(/\/\d+/);
-    expect(boxesOn(2)[0].className).toContain("bg-lost");
+    // The students' highlighter red, no border; see "LectureData red marks" for how they stack.
+    expect(boxesOn(2)[0].className).toContain("bg-mark-lost");
+    expect(boxesOn(2)[0].className).not.toMatch(/\bborder\b/);
     expect(boxesOn(5)).toHaveLength(1);
     expect(within(panel()).getByTestId("highlights-5").querySelector("img")).toHaveAttribute(
       "src",
@@ -1698,5 +1747,233 @@ describe("LectureData with more slides than fit", () => {
     await renderAt(1300);
     expect(screen.queryByTestId("chart-scroll")).not.toBeInTheDocument();
     expect(screen.queryByTestId("fade-right")).not.toBeInTheDocument();
+  });
+});
+
+describe("LectureData red marks (batch L)", () => {
+  const box = (x: number, y = 0.2, w = 0.3, h = 0.4) => ({ x, y, w, h });
+  /** A slide_marks row as the teacher reads it (no note column) or Realtime sends it. */
+  const mark = (id: string, o: Record<string, unknown> = {}) => ({
+    id,
+    anon_id: "s1",
+    slide_number: 2,
+    ...box(0.1),
+    kind: "lost",
+    created_at: "2026-10-26T10:00:05Z",
+    updated_at: "2026-10-26T10:00:05Z",
+    ...o,
+  });
+  const marksAre = (rows: Record<string, unknown>[]) => h.marksQuery.mockResolvedValue({ data: rows, error: null, status: 200 });
+  const boxesOn = (n: number) => {
+    select(n);
+    return Array.from(panel().querySelectorAll<HTMLElement>("[data-highlight-box]"));
+  };
+  const markEvent = (event: "INSERT" | "UPDATE" | "DELETE", payload: Record<string, unknown>) =>
+    act(() => h.handlers[`slide_marks:${event}`](payload));
+
+  beforeEach(() => {
+    // s1 and s2 are lost on slide 2, s3 on slide 4.
+    h.tapsQuery.mockResolvedValue({
+      data: [row("a", { slide_number: 2 }), row("b", { slide_number: 2, anon_id: "s2" }), row("c", { slide_number: 4, anon_id: "s3" })],
+      error: null,
+    });
+  });
+
+  it("reads the lecture's red marks from slide_marks with named columns (never * and never the note), in pages", async () => {
+    marksAre([mark("m1")]);
+    renderLive();
+    await waitFor(() => expect(h.marksQuery).toHaveBeenCalled());
+    const q = h.marksQuery.mock.calls[0][0] as Query;
+    expect(q.cols).toBe("id, anon_id, slide_number, x, y, w, h, created_at, updated_at");
+    expect(q.cols).not.toContain("*");
+    expect(q.cols).not.toContain("note");
+    expect(q.eqs).toEqual([
+      ["lecture_id", LECTURE],
+      ["kind", "lost"],
+    ]);
+    expect(q.range).toEqual([0, 999]);
+  });
+
+  it("draws every red mark of a student who is lost on the slide, several per student, and Highlights counts them", async () => {
+    marksAre([
+      mark("m1", { ...box(0.1) }),
+      mark("m2", { ...box(0.5) }),
+      mark("m3", { anon_id: "s2", ...box(0.3) }),
+      mark("m4", { anon_id: "s3", slide_number: 4, ...box(0.2) }),
+    ]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("4"));
+    expect(boxesOn(2)).toHaveLength(3);
+    expect(boxesOn(2).map((b) => b.style.left)).toEqual(["10%", "50%", "30%"]);
+    expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("3 highlights");
+    expect(within(slideRow(2)).getByText(", 3 highlights")).toBeInTheDocument();
+    expect(boxesOn(4)).toHaveLength(1);
+  });
+
+  it("never draws a red mark whose student is not lost on that slide (as 0020's policy), and ignores the taps' old highlight", async () => {
+    h.tapsQuery.mockResolvedValue({
+      data: [
+        row("a", { slide_number: 2, hl_x: 0.6, hl_y: 0.6, hl_w: 0.2, hl_h: 0.2 }),
+        row("u", { slide_number: 3, anon_id: "s2", undone: true }),
+        row("s", { slide_number: 4, anon_id: "s3", kind: "save" }),
+      ],
+      error: null,
+    });
+    marksAre([
+      mark("m1"),
+      // s2 took I'm lost back on slide 3; s3 only saved slide 4; s9 has no tap at all.
+      mark("m2", { anon_id: "s2", slide_number: 3 }),
+      mark("m3", { anon_id: "s3", slide_number: 4 }),
+      mark("m4", { anon_id: "s9", slide_number: 2 }),
+      // s1 is lost on slide 2, not on slide 5.
+      mark("m5", { slide_number: 5 }),
+    ]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("1"));
+    // Only m1: the tap's own old highlight (hl_*) is a copy in the marks table now, never drawn twice.
+    expect(boxesOn(2)).toHaveLength(1);
+    expect(boxesOn(2)[0].style.left).toBe("10%");
+    expect(boxesOn(3)).toHaveLength(0);
+    expect(boxesOn(4)).toHaveLength(0);
+    expect(boxesOn(5)).toHaveLength(0);
+  });
+
+  it("an I'm lost taken back (K1 untoggle: undone) drops from the bars and takes its red marks off at once, with no mark event", async () => {
+    marksAre([mark("m1"), mark("m2", { anon_id: "s2", ...box(0.5) })]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+    expect(counts(2)).toBe("2 lost, 2 taps");
+    update(row("a", { slide_number: 2, undone: true }));
+    expect(counts(2)).toBe("1 lost, 1 tap");
+    expect(figure("sum-taps")).toBe("2");
+    expect(figure("sum-marks")).toBe("1");
+    expect(boxesOn(2).map((b) => b.style.left)).toEqual(["50%"]);
+    // Pressed again (or Undo of Removed): the tap and its marks come back.
+    update(row("a", { slide_number: 2, undone: false }));
+    expect(counts(2)).toBe("2 lost, 2 taps");
+    expect(figure("sum-marks")).toBe("2");
+  });
+
+  it("reads the red marks again after a lost tap event, once for a burst of taps (the teacher may see new ones then)", async () => {
+    marksAre([mark("m1")]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("1"));
+    await act(async () => h.status?.("SUBSCRIBED"));
+    await waitFor(() => expect(h.marksQuery).toHaveBeenCalledTimes(2));
+    // s7 is lost on slide 3 and had marked it before: Realtime sent nothing for the mark.
+    marksAre([mark("m1"), mark("m7", { anon_id: "s7", slide_number: 3, ...box(0.4) })]);
+    insert(row("n1", { slide_number: 3, anon_id: "s7" }));
+    insert(row("n2", { slide_number: 5, anon_id: "s8" }));
+    insert(row("n3", { slide_number: 5, anon_id: "s9" }));
+    await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+    expect(h.marksQuery).toHaveBeenCalledTimes(3);
+    expect(boxesOn(3)).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, MARKS_RELOAD_MS + 50));
+    expect(h.marksQuery).toHaveBeenCalledTimes(3);
+  });
+
+  it("follows the marks' own Realtime events: a new one, a move, one turned yellow (save) and a delete by id", async () => {
+    marksAre([mark("m1")]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("1"));
+    expect(h.filters["slide_marks:INSERT"]).toEqual({ event: "INSERT", schema: "public", table: "slide_marks", filter: `lecture_id=eq.${LECTURE}` });
+    expect(h.filters["slide_marks:UPDATE"]).toEqual({ event: "UPDATE", schema: "public", table: "slide_marks", filter: `lecture_id=eq.${LECTURE}` });
+    expect(h.filters["slide_marks:DELETE"]).toEqual({ event: "DELETE", schema: "public", table: "slide_marks", filter: `lecture_id=eq.${LECTURE}` });
+    markEvent("INSERT", { new: mark("m2", { anon_id: "s2", ...box(0.5) }) });
+    expect(figure("sum-marks")).toBe("2");
+    markEvent("UPDATE", { new: mark("m2", { anon_id: "s2", ...box(0.6, 0.1) }) });
+    expect(boxesOn(2).map((b) => [b.style.left, b.style.top])).toEqual([
+      ["10%", "20%"],
+      ["60%", "10%"],
+    ]);
+    markEvent("UPDATE", { new: mark("m2", { anon_id: "s2", kind: "save" }) });
+    expect(figure("sum-marks")).toBe("1");
+    markEvent("DELETE", { old: { id: "m1" } });
+    expect(figure("sum-marks")).toBe("0");
+    expect(boxesOn(2)).toHaveLength(0);
+  });
+
+  it("a mark deleted while a read is out does not come back with that read", async () => {
+    marksAre([mark("m1"), mark("m2", { anon_id: "s2" })]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+    let release!: (v: unknown) => void;
+    h.marksQuery.mockReturnValueOnce(new Promise((r) => (release = r)));
+    await act(async () => h.status?.("SUBSCRIBED"));
+    markEvent("DELETE", { old: { id: "m2" } });
+    await act(async () => release({ data: [mark("m1"), mark("m2", { anon_id: "s2" })], error: null, status: 200 }));
+    expect(figure("sum-marks")).toBe("1");
+  });
+
+  it("a failed marks read keeps what is shown and tries again", async () => {
+    marksAre([mark("m1")]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("1"));
+    h.marksQuery.mockResolvedValueOnce({ data: null, error: { code: "", message: "Failed to fetch" }, status: 0 });
+    await act(async () => h.status?.("SUBSCRIBED"));
+    await waitFor(() => expect(screen.getByText("Not up to date. Trying again.")).toBeInTheDocument());
+    expect(figure("sum-marks")).toBe("1");
+    await waitFor(() => expect(screen.queryByText("Not up to date. Trying again.")).toBeNull(), { timeout: 3000 });
+  });
+
+  it("shows the red marks of a lecture that has ended (one read, no channel)", async () => {
+    marksAre([mark("m1"), mark("m2", { anon_id: "s2", ...box(0.5) })]);
+    renderLive({ mode: "past" });
+    await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+    expect(boxesOn(2)).toHaveLength(2);
+    expect(h.makeChannel).not.toHaveBeenCalled();
+  });
+
+  describe("many students on one slide", () => {
+    const lostOn2 = (n: number) =>
+      h.tapsQuery.mockResolvedValue({
+        data: Array.from({ length: n }, (_, i) => row(`t${i}`, { slide_number: 2, anon_id: `s${i}` })),
+        error: null,
+      });
+    // Everyone over the same title, a little apart.
+    const sameTitle = (n: number) =>
+      marksAre(Array.from({ length: n }, (_, i) => mark(`m${i}`, { anon_id: `s${i}`, ...box(0.1 + i * 0.002, 0.1, 0.5, 0.15) })));
+
+    it("one box alone: the student's highlighter red, no border, about as strong as their own mark", async () => {
+      lostOn2(1);
+      sameTitle(1);
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("1"));
+      const [b] = boxesOn(2);
+      expect(b.className).toContain("bg-mark-lost");
+      expect(b.className).toContain("mix-blend-darken");
+      expect(b.className).not.toMatch(/\bborder\b/);
+      expect(Number(b.style.opacity)).toBe(0.85);
+      // The stack is drawn in its own layer, multiplied over the slide like a highlighter.
+      const layer = b.parentElement!;
+      expect(layer).toHaveAttribute("data-highlight-layer");
+      expect(layer.className).toContain("mix-blend-multiply");
+      expect(layer.className).toContain("isolate");
+    });
+
+    it("40 boxes over the same title: each one fainter, so the stack darkens but stays readable; the count says 40", async () => {
+      lostOn2(40);
+      sameTitle(40);
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("40"));
+      const boxes = boxesOn(2);
+      expect(boxes).toHaveLength(40);
+      expect(new Set(boxes.map((b) => b.style.opacity))).toEqual(new Set(["0.25"]));
+      expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("40 highlights");
+      // Enlarge shows them all, with the count.
+      fireEvent.click(within(panel()).getByRole("button", { name: "Enlarge slide 2" }));
+      const dialog = screen.getByRole("dialog");
+      expect(dialog.querySelectorAll("[data-highlight-box]")).toHaveLength(40);
+      expect(dialog).toHaveTextContent("40 highlights");
+    });
+
+    it("boxes that do not overlap keep their full strength however many there are", async () => {
+      lostOn2(5);
+      marksAre(Array.from({ length: 5 }, (_, i) => mark(`m${i}`, { anon_id: `s${i}`, ...box(i * 0.2, 0.1, 0.15, 0.1) })));
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("5"));
+      expect(new Set(boxesOn(2).map((b) => b.style.opacity))).toEqual(new Set(["0.85"]));
+    });
   });
 });

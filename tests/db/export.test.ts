@@ -132,6 +132,32 @@ describe("course_export", () => {
     expect((await exportRows(marko))[3]).toMatchObject({ lost_taps: 1, students: 1 });
   });
 
+  it("red and yellow marks (0020) and an I'm lost taken back never count; only the lost tap does (batch L)", async () => {
+    // s1 is lost on slide 4 and drew two red marks; s2 saved slide 4 with a yellow mark; s3 took I'm
+    // lost back on slide 4 (K1: the tap is undone) and keeps a red mark there.
+    await addTap(LECTURE_A, student(1), 4);
+    await addTap(LECTURE_A, student(3), 4, { undone: true });
+    for (const [who, kind] of [
+      [student(1), "lost"],
+      [student(1), "lost"],
+      [student(2), "save"],
+      [student(3), "lost"],
+    ] as const) {
+      await db.query(
+        `insert into public.slide_marks (lecture_id, anon_id, slide_number, x, y, w, h, kind) values ($1, $2, 4, 0.1, 0.1, 0.2, 0.2, $3)`,
+        [LECTURE_A, who.sub, kind],
+      );
+    }
+    const r = await exportRows(marko);
+    expect(r[3]).toMatchObject({ slide_number: 4, lost_taps: 1, students: 1 });
+    expect(r.reduce((sum, x) => sum + x.lost_taps, 0)).toBe(1);
+    // The one lecture CSV reads lecture_slide_stats: the same numbers.
+    const stats = await as(db, marko, async () =>
+      (await db.query<{ slide_number: number; taps: number; students: number }>("select slide_number, taps, students from public.lecture_slide_stats($1) where taps > 0", [LECTURE_A])).rows,
+    );
+    expect(stats).toEqual([{ slide_number: 4, taps: 1, students: 1 }]);
+  });
+
   it("counts a tap on the slide it was moved to", async () => {
     await addTap(LECTURE_A, student(1), 4);
     await db.query("update public.lost_taps set slide_number = 2");
