@@ -122,6 +122,48 @@ describe("MarkQueue", () => {
   });
 });
 
+describe("MarkQueue and another page (batch K2: My spots sends what the live screen left)", () => {
+  const ok = () => vi.fn<(op: MarkOp) => Promise<MarkSendResult>>(async () => "ok");
+
+  it("never sends again an op another page sent meanwhile (a mark deleted in My spots does not come back)", async () => {
+    const live = new MarkQueue(LECTURE);
+    live.add(mark("a"));
+    // My spots (its own queue on the same key) sends it, then the student deletes the mark there.
+    const spots = new MarkQueue(LECTURE);
+    await spots.flush(ok());
+    spots.delete("a");
+    await spots.flush(ok());
+    expect(localStorage.getItem(KEY)).toBeNull();
+    // Back on the live screen (kept alive, hidden): nothing left to send.
+    expect(live.pending()).toEqual([]);
+    const send = ok();
+    await live.flush(send);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("takes ops another page added, and keeps its own changes on top", async () => {
+    const live = new MarkQueue(LECTURE);
+    const spots = new MarkQueue(LECTURE);
+    spots.add(mark("b", 4));
+    live.add(mark("c", 5));
+    expect(live.pending().map((o) => (o.op === "add" ? o.mark.id : o.op))).toEqual(["b", "c"]);
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toHaveLength(2);
+  });
+
+  it("with storage blocked it works from memory and never drops its own ops", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("full");
+    });
+    const q = new MarkQueue(LECTURE);
+    q.add(mark("d"));
+    expect(q.pending()).toHaveLength(1);
+    const send = ok();
+    await q.flush(send);
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+});
+
 describe("applyMarkOp", () => {
   it("adds, notes, deletes and turns a slide's marks red or yellow", () => {
     const m = new Map<string, LiveMark>();

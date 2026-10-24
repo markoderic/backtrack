@@ -1534,8 +1534,13 @@ describe("StudentLecture notebook (batch K2: typed on the page, one private note
     notebookSave.mockImplementation(() => new Promise((r) => (finish = r)));
     show(7);
     await settle();
+    // The copy made while typing did not land (storage full for a moment).
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("full");
+    });
     fireEvent.change(notebook(), { target: { value: "typed then hidden" } });
-    localStorage.removeItem(NB_KEY);
+    setItem.mockRestore();
+    expect(localStorage.getItem(NB_KEY)).toBeNull();
     Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));

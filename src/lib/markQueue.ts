@@ -53,6 +53,17 @@ function isMarkOp(v: unknown): v is MarkOp {
   }
 }
 
+/** The ops kept under the queue's key (anything unreadable is left out). */
+function parseOps(raw: string | null): MarkOp[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isMarkOp) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** The id a mark op is about (a kind op is about a slide, not one mark). */
 const idOf = (op: MarkOp): string | null => (op.op === "add" ? op.mark.id : op.op === "kind" ? null : op.id);
 
@@ -62,6 +73,11 @@ const idOf = (op: MarkOp): string | null => (op.op === "add" ? op.mark.id : op.o
  * survives a reload). Works like the tap queue: sent one at a time, in order; offline stops a
  * flush; a throttled op waits and is tried again, THROTTLED_TRIES times in all. A note typed in
  * bursts is one op (the last text wins), and a mark deleted before it was sent is simply taken out.
+ *
+ * Another page can send or change the same ops (My spots sends what the live screen left; Next keeps
+ * the live screen alive, hidden, meanwhile). So before it reads or changes its ops, the queue takes
+ * what localStorage holds when that differs from what it last wrote there: it never sends an op again
+ * that the other page already sent (a mark deleted in My spots must not come back).
  */
 export class MarkQueue {
   private readonly key: string;
@@ -69,6 +85,8 @@ export class MarkQueue {
   private inFlight: MarkOp | null = null;
   private running: Promise<MarkFlushResult> | null = null;
   private throttled = new WeakMap<MarkOp, { tries: number; notBefore: number }>();
+  /** What this queue last wrote to (or read from) localStorage; null once storage failed (then memory only). */
+  private written: string | null = null;
 
   constructor(lectureId: string) {
     this.key = `backtrack:marks:${lectureId}`;
@@ -76,16 +94,19 @@ export class MarkQueue {
   }
 
   pending(): MarkOp[] {
+    this.sync();
     return [...this.ops];
   }
 
   add(mark: QueuedMark): void {
+    this.sync();
     this.ops.push({ op: "add", mark });
     this.save();
   }
 
   /** The note on a mark. A newer text replaces one still waiting, or goes into the mark's own add. */
   note(id: string, note: string): void {
+    this.sync();
     const add = this.ops.find((o) => o.op === "add" && o.mark.id === id);
     if (add && add !== this.inFlight && add.op === "add") {
       add.mark = { ...add.mark, note };
@@ -99,6 +120,7 @@ export class MarkQueue {
 
   /** Deletes a mark. One that was never sent is just taken out, with everything queued for it. */
   delete(id: string): void {
+    this.sync();
     const add = this.ops.find((o) => o.op === "add" && o.mark.id === id);
     if (add && add !== this.inFlight) {
       this.ops = this.ops.filter((o) => idOf(o) !== id);
@@ -111,6 +133,7 @@ export class MarkQueue {
 
   /** Every mark on a slide becomes this kind: the ones still waiting at once, the sent ones by one update. */
   kind(slide: number, kind: MarkKind): void {
+    this.sync();
     this.ops = this.ops
       .filter((o) => o === this.inFlight || !(o.op === "kind" && o.slide === slide))
       .map((o) => (o.op === "add" && o !== this.inFlight && o.mark.slide === slide ? { op: "add", mark: { ...o.mark, kind } } : o));
@@ -120,6 +143,7 @@ export class MarkQueue {
 
   flush(send: (op: MarkOp) => Promise<MarkSendResult>): Promise<MarkFlushResult> {
     if (this.running) return this.running;
+    this.sync();
     this.running = this.run(send);
     return this.running;
   }
@@ -176,20 +200,44 @@ export class MarkQueue {
   private load(): MarkOp[] {
     try {
       const raw = window.localStorage.getItem(this.key);
-      if (!raw) return [];
-      const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter(isMarkOp) : [];
+      this.written = raw ?? "";
+      return parseOps(raw);
     } catch {
+      this.written = null;
       return [];
     }
   }
 
+  /**
+   * Takes what localStorage holds when another page changed it since this queue last wrote it (never
+   * while a flush runs: the op in flight is this queue's own). With storage blocked, memory only.
+   */
+  private sync(): void {
+    if (this.running || this.written === null) return;
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(this.key);
+    } catch {
+      return;
+    }
+    if ((raw ?? "") === this.written) return;
+    this.ops = parseOps(raw);
+    this.written = raw ?? "";
+  }
+
   private save(): void {
     try {
-      if (this.ops.length === 0) window.localStorage.removeItem(this.key);
-      else window.localStorage.setItem(this.key, JSON.stringify(this.ops));
+      if (this.ops.length === 0) {
+        window.localStorage.removeItem(this.key);
+        this.written = "";
+      } else {
+        const raw = JSON.stringify(this.ops);
+        window.localStorage.setItem(this.key, raw);
+        this.written = raw;
+      }
     } catch {
-      // Storage is blocked or full. The queue still works in memory.
+      // Storage is blocked or full. The queue still works in memory (and stops looking at storage).
+      this.written = null;
     }
   }
 }

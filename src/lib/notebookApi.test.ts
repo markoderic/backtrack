@@ -319,24 +319,54 @@ describe("NotebookSaver", () => {
       expect(stored()).toEqual({ "2": "offline text" });
     });
 
-    it("never takes off newer text another page wrote for the same slide", async () => {
+    it("another page's newer text on the device wins: it is taken over and sent, never the old text", async () => {
       const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "ok");
       const a = new NotebookSaver({ save, storageKey: KEY });
       a.set(2, "from the live screen");
-      // My spots (another saver) has newer text for slide 2 that it has not sent yet.
+      // My spots (another saver) has newer text for slide 2 (and slide 3) that it has not sent yet.
       localStorage.setItem(KEY, JSON.stringify({ "2": "from my spots", "3": "other slide" }));
+      expect(a.pending().get(2)).toBe("from my spots");
       await a.flush();
-      expect(stored()).toEqual({ "2": "from my spots", "3": "other slide" });
+      expect(save.mock.calls).toEqual([
+        [2, "from my spots"],
+        [3, "other slide"],
+      ]);
+      expect(localStorage.getItem(KEY)).toBeNull();
     });
 
-    it("persist() writes what is out and what waits, so a page thrown away while hidden loses nothing", async () => {
+    it("text another page already saved is not sent again from here (an edit made there is not undone)", async () => {
+      const offline = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "offline");
+      // The live screen, offline, kept slide 4's text on the device and is then hidden (Next keeps it alive).
+      const live = new NotebookSaver({ save: offline, storageKey: KEY });
+      live.set(4, "old text");
+      await live.flush();
+      expect(live.pending().get(4)).toBe("old text");
+      // My spots, back online: sends what was left, then the student edits it there and it saves.
+      const ok = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "ok");
+      const spots = new NotebookSaver({ save: ok, storageKey: KEY });
+      await spots.flush();
+      spots.set(4, "edited in My spots");
+      await spots.flush();
+      expect(localStorage.getItem(KEY)).toBeNull();
+      // Back on the live screen: nothing to send.
+      expect(live.pending().size).toBe(0);
+      await live.flush();
+      expect(offline).toHaveBeenCalledTimes(1);
+    });
+
+    it("persist() writes what is out, so a page thrown away while hidden loses nothing", async () => {
       const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(() => new Promise<WriteResult>(() => {}));
       const saver = new NotebookSaver({ save, storageKey: KEY });
+      // The first write fails (storage full for a moment).
+      const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+        throw new Error("full");
+      });
       saver.set(2, "typed");
-      localStorage.clear();
+      expect(localStorage.getItem(KEY)).toBeNull();
       void saver.flush();
       saver.persist();
       expect(stored()).toEqual({ "2": "typed" });
+      setItem.mockRestore();
     });
 
     it("works with storage blocked (the text stays in memory)", async () => {

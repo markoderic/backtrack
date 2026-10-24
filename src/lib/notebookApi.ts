@@ -94,12 +94,20 @@ export type NoteState = "pending" | "saving" | "saved" | "offline" | "failed" | 
 /** localStorage key of the notebook text of a lecture that is not saved yet, by slide. */
 export const notebookKey = (lectureId: string) => `backtrack:notebook:${lectureId}`;
 
-/** The text kept on the device under a key: { "7": "text" }. Anything unreadable is left out. */
-function readStored(key: string): Map<number, string> {
+/**
+ * The text kept on the device under a key: { "7": "text" }. Anything unreadable is left out; null
+ * when storage can not be read at all (blocked).
+ */
+function readStored(key: string): Map<number, string> | null {
   const out = new Map<number, string>();
+  let raw: string | null;
   try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return out;
+    raw = window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+  if (!raw) return out;
+  try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return out;
     for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
@@ -107,17 +115,19 @@ function readStored(key: string): Map<number, string> {
       if (Number.isInteger(slide) && slide >= 1 && typeof v === "string") out.set(slide, v);
     }
   } catch {
-    // Storage is blocked or the value is broken: nothing kept.
+    // A broken value: nothing kept.
   }
   return out;
 }
 
-function writeStored(key: string, map: ReadonlyMap<number, string>): void {
+/** Writes the map under the key; false when storage is blocked or full. */
+function writeStored(key: string, map: ReadonlyMap<number, string>): boolean {
   try {
     if (map.size === 0) window.localStorage.removeItem(key);
     else window.localStorage.setItem(key, JSON.stringify(Object.fromEntries(map)));
+    return true;
   } catch {
-    // Storage is blocked or full. The text is still in memory and goes with the next save.
+    return false;
   }
 }
 
@@ -146,6 +156,11 @@ type SaverOptions = {
  * dropped: it stays in pending() and goes again with the next change or flush. Only the newest
  * text of a slide is ever sent, one save per slide at a time. pending() also has the text of a save
  * that is still out, until the database says it is saved.
+ *
+ * With a storageKey, the device copy is shared with other pages of the same lecture (My spots, and
+ * the live screen that Next keeps alive, hidden, meanwhile). When another page changed a slide's text
+ * there since this saver last looked, that page's version wins: newer text is taken over, and text it
+ * already saved is not sent again (it would undo an edit made there).
  */
 export class NotebookSaver {
   private readonly save: SaverOptions["save"];
@@ -161,6 +176,8 @@ export class NotebookSaver {
   private readonly saved = new Map<number, string>();
   /** The slides this saver had text for: only these are ever changed in the device copy. */
   private readonly touched = new Set<number>();
+  /** The device copy as this saver last read or wrote it; null when storage can not be used. */
+  private seen: Map<number, string> | null = null;
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly sending = new Map<number, Promise<void>>();
 
@@ -171,15 +188,41 @@ export class NotebookSaver {
     this.onError = onError;
     this.storageKey = storageKey;
     if (storageKey) {
-      for (const [slide, body] of readStored(storageKey)) {
+      const stored = readStored(storageKey);
+      this.seen = stored;
+      for (const [slide, body] of stored ?? []) {
         this.waiting.set(slide, body);
         this.touched.add(slide);
       }
     }
   }
 
+  /**
+   * Takes the device copy's changes made by another page since this saver last looked: newer text
+   * becomes this saver's waiting text; a slide whose text is gone from there (that page saved it)
+   * is not sent again from here.
+   */
+  private sync(): void {
+    if (!this.storageKey || this.seen === null) return;
+    const stored = readStored(this.storageKey);
+    if (stored === null) return;
+    for (const slide of new Set([...stored.keys(), ...this.seen.keys()])) {
+      const now = stored.get(slide);
+      const before = this.seen.get(slide);
+      if (now === before) continue;
+      if (now === undefined) {
+        if (this.waiting.get(slide) === before) this.waiting.delete(slide);
+      } else {
+        this.waiting.set(slide, now);
+        this.touched.add(slide);
+      }
+    }
+    this.seen = stored;
+  }
+
   /** The student typed: this is the slide's whole text now. */
   set(slide: number, body: string): void {
+    this.sync();
     this.waiting.set(slide, body);
     this.touched.add(slide);
     this.persist();
@@ -196,6 +239,7 @@ export class NotebookSaver {
 
   /** Sends every slide's waiting text now, and resolves once all of them are done. */
   async flush(): Promise<void> {
+    this.sync();
     for (const [slide, timer] of this.timers) {
       clearTimeout(timer);
       this.timers.delete(slide);
@@ -208,6 +252,7 @@ export class NotebookSaver {
    * waiting text wins), for the page to show and keep on the device.
    */
   pending(): ReadonlyMap<number, string> {
+    this.sync();
     return new Map([...this.inFlight, ...this.waiting]);
   }
 
@@ -219,6 +264,10 @@ export class NotebookSaver {
   persist(): void {
     if (!this.storageKey) return;
     const stored = readStored(this.storageKey);
+    if (stored === null) {
+      this.seen = null;
+      return;
+    }
     const pending = this.pending();
     let changed = false;
     for (const slide of this.touched) {
@@ -233,7 +282,8 @@ export class NotebookSaver {
         changed = true;
       }
     }
-    if (changed) writeStored(this.storageKey, stored);
+    if (changed) this.seen = writeStored(this.storageKey, stored) ? stored : null;
+    else if (this.seen !== null) this.seen = stored;
   }
 
   /** Stops the timers (the page is going). Waiting text stays in pending() and on the device. */
