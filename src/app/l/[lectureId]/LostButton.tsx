@@ -14,7 +14,7 @@ import {
 } from "react";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
-import { ImLostButton } from "@/components/ImLostButton";
+import { ImLostButton, ignoreHeldEnter } from "@/components/ImLostButton";
 import { newId } from "@/lib/newId";
 import { LEGACY_NOTE_MAX, noteCounterFrom } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
@@ -34,6 +34,8 @@ export const UNDO_MS = 10_000;
 export const UNTOGGLE_GUARD_MS = 600;
 /** A tap made on this screen this recently is kept when a fresh read does not have it yet. */
 const FRESH_MS = 5000;
+/** The window's focus reads the rows again at most this often. */
+const FOCUS_READ_MS = 2000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
 /** A tap the server kept turning away (login gone, or too many requests), dropped after a few tries. */
@@ -66,8 +68,16 @@ type Props = {
   send: (op: QueueOp) => Promise<SendResult>;
   /** The student's rows already saved for this lecture, or null while offline. A row without kind is lost. */
   loadOwn: () => Promise<{ id: string; slide: number; kind?: Kind; note?: string; rect?: Rect }[] | null>;
-  /** Called with every row that is not undone (one entry per row), whenever they change. */
-  onSpots: (spots: Spot[]) => void;
+  /**
+   * Called with every row that is not undone (one entry per row), whenever they change. `loaded` is
+   * true once the student's rows were read from the database (before that, only what this screen made).
+   */
+  onSpots: (spots: Spot[], loaded: boolean) => void;
+  /**
+   * Called once the rows of a take back, or of its Undo, were sent (or the send stopped). The page
+   * reads the marks again: 0020's trigger deletes or copies back an old highlight with the tap.
+   */
+  onTakenBack?: () => void;
   /** Called right after a tap or a save is recorded, with its kind. */
   onTap?: (kind: Kind) => void;
   /** Goes up each time the live connection comes back. */
@@ -118,16 +128,35 @@ function patched(spot: Spot, patch: { note?: string; rect?: Rect | null }): Spot
 
 /**
  * The rows in a queue that have not been taken back, with the queued notes and marks applied.
- * `base` adds rows that are already saved, so a change made offline to one of them shows too.
+ * `base` adds rows that are already saved, so a change made offline to one of them shows too. A row
+ * taken back (undone true) and then brought back (undone false, Undo of Removed) shows again: from
+ * the rows seen so far, from `known` (what the screen showed, for a read that no longer has the row),
+ * or from the slide and kind the update carries. Those rows are added to `restored`.
  */
-function pendingSpots(ops: QueueOp[], base: ReadonlyMap<string, Spot> = new Map()): Map<string, Spot> {
+function pendingSpots(
+  ops: QueueOp[],
+  base: ReadonlyMap<string, Spot> = new Map(),
+  known: ReadonlyMap<string, Spot> = new Map(),
+  restored: Spot[] = [],
+): Map<string, Spot> {
   const spots = new Map(base);
+  const removed = new Map<string, Spot>();
   for (const op of ops) {
     if (op.op === "insert") {
       const t = op.tap;
       spots.set(t.id, patched({ id: t.id, slide: t.tappedOnSlide, kind: t.kind ?? "lost" }, { note: t.note, rect: t.rect }));
-    } else if (op.patch.undone) spots.delete(op.id);
-    else {
+    } else if (op.patch.undone === true) {
+      const spot = spots.get(op.id);
+      if (spot) removed.set(op.id, spot);
+      spots.delete(op.id);
+    } else if (op.patch.undone === false) {
+      const back = removed.get(op.id) ?? spots.get(op.id) ?? known.get(op.id) ?? (op.spot ? { id: op.id, ...op.spot } : undefined);
+      if (back) {
+        spots.set(op.id, back);
+        removed.delete(op.id);
+        restored.push(back);
+      }
+    } else {
       const spot = spots.get(op.id);
       if (spot) spots.set(op.id, patched(spot, op.patch));
     }
@@ -192,6 +221,7 @@ export function LostButton({
   onMarkingChange,
   onMarkReady,
   onLostChange,
+  onTakenBack,
   notice = null,
   onTap,
   onRejected,
@@ -259,6 +289,7 @@ export function LostButton({
   const onRejectedRef = useRef(onRejected);
   const onMarkingChangeRef = useRef(onMarkingChange);
   const onLostChangeRef = useRef(onLostChange);
+  const onTakenBackRef = useRef(onTakenBack);
   const mounted = useRef(false);
   const loaded = useRef(false);
   const loading = useRef(false);
@@ -279,6 +310,7 @@ export function LostButton({
     onRejectedRef.current = onRejected;
     onMarkingChangeRef.current = onMarkingChange;
     onLostChangeRef.current = onLostChange;
+    onTakenBackRef.current = onTakenBack;
   });
 
   // Made on first use, in the browser, never while rendering: the queue reads localStorage.
@@ -313,6 +345,16 @@ export function LostButton({
     for (const slide of new Set(slides)) {
       const left = [...tapsRef.current.values()].some((t) => t.slide === slide && t.kind === "lost" && !gone.has(t.id));
       if (!left) onLostChangeRef.current?.(slide, false);
+    }
+  }, []);
+
+  /**
+   * Rows a queued Undo of Removed brings back that this screen is not showing yet (a reload while it
+   * waits): their slides are lost again, so the page turns the marks there red.
+   */
+  const tellRestored = useCallback((restored: Spot[]) => {
+    for (const spot of restored) {
+      if (spot.kind === "lost" && !tapsRef.current.has(spot.id)) onLostChangeRef.current?.(spot.slide, true);
     }
   }, []);
 
@@ -414,8 +456,11 @@ export function LostButton({
           if (r.rect) spot.rect = r.rect;
           saved.set(r.id, spot);
         }
-        // Changes still in the queue are newer than what the database had.
-        const withQueued = pendingSpots(queue().pending(), saved);
+        // Changes still in the queue are newer than what the database had. A row brought back by a
+        // queued Undo of Removed shows as the screen had it, even though the read no longer has it.
+        const restored: Spot[] = [];
+        const withQueued = pendingSpots(queue().pending(), saved, tapsRef.current, restored);
+        tellRestored(restored);
         if (first) {
           setTaps((prev) => {
             const next = new Map(prev);
@@ -450,7 +495,7 @@ export function LostButton({
         loading.current = false;
       }
     },
-    [fail, queue],
+    [fail, queue, tellRestored],
   );
 
   // On mount: show the taps left over from the last visit, send them, and load the saved rows.
@@ -466,7 +511,9 @@ export function LostButton({
     // Taps left from the last visit get their dots back (read after the first render, as storage is only there in the browser).
     void Promise.resolve().then(() => {
       if (!mounted.current) return;
-      const left = pendingSpots(queue().pending());
+      const restored: Spot[] = [];
+      const left = pendingSpots(queue().pending(), new Map(), tapsRef.current, restored);
+      tellRestored(restored);
       if (left.size === 0) return;
       setTaps((prev) => {
         const next = new Map(prev);
@@ -478,7 +525,7 @@ export function LostButton({
     void loadSaved();
     const onOnline = () => {
       void flush();
-      void loadSaved();
+      void loadSaved(true);
     };
     window.addEventListener("online", onOnline);
     return () => {
@@ -489,12 +536,12 @@ export function LostButton({
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
     };
-  }, [queue, flush, loadSaved, armUndo, dropUndo]);
+  }, [queue, flush, loadSaved, armUndo, dropUndo, tellRestored]);
 
   useEffect(() => {
     if (reconnects === 0) return;
     void flush();
-    void loadSaved();
+    void loadSaved(true);
   }, [reconnects, flush, loadSaved]);
 
   // Back on screen (Next kept the page alive while My spots was open, or the tab was in the
@@ -507,13 +554,24 @@ export function LostButton({
     const onVisible = () => {
       if (document.visibilityState === "visible") void loadSaved(true);
     };
+    // My spots in a second window beside this one: back in this window, read again (at most every 2 s).
+    let lastFocus = 0;
+    const onFocus = () => {
+      if (Date.now() - lastFocus < FOCUS_READ_MS) return;
+      lastFocus = Date.now();
+      void loadSaved(true);
+    };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [loadSaved]);
 
   useEffect(() => {
     tapsRef.current = taps;
-    onSpotsRef.current([...taps.values()]);
+    onSpotsRef.current([...taps.values()], loaded.current);
   }, [taps]);
 
   // Another slide on screen: a note box left as it was (nothing typed) follows the new slide. Undo
@@ -585,7 +643,7 @@ export function LostButton({
     offerUndo({ type: "removed", kind, slide: viewing, ids: rows.map((t) => t.id), spots: rows });
     if (kind === "lost") lostGone([viewing], gone);
     say("Removed.");
-    void flush();
+    void flush().then(() => onTakenBackRef.current?.());
   }
 
   // One tap per slide: I'm lost on a lost slide (the checked button) takes it back instead.
@@ -633,9 +691,11 @@ export function LostButton({
       if (entry.kind === "lost") lostGone([entry.slide], gone);
     } else {
       // Taken back a moment ago: the same rows come back (an update each), with their note and mark.
-      for (const id of entry.ids) {
-        queue().update(id, { undone: false });
-        takenBack.current.delete(id);
+      for (const spot of entry.spots) {
+        const hint: { slide: number; kind: Kind; note?: string } = { slide: spot.slide, kind: spot.kind };
+        if (spot.note) hint.note = spot.note;
+        queue().update(spot.id, { undone: false }, hint);
+        takenBack.current.delete(spot.id);
       }
       const wasLost = !!latest(taps, entry.slide, "lost");
       setTaps((prev) => {
@@ -648,7 +708,9 @@ export function LostButton({
     say("Undone.");
     // Undo was pressed on purpose: I'm lost takes the focus.
     focusNext.current = "lost";
-    void flush();
+    void flush().then(() => {
+      if (entry.type === "removed") onTakenBackRef.current?.();
+    });
   }
 
   // The note box works on the slide its draft was started on, else on the slide on screen.
@@ -776,6 +838,7 @@ export function LostButton({
           <button
             type="button"
             onClick={pressSave}
+            onKeyDown={ignoreHeldEnter}
             aria-pressed={!!saveSpot}
             // A lost slide is in My spots already: nothing to save until the I'm lost is taken back.
             disabled={!!lostSpot && !saveSpot}
@@ -793,7 +856,7 @@ export function LostButton({
             className={marking ? markToolOnClass : buttonSecondaryClass}
           >
             {/* A swatch of the highlighter: red on a slide where the student is lost, else yellow. */}
-            <span aria-hidden data-swatch={lostSpot ? "lost" : "save"} className={`h-3 w-4 shrink-0 rounded-xs ${lostSpot ? "bg-lost-tint" : "bg-mark"}`} />
+            <span aria-hidden data-swatch={lostSpot ? "lost" : "save"} className={`h-3 w-4 shrink-0 rounded-xs ${lostSpot ? "bg-mark-lost" : "bg-mark"}`} />
             Mark
           </button>
         </div>

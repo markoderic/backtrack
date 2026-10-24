@@ -27,6 +27,8 @@ const LOADING_TEXT_MS = 300;
 /** The My spots count is red this long after an I'm lost. */
 const COUNT_RED_MS = 2000;
 const WIDE = 16 / 9;
+/** The marks' stored kind is put right this long after the marks and the taps were last changed. */
+const RECONCILE_MS = 1000;
 
 type Props = {
   lectureId: string;
@@ -58,12 +60,6 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const [spots, setSpots] = useState<Spot[]>([]);
   // The note to the teacher: 2000 characters once the database has migration 0020, else 140.
   const noteMax = useTeacherNoteMax();
-  // One dot per slide: red if any row there is an I'm lost, open if they are all saves.
-  const spotKinds = useMemo(() => {
-    const kinds = new Map<number, SpotKind>();
-    for (const s of spots) if (kinds.get(s.slide) !== "lost") kinds.set(s.slide, s.kind);
-    return kinds;
-  }, [spots]);
 
   // The My spots count turns red for 2 s after an I'm lost (a new one starts the 2 s over).
   const [countRed, setCountRed] = useState(0);
@@ -74,6 +70,12 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   }, [countRed]);
   const onTap = useCallback((kind: SpotKind) => {
     if (kind === "lost") setCountRed((n) => n + 1);
+  }, []);
+  // The student's rows were read once: from then on the marks' kinds can follow them.
+  const [spotsLoaded, setSpotsLoaded] = useState(false);
+  const onSpots = useCallback((next: Spot[], loaded: boolean) => {
+    setSpots(next);
+    if (loaded) setSpotsLoaded(true);
   }, []);
 
   // Counts the times the live connection came back, so the queue is sent again then.
@@ -89,6 +91,14 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const marks = useLiveMarks(lectureId, { reconnects });
   // Before 0020 a mark is the one highlight on the slide's spot (lost_taps.hl_*), through the panel.
   const legacy = marks.mode === "legacy";
+  // One dot per slide: red if any row there is an I'm lost, open if they are all saves, and a yellow
+  // dot for a slide that only has marks (a slide with marks is a spot too: it counts in My spots).
+  const spotKinds = useMemo(() => {
+    const kinds = new Map<number, SpotKind>();
+    for (const s of spots) if (kinds.get(s.slide) !== "lost") kinds.set(s.slide, s.kind);
+    if (!legacy) for (const m of marks.marks) if (!kinds.has(m.slide)) kinds.set(m.slide, "mark");
+    return kinds;
+  }, [spots, legacy, marks.marks]);
   const legacyRef = useRef<LegacyMarks | null>(null);
   const onMarkReady = useCallback((api: LegacyMarks) => {
     legacyRef.current = api;
@@ -109,6 +119,32 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   useEffect(() => {
     spotsRef.current = spots;
   }, [spots]);
+
+  // The kind stored on each mark follows the slide: 'lost' while the student is lost there, 'save'
+  // when not. This screen's own presses set it at once; this puts right what changed elsewhere (My
+  // spots took a tap back, a mark drawn before the taps were read) once both are read. Once per
+  // slide and kind, so a change that can not be sent is not asked for again and again.
+  // It waits until both have been still for a moment: a press changes the marks one render before the
+  // panel reports its rows, and must never be undone by that in-between state.
+  const kindAsked = useRef(new Map<number, "lost" | "save">());
+  useEffect(() => {
+    if (marks.mode !== "table" || !spotsLoaded) return;
+    const timer = setTimeout(() => {
+      const lostSlides = new Set(spots.filter((s) => s.kind === "lost").map((s) => s.slide));
+      const wrong = new Map<number, "lost" | "save">();
+      for (const m of marks.marks) {
+        const want = lostSlides.has(m.slide) ? "lost" : "save";
+        if (m.kind !== want) wrong.set(m.slide, want);
+      }
+      for (const [slide, kind] of kindAsked.current) if (wrong.get(slide) !== kind) kindAsked.current.delete(slide);
+      for (const [slide, kind] of wrong) {
+        if (kindAsked.current.get(slide) === kind) continue;
+        kindAsked.current.set(slide, kind);
+        setMarksKind(slide, kind);
+      }
+    }, RECONCILE_MS);
+    return () => clearTimeout(timer);
+  }, [marks.mode, marks.marks, spots, spotsLoaded, setMarksKind]);
 
   // A tap still waiting (made offline, or just before the end) is sent before leaving,
   // so it is not lost with this screen. If that takes over 3 seconds, leave anyway:
@@ -169,6 +205,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     setMarkedSlide(viewing);
     if (marking) setMarking(false);
     if (selected) setSelected(null);
+    // A mark's message belonged to the slide just left.
+    if (marks.problem) marks.clearProblem();
   }
 
   // The slide changes at once; the loading text only shows when the image is slow.
@@ -293,8 +331,14 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           viewing={viewing}
           send={send}
           loadOwn={loadOwn}
-          onSpots={setSpots}
-          onTap={onTap}
+          onSpots={onSpots}
+          onTap={(kind) => {
+            onTap(kind);
+            marks.clearProblem();
+          }}
+          onTakenBack={() => {
+            if (!legacy) void marks.reload();
+          }}
           reconnects={reconnects}
           onFlushReady={onFlushReady}
           marking={marking}

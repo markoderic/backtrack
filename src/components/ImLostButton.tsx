@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type MouseEvent, type Ref } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type MouseEvent, type Ref } from "react";
 import { Icon } from "./Icon";
 
 /** How long the press look holds before the checked look shows (Parts: scale 0.96 for 120 ms). */
@@ -31,7 +31,15 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type"> 
  * back (batch K1). The second click of a double click (detail 2 and up) never reaches onClick,
  * so a fast double press can not record and take back in one go. Only the look lives here.
  */
-export function ImLostButton({ checked = false, slide, onClick, className = "", ...props }: Props) {
+/**
+ * Enter held down repeats, and each repeat is a click (detail 0): it would take the tap back and record
+ * it again. A repeated Enter does nothing; a new press of the key still works.
+ */
+export function ignoreHeldEnter(e: KeyboardEvent<HTMLElement>) {
+  if (e.repeat && e.key === "Enter") e.preventDefault();
+}
+
+export function ImLostButton({ checked = false, slide, onClick, onKeyDown, className = "", ...props }: Props) {
   const [pressed, setPressed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -65,11 +73,14 @@ export function ImLostButton({ checked = false, slide, onClick, className = "", 
     <button
       type="button"
       data-phase={shown}
-      data-im-lost=""
       aria-pressed={checked}
       // Named for its state at once, also during the 120 ms press look.
       aria-label={checked ? checkedLabel : undefined}
       onClick={onPress}
+      onKeyDown={(e) => {
+        ignoreHeldEnter(e);
+        onKeyDown?.(e);
+      }}
       className={
         "flex h-12 w-full shrink-0 items-center justify-center gap-2 rounded-md border px-6 type-button whitespace-nowrap " +
         "focus-ring transition-[background-color,color,border-color,scale,outline-color] duration-(--dur-fast) ease-out " +

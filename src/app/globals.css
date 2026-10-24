@@ -19,12 +19,14 @@
   --color-lost-hover: #a92d18;
   --color-lost-tint: #f6dad4;
   /*
-   * Marks (batch K1) look like a highlighter: a fill with no border, drawn with mix-blend-multiply so
-   * the slide's text under it stays as dark as it was. Yellow (mark) is a mark just for the student;
-   * a mark on a slide where they are lost uses the lost tint. Both keep secondary gray text at 4.5:1
-   * and ink at 7:1 or more (globals.test.ts checks it).
+   * Marks (batch K1) look like a highlighter: a fill with no border, drawn with mix-blend-multiply, so
+   * the slide's text under it is multiplied too and stays darker than the fill. Yellow (mark) is a
+   * mark just for the student; mark-lost, a clear highlighter red, a mark on a slide where they are
+   * lost. Under either, ink and black text keep 7:1 or more and dark or secondary gray 4.5:1 or more
+   * (globals.test.ts measures the multiplied colors).
    */
   --color-mark: #ffe45c;
+  --color-mark-lost: #f2a898;
 
   /*
    * Course colors (batch D, three more in batch H): eleven swatches for the bar on each course

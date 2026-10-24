@@ -7,7 +7,6 @@ import { newId } from "./newId";
 import type { Rect } from "./rect";
 import type { Loaded } from "./schemaCheck";
 import { createBrowserSupabase } from "./supabase/browser";
-import { useShownAgain } from "./useShownAgain";
 
 /**
  * Where marks live: "table" once slide_marks answered (migration 0020), "legacy" when it is not
@@ -18,6 +17,8 @@ export type MarksMode = "unknown" | "table" | "legacy";
 export const TOO_MANY_MARKS = "Too many marks on this slide.";
 export const TOO_MANY_MARKS_LECTURE = "Too many marks in this lecture.";
 export const MARK_FAILED = "That mark didn't save.";
+/** The window's focus reads the marks again at most this often. */
+const FOCUS_READ_MS = 2000;
 
 type Options = {
   /** Goes up each time the live connection comes back: send what waits and read the marks again. */
@@ -47,9 +48,9 @@ function defaultLoad(lectureId: string) {
  * The student's own marks on the live screen, from slide_marks: several per slide, each with a
  * private note. A change shows at once and goes through a queue kept in localStorage, so it
  * survives going offline or a reload. The marks are read again whenever the screen could be out of
- * date: when Next shows the page again (Activity, e.g. back from My spots), when the tab is shown
- * again, when the connection comes back and when the browser is back online. What is still waiting
- * in the queue is laid over what the database says.
+ * date: when Next shows the page again (Activity, e.g. back from My spots: its effects run again),
+ * when the tab or the window is shown again, when the connection comes back and when the browser is
+ * back online. What is still waiting in the queue is laid over what the database says.
  */
 export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: Options = {}) {
   const [mode, setMode] = useState<MarksMode>("unknown");
@@ -74,11 +75,17 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
   });
   const sender = useMemo(() => {
     let made: ((op: MarkOp) => Promise<MarkSendResult>) | null = null;
-    return (op: MarkOp) => {
-      if (sendRef.current) return sendRef.current(op);
+    return async (op: MarkOp) => {
       // The client is made when a mark is sent, not while rendering.
-      made ??= makeMarkSend(createBrowserSupabase(), lectureId);
-      return made(op);
+      const send = sendRef.current ?? (made ??= makeMarkSend(createBrowserSupabase(), lectureId));
+      const result = await send(op);
+      // Into what the database holds the moment it says ok: the queue drops the op at once, so a
+      // redraw before the whole run ends must still show it (a mark, its note, a delete).
+      if (result === "ok") {
+        applyMarkOp(base.current, op);
+        if (reads.current > 0) sentLog.current.push(op);
+      }
+      return result;
     };
   }, [lectureId]);
 
@@ -100,16 +107,13 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
       console.error(e);
       return;
     }
-    const { sent, refused, retryIn } = result;
-    for (const op of sent) {
-      applyMarkOp(base.current, op);
-      if (reads.current > 0) sentLog.current.push(op);
-    }
+    const { refused, retryIn } = result;
     if (refused.some((r) => r.result === "missing")) setMode("legacy");
-    const added = refused.filter((r) => r.op.op === "add");
-    if (added.some((r) => r.result === "slide_full")) say(TOO_MANY_MARKS);
-    else if (added.some((r) => r.result === "lecture_full")) say(TOO_MANY_MARKS_LECTURE);
-    else if (added.length > 0) say(MARK_FAILED);
+    // A kind op refused is not the student's doing (the next reconcile sends it again); the rest is said.
+    const said = refused.filter((r) => r.op.op !== "kind");
+    if (said.some((r) => r.result === "slide_full")) say(TOO_MANY_MARKS);
+    else if (said.some((r) => r.result === "lecture_full")) say(TOO_MANY_MARKS_LECTURE);
+    else if (said.length > 0) say(MARK_FAILED);
     if (retryIn !== undefined && mounted.current) {
       if (retryTimer.current) clearTimeout(retryTimer.current);
       retryTimer.current = setTimeout(() => {
@@ -170,11 +174,20 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
     const onVisible = () => {
       if (document.visibilityState === "visible") again();
     };
+    // My spots in a second window beside this one: coming back to this window reads again (at most every 2 s).
+    let lastFocus = 0;
+    const onFocus = () => {
+      if (Date.now() - lastFocus < FOCUS_READ_MS) return;
+      lastFocus = Date.now();
+      again();
+    };
     window.addEventListener("online", again);
+    window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       mounted.current = false;
       window.removeEventListener("online", again);
+      window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
       if (retryTimer.current) clearTimeout(retryTimer.current);
       retryTimer.current = null;
@@ -189,11 +202,6 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
     });
   }, [reconnects, flush, reload]);
 
-  // Back on screen after Next kept the page hidden (My spots may have changed or deleted a mark).
-  useShownAgain(() => {
-    void flush();
-    void reload();
-  });
 
   const marks = useMemo(() => [...shown.values()], [shown]);
 
@@ -257,7 +265,10 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
     [refresh],
   );
 
-  return { mode, marks, problem, add, remove, setNote, setKind, forget, flush, reload };
+  /** The line under the panel goes back to normal (another slide, a tap). */
+  const clearProblem = useCallback(() => setProblem(null), []);
+
+  return { mode, marks, problem, clearProblem, add, remove, setNote, setKind, forget, flush, reload };
 }
 
 export type LiveMarks = ReturnType<typeof useLiveMarks>;

@@ -29,6 +29,16 @@ describe("SlideStrip", () => {
     expect(lost.className).toContain("animate-dot-drop");
   });
 
+  it("draws a yellow dot in an ink ring for a slide with only marks, named you marked this", () => {
+    strip({ spots: kinds([[3, "lost"], [5, "mark"]]) });
+    const mark = item(5).querySelector("[data-spot]") as HTMLElement;
+    expect(mark).toHaveAttribute("data-spot", "mark");
+    expect(mark.className).toContain("bg-mark");
+    expect(mark.className).toContain("border-ink");
+    expect(mark.className).not.toContain("bg-lost");
+    expect(screen.getByRole("button", { name: "Slide 5, you marked this" })).toBe(item(5));
+  });
+
   it("with live 8 renders exactly 8 segments and nothing for 9", () => {
     strip();
     expect(screen.getAllByRole("listitem")).toHaveLength(8);

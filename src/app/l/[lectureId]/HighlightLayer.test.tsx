@@ -129,7 +129,7 @@ describe("HighlightLayer", () => {
     const { rerender } = render(<Stage />);
     fireEvent.pointerDown(layer(), { ...mouse, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(layer(), { ...mouse, clientX: 300, clientY: 200 });
-    expect(draftBox()!.className).toContain("bg-lost-tint");
+    expect(draftBox()!.className).toContain("bg-mark-lost");
     expect(draftBox()!.className).toContain("mix-blend-multiply");
     expect(draftBox()!.className).not.toMatch(/border/);
     expect(screen.queryByText("Drag over the part you lost")).not.toBeInTheDocument();
@@ -205,14 +205,14 @@ describe("HighlightLayer", () => {
     const rect = { x: 0.1, y: 0.2, w: 0.2, h: 0.2 };
     const { rerender } = render(<Stage marking={false} shown={{ kind: "lost", rect }} />);
     let box = boxes()[0] as HTMLElement;
-    expect(box.className).toContain("bg-lost-tint");
+    expect(box.className).toContain("bg-mark-lost");
     expect(box.className).toContain("mix-blend-multiply");
     expect(box.className).not.toMatch(/border/);
     expect(box.style.left).toBe("10%");
     rerender(<Stage marking={false} shown={{ kind: "save", rect }} />);
     box = boxes()[0] as HTMLElement;
     expect(box.className).toContain("bg-mark");
-    expect(box.className).not.toMatch(/border|bg-lost-tint/);
+    expect(box.className).not.toMatch(/border|bg-mark-lost/);
   });
 
   describe("several marks", () => {
@@ -237,8 +237,8 @@ describe("HighlightLayer", () => {
       render(<Stage marking={false} marks={[{ ...A, kind: "lost" }]} />);
       const [a] = markButtons();
       expect(a).toHaveAccessibleName("Mark 1, lost");
-      expect(a.className).toContain("bg-lost-tint");
-      expect(a.className).not.toContain("bg-mark");
+      expect(a.className).toContain("bg-mark-lost");
+      expect(a.className.split(" ")).not.toContain("bg-mark");
     });
 
     it("a click selects a mark (a click on the selected one lets it go); Enter or Space says keyboard", () => {

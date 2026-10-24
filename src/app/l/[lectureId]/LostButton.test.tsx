@@ -845,7 +845,8 @@ describe("LostButton", () => {
       await settle();
       expect(ops(send)).toEqual([
         { op: "update", id: "a", patch: { undone: true } },
-        { op: "update", id: "a", patch: { undone: false } },
+        // The slide and kind ride along (never sent), so a reload while it waits can show the spot.
+        { op: "update", id: "a", patch: { undone: false }, spot: { slide: 7, kind: "lost", note: "why" } },
       ]);
       expect(checked()).toBeInTheDocument();
       expect(lastSpots()).toEqual([7]);
@@ -868,6 +869,84 @@ describe("LostButton", () => {
       const again = JSON.parse(localStorage.getItem(KEY) ?? "[]") as QueueOp[];
       expect(again.map((o) => (o.op === "insert" ? "insert" : o.patch))).toEqual(["insert", { undone: true }, { undone: false }]);
       expect(checked()).toBeInTheDocument();
+    });
+
+    describe("Undo of Removed still waiting in the queue when the page loads again (offline)", () => {
+      it("a sent tap: the slide is still lost, the marks turn red, and I'm lost adds no second row", async () => {
+        localStorage.setItem(
+          KEY,
+          JSON.stringify([
+            { op: "update", id: "a", patch: { undone: true } },
+            { op: "update", id: "a", patch: { undone: false } },
+          ]),
+        );
+        const onLostChange = vi.fn();
+        const send = vi.fn<Send>(async () => "offline");
+        setup({ send, onLostChange, loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const }]) });
+        await settle();
+        await settle();
+        expect(checked()).toBeInTheDocument();
+        expect(onLostChange).toHaveBeenCalledWith(7, true);
+        // A press now takes it back (no second I'm lost on the slide).
+        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5000);
+        fireEvent.click(checked(), { detail: 1 });
+        const queued = JSON.parse(localStorage.getItem(KEY) ?? "[]") as QueueOp[];
+        expect(queued.filter((o) => o.op === "insert")).toHaveLength(0);
+      });
+
+      it("a tap never sent: the slide is still lost", async () => {
+        const tap = { id: "b", tappedOnSlide: 7, tappedAt: "2026-10-26T14:00:00.000Z" };
+        localStorage.setItem(
+          KEY,
+          JSON.stringify([
+            { op: "insert", tap },
+            { op: "update", id: "b", patch: { undone: true } },
+            { op: "update", id: "b", patch: { undone: false } },
+          ]),
+        );
+        const onLostChange = vi.fn();
+        setup({ send: vi.fn<Send>(async () => "offline"), onLostChange, loadOwn: vi.fn(async () => null) });
+        await settle();
+        await settle();
+        expect(checked()).toBeInTheDocument();
+        expect(onLostChange).toHaveBeenCalledWith(7, true);
+      });
+
+      it("a sent tap the read can not show (offline): the slide and kind the update carries bring it back", async () => {
+        localStorage.setItem(
+          KEY,
+          JSON.stringify([
+            { op: "update", id: "a", patch: { undone: true } },
+            { op: "update", id: "a", patch: { undone: false }, spot: { slide: 7, kind: "lost" } },
+          ]),
+        );
+        setup({ send: vi.fn<Send>(async () => "offline"), loadOwn: vi.fn(async () => null) });
+        await settle();
+        await settle();
+        expect(checked()).toBeInTheDocument();
+      });
+
+      it("a fresh read taken while the bring-back waits (undone true already in) keeps the slide lost", async () => {
+        // The database: a is undone (the take-back went), the bring-back is offline.
+        const send = vi.fn<Send>(async (op) => (op.op === "update" && op.patch.undone === false ? "offline" : "ok"));
+        let rows: Row[] = [{ id: "a", slide: 7, kind: "lost" }];
+        const loadOwn = vi.fn(async () => rows);
+        setup({ send, loadOwn });
+        await settle();
+        fireEvent.click(checked(), { detail: 1 });
+        await settle();
+        rows = [];
+        undo();
+        await settle();
+        expect(checked()).toBeInTheDocument();
+        Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+        act(() => {
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await settle();
+        expect(loadOwn).toHaveBeenCalledTimes(2);
+        expect(checked()).toBeInTheDocument();
+      });
     });
 
     it("Removed and its Undo last 10 seconds, also on another slide (Undo slide 7)", async () => {
@@ -1459,6 +1538,24 @@ describe("LostButton", () => {
       await settle();
       expect(loadOwn).toHaveBeenCalledTimes(2);
       expect(lastSpots()).toEqual([7, 8]);
+    });
+
+    it("reads the rows again when the window gets the focus back and when the connection comes back", async () => {
+      let rows: Row[] = [{ id: "a", slide: 7, kind: "lost" }];
+      const loadOwn = vi.fn(async () => rows);
+      const { show } = setup({ loadOwn });
+      await settle();
+      rows = [];
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      await settle();
+      expect(screen.getByRole("button", { name: "I'm lost" })).toHaveAttribute("aria-pressed", "false");
+      rows = [{ id: "a", slide: 7, kind: "lost" }];
+      show({ reconnects: 1 });
+      await settle();
+      expect(checked()).toBeInTheDocument();
+      expect(loadOwn).toHaveBeenCalledTimes(3);
     });
 
     it("when the tab is shown again, reads the rows again", async () => {

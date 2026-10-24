@@ -87,17 +87,39 @@ describe("marks look like a highlighter (batch K1)", () => {
     return (x + 0.05) / (y + 0.05);
   };
 
-  it("has a yellow mark token, and text under either mark stays readable (ink 7:1, gray 4.5:1)", () => {
-    const mark = token("mark");
-    expect(mark).not.toBeNull();
-    for (const fill of [mark!, token("lost-tint")!]) {
-      expect(contrast(token("ink")!, fill), fill).toBeGreaterThanOrEqual(7);
-      expect(contrast(token("secondary")!, fill), fill).toBeGreaterThanOrEqual(4.5);
+  // mix-blend-multiply: the text under a mark is multiplied by the fill too (per channel, 0 to 255).
+  const multiply = (text: string, fill: string) =>
+    "#" +
+    [1, 3, 5]
+      .map((i) => Math.round((parseInt(text.slice(i, i + 2), 16) * parseInt(fill.slice(i, i + 2), 16)) / 255))
+      .map((n) => n.toString(16).padStart(2, "0"))
+      .join("");
+
+  it("text under either mark stays readable: ink and black 7:1, dark and secondary gray 4.5:1 (multiplied)", () => {
+    for (const name of ["mark", "mark-lost"]) {
+      const fill = token(name);
+      expect(fill, name).not.toBeNull();
+      for (const [text, min] of [
+        [token("ink")!, 7],
+        ["#000000", 7],
+        ["#444444", 4.5],
+        [token("secondary")!, 4.5],
+      ] as const) {
+        expect(contrast(multiply(text, fill!), fill!), `${name} ${text}`).toBeGreaterThanOrEqual(min);
+      }
     }
-    // Yellow, not another red or gray: more red and green than blue.
-    const [r, g, b] = [1, 3, 5].map((i) => parseInt(mark!.slice(i, i + 2), 16));
-    expect(r).toBeGreaterThan(200);
-    expect(g).toBeGreaterThan(200);
-    expect(b).toBeLessThan(150);
+  });
+
+  it("the yellow is yellow and the red is clearly red, both visible on a white slide", () => {
+    const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const [yr, yg, yb] = rgb(token("mark")!);
+    expect(yr).toBeGreaterThan(200);
+    expect(yg).toBeGreaterThan(200);
+    expect(yb).toBeLessThan(150);
+    const [rr, rg, rb] = rgb(token("mark-lost")!);
+    expect(rr - rg).toBeGreaterThan(60);
+    expect(rr - rb).toBeGreaterThan(60);
+    // Stronger than the pale lost tint on white.
+    expect(contrast(token("mark-lost")!, "#ffffff")).toBeGreaterThan(contrast(token("lost-tint")!, "#ffffff") + 0.5);
   });
 });

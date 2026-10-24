@@ -20,7 +20,16 @@ export type PendingTap = {
 
 export type QueueOp =
   | { op: "insert"; tap: PendingTap }
-  | { op: "update"; id: string; patch: TapPatch };
+  | {
+      op: "update";
+      id: string;
+      patch: TapPatch;
+      /**
+       * Undo of Removed only: which slide and kind the row is, so a page loaded while the update still
+       * waits can show the spot again even when it can not read the row. Never sent to the database.
+       */
+      spot?: { slide: number; kind: "lost" | "save"; note?: string };
+    };
 
 /**
  * ok: saved. offline: try again later. rejected: the database said no, retrying will not
@@ -66,10 +75,13 @@ function isOp(v: unknown): v is QueueOp {
     );
   }
   if (v.op === "update") {
+    const spot = v.spot;
     return (
       typeof v.id === "string" &&
       isRecord(v.patch) &&
-      (v.patch.rect === undefined || v.patch.rect === null || isRect(v.patch.rect))
+      (v.patch.rect === undefined || v.patch.rect === null || isRect(v.patch.rect)) &&
+      (spot === undefined ||
+        (isRecord(spot) && typeof spot.slide === "number" && (spot.kind === "lost" || spot.kind === "save")))
     );
   }
   return false;
@@ -101,8 +113,8 @@ export class TapQueue {
     this.save();
   }
 
-  update(id: string, patch: TapPatch): void {
-    this.ops.push({ op: "update", id, patch });
+  update(id: string, patch: TapPatch, spot?: { slide: number; kind: "lost" | "save"; note?: string }): void {
+    this.ops.push(spot ? { op: "update", id, patch, spot } : { op: "update", id, patch });
     this.save();
   }
 

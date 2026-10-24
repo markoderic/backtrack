@@ -34,21 +34,6 @@ export function popoverPlace(mark: ShownMark): CSSProperties {
     : { left, bottom: `calc(${Math.round((1 - mark.rect.y) * 1e4) / 100}% + 8px)` };
 }
 
-/** Drops the click that follows a press (once, within a moment), so closing a popover does nothing else. */
-function swallowNextClick() {
-  const stop = (e: Event) => {
-    e.stopPropagation();
-    e.preventDefault();
-    done();
-  };
-  const done = () => {
-    clearTimeout(timer);
-    document.removeEventListener("click", stop, true);
-  };
-  const timer = setTimeout(done, 800);
-  document.addEventListener("click", stop, true);
-}
-
 /**
  * The small popover on a selected mark: its private note and Delete. The note is like a line in a
  * notebook: no box to submit, it saves by itself a moment after typing stops and when the popover
@@ -102,8 +87,6 @@ export function MarkPopover({ mark, n, noteless = false, focusNote = false, onNo
       const target = e.target as Element | null;
       // A press on a mark is that mark's own click (it selects it, or closes this one).
       if (rootRef.current?.contains(target) || target?.closest?.("[data-mark]")) return;
-      // A press that only closes the popover never records I'm lost (on a phone the popover can sit over it).
-      if (target?.closest?.("[data-im-lost]")) swallowNextClick();
       onCloseRef.current(false);
     }
     window.addEventListener("keydown", onKeyDown);
@@ -121,6 +104,11 @@ export function MarkPopover({ mark, n, noteless = false, focusNote = false, onNo
       aria-label={`Mark ${n}`}
       tabIndex={-1}
       data-mark-popover={mark.id}
+      // Tab out of the popover (to anything but a mark) closes it.
+      onBlur={(e) => {
+        const to = e.relatedTarget as Element | null;
+        if (to && !e.currentTarget.contains(to) && !to.closest("[data-mark]")) onCloseRef.current(false);
+      }}
       style={popoverPlace(mark)}
       className="absolute z-20 flex w-72 max-w-full animate-pop-in flex-col gap-2 rounded-md border border-hairline bg-surface p-3 text-ink shadow-popover outline-hidden"
     >
@@ -133,7 +121,9 @@ export function MarkPopover({ mark, n, noteless = false, focusNote = false, onNo
           maxLength={MARK_NOTE_MAX}
           value={text}
           onChange={(e) => {
-            const next = e.target.value.slice(0, MARK_NOTE_MAX);
+            // Cut by whole characters, never half an emoji.
+            const value = e.target.value;
+            const next = value.length > MARK_NOTE_MAX ? Array.from(value).slice(0, MARK_NOTE_MAX).join("") : value;
             setText(next);
             setSaved(false);
             dirty.current = next;

@@ -979,7 +979,7 @@ describe("StudentLecture marks before migration 0020 (one per slide, on the tap)
     // Nothing goes to slide_marks before 0020.
     expect(markUpsert).not.toHaveBeenCalled();
     const box = screen.getByRole("button", { name: "Mark 1, lost" });
-    expect(box.className).toContain("bg-lost-tint");
+    expect(box.className).toContain("bg-mark-lost");
     fireEvent.click(markTool());
     fireEvent.click(box, { detail: 1 });
     const pop = screen.getByRole("dialog", { name: "Mark 1" });
@@ -1123,7 +1123,7 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     expect(b).toMatchObject({ slide_number: 7, x: 0.5, y: 0.5, kind: "save" });
     expect(a.id).not.toBe(b.id);
     expect(markUpsert.mock.calls[0][1]).toEqual({ onConflict: "id", ignoreDuplicates: true });
-    // No tap: a mark alone is not a spot, and nothing goes to lost_taps.
+    // No tap: nothing goes to lost_taps (the marks make the slide a spot on their own).
     expect(upsert).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(marksShown()).toHaveLength(2);
@@ -1152,7 +1152,7 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     drag();
     await waitFor(() => expect(markUpsert).toHaveBeenCalledTimes(1));
     expect(markUpsert.mock.calls[0][0]).toMatchObject({ kind: "lost" });
-    expect(screen.getByRole("button", { name: "Mark 1, lost" }).className).toContain("bg-lost-tint");
+    expect(screen.getByRole("button", { name: "Mark 1, lost" }).className).toContain("bg-mark-lost");
   });
 
   it("I'm lost turns the slide's yellow marks red (one update); taking it back turns them yellow again", async () => {
@@ -1162,6 +1162,8 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     for (const m of marksShown()) expect(m).toHaveAttribute("data-kind", "save");
     fireEvent.click(lost());
     for (const m of marksShown()) expect(m).toHaveAttribute("data-kind", "lost");
+    // A moment later nothing puts it back (the kind follows the press, not an in-between state).
+    await act(async () => new Promise((r) => setTimeout(r, 1200)));
     await waitFor(() => expect(markUpdate).toHaveBeenCalledTimes(1));
     expect(markUpdate).toHaveBeenLastCalledWith({ kind: "lost" });
     expect(markUpdateFilters.mock.calls.map((c) => c.slice(1))).toEqual([
@@ -1253,20 +1255,109 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("a press on I'm lost that only closes the popover records nothing (on a phone the popover can cover it)", async () => {
+  it("a press on I'm lost while a mark's popover is open records the tap at once and closes the popover", async () => {
     myMarks.mockResolvedValue({ data: [markRow()], error: null, status: 200 });
     show(7);
     await waitFor(() => expect(marksShown()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Mark 1" }), { detail: 1 });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
     fireEvent.pointerDown(lost());
     fireEvent.click(lost());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(lost()).toHaveAttribute("aria-pressed", "false");
-    await settle();
-    expect(upsert).not.toHaveBeenCalled();
-    // The next press is a real one.
-    fireEvent.click(lost());
     expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBeInTheDocument();
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+  });
+
+  it("a double click on a mark leaves its popover open", async () => {
+    myMarks.mockResolvedValue({ data: [markRow()], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(marksShown()).toHaveLength(1));
+    const mark = screen.getByRole("button", { name: "Mark 1" });
+    fireEvent.click(mark, { detail: 1 });
+    fireEvent.click(mark, { detail: 2 });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("Tab out of the popover closes it", async () => {
+    myMarks.mockResolvedValue({ data: [markRow()], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(marksShown()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Mark 1" }), { detail: 0 });
+    const field = screen.getByRole("textbox", { name: "Note on this mark" });
+    fireEvent.blur(field, { relatedTarget: forward() });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("cuts a long mark note by whole characters, never half an emoji", async () => {
+    myMarks.mockResolvedValue({ data: [markRow()], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(marksShown()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Mark 1" }), { detail: 0 });
+    const field = screen.getByRole("textbox", { name: "Note on this mark" }) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "a".repeat(1999) + "😀😀" } });
+    expect(field.value).toBe("a".repeat(1999) + "😀");
+  });
+
+  it("a slide with only marks is a spot: a yellow dot in the strip, and it counts in My spots", async () => {
+    show(7);
+    await settle();
+    const count = () => screen.getByRole("link", { name: /My spots/ }).lastElementChild as HTMLElement;
+    expect(count()).toHaveTextContent("0");
+    fireEvent.click(markTool());
+    drag();
+    const dot = within(strip()).getByRole("button", { name: "Slide 7, live, you are here, you marked this" });
+    expect(dot.querySelector("[data-spot]")).toHaveAttribute("data-spot", "mark");
+    expect(dot.querySelector("[data-spot]")!.className).toContain("bg-mark");
+    expect(count()).toHaveTextContent("1");
+    // I'm lost on it: one spot, red.
+    fireEvent.click(lost());
+    expect(count()).toHaveTextContent("1");
+    expect(within(strip()).getByRole("button", { name: /^Slide 7, .*you got lost here$/ })).toBeInTheDocument();
+  });
+
+  it("marks on another slide show its yellow dot and count, read from slide_marks", async () => {
+    myMarks.mockResolvedValue({ data: [markRow({ slide_number: 4 }), markRow({ id: "m2", slide_number: 4, x: 0.5 })], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 4, you marked this" })).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: /My spots/ }).lastElementChild).toHaveTextContent("1");
+  });
+
+  it("puts the stored kind right once the taps and marks are read: a yellow mark on a lost slide becomes lost, a red one elsewhere save", async () => {
+    ownRows.mockResolvedValue({ data: [{ id: "t1", slide_number: 7, kind: "lost", note: null, hl_x: null, hl_y: null, hl_w: null, hl_h: null }], error: null, status: 200 });
+    myMarks.mockResolvedValue({ data: [markRow({ kind: "save" }), markRow({ id: "m2", slide_number: 5, kind: "lost" })], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(markUpdate).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    const asked = markUpdateFilters.mock.calls.filter((c) => c[1] === "eq" && c[2] === "slide_number").map((c) => [c[0], c[3]]);
+    expect(asked).toEqual(expect.arrayContaining([[{ kind: "lost" }, 7], [{ kind: "save" }, 5]]));
+    // Asked once, not again and again.
+    await act(async () => new Promise((r) => setTimeout(r, 1200)));
+    expect(markUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the marks again after taking a tap back (0020's trigger can delete an old highlight with it)", async () => {
+    ownRows.mockResolvedValue({ data: [{ id: "t1", slide_number: 7, kind: "save", note: null, hl_x: null, hl_y: null, hl_w: null, hl_h: null }], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved for you" })).toBeInTheDocument());
+    const reads = myMarks.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Saved for you" }), { detail: 1 });
+    await waitFor(() => expect(myMarks.mock.calls.length).toBeGreaterThan(reads));
+  });
+
+  it("Undo of Removed still waiting after a reload: the slide is lost and its marks are red again", async () => {
+    localStorage.setItem(
+      `backtrack:queue:${LECTURE}`,
+      JSON.stringify([
+        { op: "update", id: "t1", patch: { undone: true } },
+        { op: "update", id: "t1", patch: { undone: false }, spot: { slide: 7, kind: "lost" } },
+      ]),
+    );
+    update.mockReturnValue({ eq: vi.fn(async () => ({ error: { code: "", message: "TypeError: Failed to fetch" }, status: 0 })) });
+    ownRows.mockResolvedValue({ data: [], error: null, status: 200 });
+    myMarks.mockResolvedValue({ data: [markRow({ kind: "save" })], error: null, status: 200 });
+    show(7);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBeInTheDocument());
+    await waitFor(() => expect(marksShown()[0]).toHaveAttribute("data-kind", "lost"));
+    await waitFor(() => expect(markUpdate).toHaveBeenCalledWith({ kind: "lost" }));
   });
 
   it("the student sees their marks again on the slide after going away and back", async () => {

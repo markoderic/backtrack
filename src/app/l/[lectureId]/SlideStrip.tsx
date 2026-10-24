@@ -2,14 +2,15 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type PointerEvent } from "react";
 
-export type SpotKind = "lost" | "save";
+/** lost: an I'm lost; save: Save this; mark: only marks (yellow highlights) on the slide. */
+export type SpotKind = "lost" | "save" | "mark";
 
 type Props = {
   /** The slide the teacher is on. The strip never goes past it. */
   live: number;
   /** The slide the student is looking at. */
   viewing: number;
-  /** Slides where this student has a row that is not undone, and what kind. Lost wins over save. */
+  /** Slides where this student has a spot, and what kind. Lost wins over save, save over marks only. */
   spots: ReadonlyMap<number, SpotKind>;
   onPick: (n: number) => void;
 };
@@ -21,6 +22,7 @@ export function dotLabel(n: number, isLive: boolean, isViewing: boolean, kind: S
   if (isViewing) parts.push("you are here");
   if (kind === "lost") parts.push("you got lost here");
   else if (kind === "save") parts.push("you saved this");
+  else if (kind === "mark") parts.push("you marked this");
   return parts.join(", ");
 }
 
@@ -56,7 +58,7 @@ export function stripTarget(o: { scrollLeft: number; view: number; max: number; 
  * The slide strip: one dot per slide from 1 to the slide the teacher is on (it only grows
  * as the teacher moves; there is no total). Every dot is a real button with a 44 px touch
  * target that shows its slide. A red dot is an I'm lost spot, an open dot a spot saved for
- * yourself (it drops in when it is new), a ring marks the slide being viewed, and a short
+ * yourself, a yellow dot in an ink ring a slide with only your marks (each drops in when it is new), a ring marks the slide being viewed, and a short
  * ink bar under the dot marks the live slide (the teacher's playhead). Hovering or focusing
  * a dot shows a small tooltip with its name ("Slide 9, you got lost here"). A long lecture
  * scrolls sideways, smoothly, keeping the dot on screen and the live dot in view.
@@ -180,7 +182,7 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
                     aria-hidden
                     data-spot={kind}
                     className={`relative size-2.5 animate-dot-drop rounded-full ${
-                      kind === "lost" ? "bg-lost" : "border-[1.5px] border-ink bg-bg"
+                      kind === "lost" ? "bg-lost" : kind === "mark" ? "border-[1.5px] border-ink bg-mark" : "border-[1.5px] border-ink bg-bg"
                     }`}
                   />
                 ) : (

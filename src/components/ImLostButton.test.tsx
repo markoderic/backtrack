@@ -63,6 +63,15 @@ describe("ImLostButton", () => {
     expect(screen.getByRole("button", { name: "Lost on slide 3" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("ignores Enter held down (a repeat would take the tap back and record it again); a new press still works", () => {
+    render(<ImLostButton slide={3} />);
+    const b = screen.getByRole("button", { name: "I'm lost" });
+    // A repeated Enter keydown is cancelled, so the browser makes no click of it.
+    expect(fireEvent.keyDown(b, { key: "Enter", repeat: true })).toBe(false);
+    expect(fireEvent.keyDown(b, { key: "Enter" })).toBe(true);
+    expect(fireEvent.keyDown(b, { key: " ", repeat: true })).toBe(true);
+  });
+
   it("goes back to I'm lost when it is no longer checked (Undo, or another slide)", () => {
     const { rerender } = render(<ImLostButton slide={3} checked />);
     rerender(<ImLostButton slide={4} />);

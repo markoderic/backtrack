@@ -144,6 +144,12 @@ describe("makeSend", () => {
     expect(f.update).toHaveBeenCalledWith({ note: "x", hl_x: 0, hl_y: 0, hl_w: 1, hl_h: 1 });
   });
 
+  it("never sends the slide and kind an Undo of Removed carries for the screen, only the patch", async () => {
+    const f = fakeSupabase();
+    await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { undone: false }, spot: { slide: 7, kind: "lost", note: "x" } });
+    expect(f.update).toHaveBeenCalledWith({ undone: false });
+  });
+
   it("updates by id with the patch", async () => {
     const f = fakeSupabase();
     const result = await makeSend(f.supabase, LECTURE)({ op: "update", id: TAP.id, patch: { undone: true } });

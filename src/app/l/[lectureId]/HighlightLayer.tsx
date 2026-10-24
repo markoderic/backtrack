@@ -12,9 +12,9 @@ export type ShownMark = { id: string; rect: Rect; kind: MarkKind; note?: string 
 /** A fraction as a css percentage, without float noise (0.3 * 100 is 30.000000000000004). */
 const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
 
-/** The highlighter look (globals.css: --color-mark and --color-lost-tint, multiply, no border). */
+/** The highlighter look (globals.css: --color-mark and --color-mark-lost, multiply, no border). */
 export function markClass(kind: MarkKind): string {
-  return `mix-blend-multiply ${kind === "lost" ? "bg-lost-tint" : "bg-mark"}`;
+  return `mix-blend-multiply ${kind === "lost" ? "bg-mark-lost" : "bg-mark"}`;
 }
 
 /** What a screen reader hears for a mark: its number, red marks say lost, and its note if it has one. */
@@ -100,6 +100,8 @@ export function HighlightLayer({
   }, [marking]);
 
   const onMarkClick = (id: string) => (e: MouseEvent) => {
+    // The second click of a double click would close what the first one opened.
+    if (e.detail > 1) return;
     // detail 0: Enter or Space, so the popover takes the focus.
     onSelect?.(id === selectedId ? null : id, e.detail === 0);
   };
