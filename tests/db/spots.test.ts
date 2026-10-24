@@ -208,12 +208,12 @@ describe("my spots: move the marker and edit the note", () => {
     expect(row).toEqual({ slide_number: 7, note: "mine" });
   });
 
-  it("a student edits their own note, up to 140 characters", async () => {
+  it("a student edits their own note, up to 2000 characters (0020; it was 140)", async () => {
     const id = await tap(s1, 7);
-    const saved = await rows(s1, "update public.lost_taps set note = $2 where id = $1 returning id", [id, "x".repeat(140)]);
+    const saved = await rows(s1, "update public.lost_taps set note = $2 where id = $1 returning id", [id, "x".repeat(2000)]);
     expect(saved).toHaveLength(1);
     await expect(
-      as(db, s1, () => db.query("update public.lost_taps set note = $2 where id = $1", [id, "x".repeat(141)])),
+      as(db, s1, () => db.query("update public.lost_taps set note = $2 where id = $1", [id, "x".repeat(2001)])),
     ).rejects.toThrow();
     const cleared = await rows(s1, "update public.lost_taps set note = null where id = $1 returning id", [id]);
     expect(cleared).toHaveLength(1);

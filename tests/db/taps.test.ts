@@ -170,9 +170,10 @@ describe("inserting a tap", () => {
     await expect(insertTap(s1, { kind: "other" })).rejects.toThrow(/check constraint/i);
   });
 
-  it("rejects a note over 140 characters and accepts exactly 140", async () => {
-    await insertTap(s1, { note: "x".repeat(140) });
-    await expect(insertTap(s1, { note: "x".repeat(141) })).rejects.toThrow(/check constraint/i);
+  it("rejects a note over 2000 characters and accepts exactly 2000 (0020; it was 140)", async () => {
+    await insertTap(s1, { note: "x".repeat(141) });
+    await insertTap(s1, { note: "x".repeat(2000) });
+    await expect(insertTap(s1, { note: "x".repeat(2001) })).rejects.toThrow(/check constraint/i);
   });
 
   it("sending the same id again with on conflict do nothing keeps one row", async () => {
