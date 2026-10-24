@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor, act, cleanup } from "@testing-library/react";
 
 type Result = { data: unknown; error: { message: string } | null };
 
@@ -7,7 +7,7 @@ type Result = { data: unknown; error: { message: string } | null };
 const calls: string[] = [];
 function chain(table: string, result: () => Result) {
   const c: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "order"]) {
+  for (const m of ["select", "eq", "order", "limit"]) {
     c[m] = vi.fn((...args: unknown[]) => {
       calls.push(`${table}.${m}(${args.map(String).join(",")})`);
       return c;
@@ -79,6 +79,7 @@ vi.mock("@/lib/useSlideImages", () => ({
 
 import { SpotsView } from "./SpotsView";
 import { rejectedKey } from "@/lib/tapSync";
+import { forgetTeacherNoteMax } from "@/lib/noteLimit";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const ME = "44444444-4444-4444-4444-000000000001";
@@ -117,6 +118,9 @@ const ready = () => screen.findAllByRole("listitem");
 beforeEach(() => {
   calls.length = 0;
   sessionStorage.clear();
+  forgetTeacherNoteMax();
+  // The database before 0020 (production until it is applied): PostgREST has no slide_marks.
+  tables.slide_marks = { data: null, error: { code: "PGRST205", message: "Could not find the table 'public.slide_marks' in the schema cache" } as { message: string } };
   [rpc, selectAfter, eqId, update, from, flush, refresh, makeChannel, removeChannel, useSlideImages].forEach((m) =>
     m.mockClear(),
   );
@@ -421,6 +425,21 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     const items = await screen.findAllByRole("listitem");
     expect(within(items[0]).getByText("ask Dr. Lee")).toBeInTheDocument();
+  });
+
+  it("the note takes 140 characters before 0020 and 2000 once the database has it", async () => {
+    await open("3");
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+    expect(screen.getByLabelText("Your note")).toHaveAttribute("maxlength", "140");
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
+    cleanup();
+    forgetTeacherNoteMax();
+    tables.slide_marks = { data: [], error: null };
+    await open("3");
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+    await waitFor(() => expect(screen.getByLabelText("Your note")).toHaveAttribute("maxlength", "2000"));
+    expect(calls).toContain("slide_marks.select(id)");
+    expect(calls).toContain("slide_marks.limit(0)");
   });
 
   it("goes to the previous and next spot in slide order", async () => {

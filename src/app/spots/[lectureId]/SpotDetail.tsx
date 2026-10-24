@@ -5,16 +5,13 @@ import Link from "next/link";
 import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import type { Rect } from "@/lib/rect";
+import { LEGACY_NOTE_MAX, noteCounterFrom } from "@/lib/noteLimit";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { HighlightLayer } from "../../l/[lectureId]/HighlightLayer";
-import { NOTE_MAX } from "../../l/[lectureId]/LostButton";
 import type { Spot } from "../group";
 import { formatClock } from "../time";
 
 export type { Spot } from "../group";
-
-/** The quiet counter shows only from this many characters on (as on the live screen). */
-const NOTE_COUNTER_FROM = 120;
 
 type Props = {
   lectureId: string;
@@ -45,6 +42,8 @@ type Props = {
    */
   liveSlide?: number | null;
   onNoteSaved: (note: string | null) => void;
+  /** The longest note: 2000 once the database has migration 0020, else 140 (the page asks, useTeacherNoteMax). */
+  noteMax?: number;
   /** Called after the spot's mark was saved (a box) or cleared (null). */
   onHighlightSaved?: (rect: Rect | null) => void;
   /** Called after the spot was removed (its rows are marked undone, like Undo). */
@@ -135,6 +134,7 @@ export function SpotDetail({
   focusOnOpen,
   liveSlide = null,
   onNoteSaved,
+  noteMax = LEGACY_NOTE_MAX,
   onHighlightSaved,
   onRemoved,
   onBack,
@@ -318,7 +318,7 @@ export function SpotDetail({
 
   const line = countLine(spot.kind, students);
   const lost = spot.kind === "lost";
-  const counter = draft !== null && draft.length >= NOTE_COUNTER_FROM ? NOTE_MAX - draft.length : null;
+  const counter = draft !== null && draft.length >= noteCounterFrom(noteMax) ? noteMax - draft.length : null;
   const canMark = onSpotSlide && !expired && !!url;
   const live = liveSlide !== null;
 
@@ -515,11 +515,11 @@ export function SpotDetail({
                   ref={textareaRef}
                   id={fieldId}
                   rows={3}
-                  maxLength={NOTE_MAX}
+                  maxLength={noteMax}
                   enterKeyHint="done"
                   value={draft}
                   readOnly={savingNote}
-                  onChange={(e) => setDraft(e.target.value.slice(0, NOTE_MAX))}
+                  onChange={(e) => setDraft(e.target.value.slice(0, noteMax))}
                   onKeyDown={onNoteKeyDown}
                   className="block min-h-[5.5rem] w-full resize-none rounded-md border border-hairline bg-surface px-3 py-2 type-body text-ink outline-hidden transition-colors duration-(--dur-fast) focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)]"
                 />

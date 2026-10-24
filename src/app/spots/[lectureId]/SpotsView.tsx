@@ -8,6 +8,7 @@ import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
 import { formatLectureDate } from "@/lib/lectureDate";
+import { useTeacherNoteMax } from "@/lib/noteLimit";
 import { isRect, type Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { flushLeftoverTaps, rejectedKey } from "@/lib/tapSync";
@@ -176,6 +177,8 @@ export function SpotsView({
   // The teacher's slide as it moves; the server's read until the first update.
   const [followedLive, setFollowedLive] = useState<number | null>(null);
   const liveCap = liveSlide === null ? null : (followedLive ?? liveSlide);
+  // The note to the teacher: 2000 characters once the database has migration 0020, else 140.
+  const noteMax = useTeacherNoteMax();
   // After the detail closes, focus goes back to the row of the spot that was open (or the heading).
   const returnFocus = useRef<string | null>(null);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -292,6 +295,7 @@ export function SpotsView({
           onViewingChange={setDetailSlide}
           focusOnOpen={openedBy}
           onNoteSaved={(note) => onNoteSaved(openSpot, note)}
+          noteMax={noteMax}
           onHighlightSaved={(rect) => onHighlightSaved(openSpot, rect)}
           onRemoved={() => void onRemoved(openSpot)}
           onBack={() => back(openSpot.id)}

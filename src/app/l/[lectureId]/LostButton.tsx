@@ -14,14 +14,12 @@ import {
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { ImLostButton } from "@/components/ImLostButton";
+import { newId } from "@/lib/newId";
+import { LEGACY_NOTE_MAX, noteCounterFrom } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
 import { TapQueue, isTapLimit, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
 
-/** The longest note (the database's check on lost_taps.note, 0007). */
-export const NOTE_MAX = 140;
-/** The quiet counter shows only from this many characters on. */
-const NOTE_COUNTER_FROM = 120;
 /**
  * Undo is offered this long after a tap, and only while the slide it was made on stays on screen
  * (the Saved line closes on the next slide). The tap itself stays saved; My spots can remove it later.
@@ -72,17 +70,12 @@ type Props = {
   onRejected?: () => void;
   /** Shown under the buttons while there is nothing else to say (the page puts Reconnecting… here). */
   idle?: ReactNode;
+  /**
+   * The longest note: 2000 once the database has migration 0020, else 140 (lost_taps.note's check
+   * in 0007). The page asks the database (useTeacherNoteMax).
+   */
+  noteMax?: number;
 };
-
-function newId(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  // Pages that are not https (and old browsers) have no randomUUID.
-  const b = crypto.getRandomValues(new Uint8Array(16));
-  b[6] = (b[6] & 0x0f) | 0x40;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
 
 /** A spot with a queued change applied (a note, a mark, or Clear mark). */
 function patched(spot: Spot, patch: { note?: string; rect?: Rect | null }): Spot {
@@ -170,6 +163,7 @@ export function LostButton({
   onTap,
   onRejected,
   idle,
+  noteMax = LEGACY_NOTE_MAX,
 }: Props) {
   const [taps, setTaps] = useState<ReadonlyMap<string, Spot>>(new Map());
   // The rows as last shown, for the flush (a refusal gives back a note saved on a dropped tap).
@@ -578,7 +572,7 @@ export function LostButton({
 
   if (fatal) throw fatal;
 
-  const counter = draft && draft.text.length >= NOTE_COUNTER_FROM ? NOTE_MAX - draft.text.length : null;
+  const counter = draft && draft.text.length >= noteCounterFrom(noteMax) ? noteMax - draft.text.length : null;
   const otherSlide = draft && draft.slide !== viewing ? draft.slide : null;
   const savedForYou = active?.kind === "save" && !lostSpot;
 
@@ -631,10 +625,10 @@ export function LostButton({
             aria-describedby={counter !== null ? counterId : undefined}
             placeholder="Add a note"
             rows={2}
-            maxLength={NOTE_MAX}
+            maxLength={noteMax}
             enterKeyHint="done"
             value={noteText}
-            onChange={(e) => setDraft({ slide: noteSlide, text: e.target.value.slice(0, NOTE_MAX) })}
+            onChange={(e) => setDraft({ slide: noteSlide, text: e.target.value.slice(0, noteMax) })}
             onKeyDown={onNoteKeyDown}
             className={
               "block h-[66px] max-h-[114px] min-h-[66px] min-w-0 flex-1 resize-none rounded-md border border-hairline bg-surface px-3 py-2 " +

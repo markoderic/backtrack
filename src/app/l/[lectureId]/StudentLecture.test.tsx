@@ -27,8 +27,12 @@ const rpc = vi.fn();
 const ownRows = vi.fn();
 const ownFilters = vi.fn();
 const getSession = vi.fn();
+// The note limit's look at the database: from("slide_marks").select("id").limit(0).
+const probe = vi.fn();
 const from = vi.fn((table: string) =>
-  table === "lost_taps"
+  table === "slide_marks"
+    ? { select: () => ({ limit: probe }) }
+    : table === "lost_taps"
     ? {
         select: () => ({
           eq: (...a: unknown[]) => (
@@ -68,6 +72,7 @@ vi.mock("@/lib/useHere", () => ({
   useTrackHere: (id: string, enabled: boolean) => useTrackHere(id, enabled),
 }));
 
+import { forgetTeacherNoteMax } from "@/lib/noteLimit";
 import { StudentLecture } from "./StudentLecture";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
@@ -117,6 +122,10 @@ beforeEach(() => {
   );
   localStorage.clear();
   sessionStorage.clear();
+  forgetTeacherNoteMax();
+  probe.mockReset();
+  // The database before 0020 (production until it is applied): PostgREST has no slide_marks.
+  probe.mockResolvedValue({ data: null, error: { code: "PGRST205", message: "Could not find the table" }, status: 404 });
   upsert.mockResolvedValue({ error: null, status: 201 });
   update.mockReturnValue({ eq: vi.fn(async () => ({ error: null, status: 204 })) });
   ownRows.mockResolvedValue({ data: [], error: null, status: 200 });
@@ -160,6 +169,28 @@ describe("StudentLecture", () => {
     expect(link).toHaveAttribute("href", `/spots/${LECTURE}`);
     expect(link).toHaveTextContent("My spots0");
     expect(within(top()).getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("the note takes 140 characters while the database has no 0020", async () => {
+    show();
+    await settle();
+    expect(probe).toHaveBeenCalledWith(0);
+    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveAttribute("maxLength", "140");
+  });
+
+  it("the note takes 2000 characters once the database has 0020", async () => {
+    probe.mockResolvedValue({ data: [], error: null, status: 200 });
+    show();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your note" })).toHaveAttribute("maxLength", "2000"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Your note" }), { target: { value: "f".repeat(900) } });
+    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveValue("f".repeat(900));
+  });
+
+  it("the note stays at 140 when the look at the database fails (offline)", async () => {
+    probe.mockRejectedValue(new TypeError("Failed to fetch"));
+    show();
+    await settle();
+    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveAttribute("maxLength", "140");
   });
 
   it("shows the live slide as large as it can, at its own shape", () => {
@@ -469,8 +500,8 @@ describe("StudentLecture", () => {
     expect(screen.queryByRole("button", { name: /Lost on slide/ })).not.toBeInTheDocument();
     // Only the reads of the lecture row happened.
     await waitFor(() => expect(single).toHaveBeenCalled());
-    // Reads only: the lecture row, and the student's own rows.
-    for (const call of from.mock.calls as unknown as string[][]) expect(["lectures", "lost_taps"]).toContain(call[0]);
+    // Reads only: the lecture row, the student's own rows, and the look for 0020 (the note limit).
+    for (const call of from.mock.calls as unknown as string[][]) expect(["lectures", "lost_taps", "slide_marks"]).toContain(call[0]);
   });
 
   it("says Loading slide 7 only when the image takes over 300 ms", async () => {

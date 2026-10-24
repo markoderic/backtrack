@@ -8,6 +8,7 @@ import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
 import { loadOwnTaps, makeSend } from "@/lib/lostTapApi";
+import { useTeacherNoteMax } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
@@ -53,6 +54,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const send = useMemo(() => (op: QueueOp) => makeSend(createBrowserSupabase(), lectureId)(op), [lectureId]);
   const loadOwn = useMemo(() => () => loadOwnTaps(createBrowserSupabase(), lectureId), [lectureId]);
   const [spots, setSpots] = useState<Spot[]>([]);
+  // The note to the teacher: 2000 characters once the database has migration 0020, else 140.
+  const noteMax = useTeacherNoteMax();
   // One dot per slide: red if any row there is an I'm lost, open if they are all saves.
   const spotKinds = useMemo(() => {
     const kinds = new Map<number, SpotKind>();
@@ -230,6 +233,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           // A refused tap usually means the lecture ended: read the status now, and
           // if it did, leave the same way as when Realtime says so.
           onRejected={recheck}
+          noteMax={noteMax}
           idle={reconnecting ? <p className="animate-fade-in type-small text-secondary">Reconnecting…</p> : null}
         />
         {behind && (

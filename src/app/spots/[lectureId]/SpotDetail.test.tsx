@@ -26,6 +26,7 @@ function show(
     onPrevSpot?: () => void;
     onNextSpot?: () => void;
     expired?: boolean;
+    noteMax?: number;
   } = {},
 ) {
   const props = {
@@ -40,6 +41,7 @@ function show(
     onViewingChange: vi.fn(),
     focusOnOpen: o.focusOnOpen,
     onNoteSaved: vi.fn(),
+    noteMax: o.noteMax,
     onHighlightSaved: vi.fn(),
     onRemoved: vi.fn(),
     onBack: vi.fn(),
@@ -335,6 +337,29 @@ describe("SpotDetail: the note", () => {
     expect(document.querySelector("[data-counter]")).toBeNull();
     fireEvent.change(input(), { target: { value: "a".repeat(130) } });
     expect(document.querySelector("[data-counter]")).toHaveTextContent("10 left");
+  });
+
+  it("takes up to 2000 characters once the database has 0020 (noteMax), and saves them all", async () => {
+    const { onNoteSaved } = show({ noteMax: 2000 });
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+    expect(input()).toHaveAttribute("maxlength", "2000");
+    const long = "b".repeat(600);
+    fireEvent.change(input(), { target: { value: long } });
+    expect(input()).toHaveValue(long);
+    expect(document.querySelector("[data-counter]")).toBeNull();
+    fireEvent.change(input(), { target: { value: "b".repeat(1990) } });
+    expect(document.querySelector("[data-counter]")).toHaveTextContent("10 left");
+    fireEvent.change(input(), { target: { value: long } });
+    send();
+    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith(long));
+    expect(update).toHaveBeenCalledWith({ note: long });
+  });
+
+  it("cuts a note at 140 while the database is still on the old limit (no noteMax)", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+    fireEvent.change(input(), { target: { value: "c".repeat(600) } });
+    expect(input().value).toHaveLength(140);
   });
 
   it("offers Add a note when there is none", () => {

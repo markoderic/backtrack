@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import type { Rect } from "@/lib/rect";
 import type { QueueOp, SendResult } from "@/lib/tapQueue";
-import { LostButton, NOTE_MAX, UNDO_MS, type Spot } from "./LostButton";
+import { LEGACY_NOTE_MAX } from "@/lib/noteLimit";
+import { LostButton, UNDO_MS, type Spot } from "./LostButton";
 
 class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -368,7 +369,7 @@ describe("LostButton", () => {
       const field = noteField();
       expect(field.tagName).toBe("TEXTAREA");
       expect(field).toHaveAttribute("rows", "2");
-      expect(field).toHaveAttribute("maxLength", String(NOTE_MAX));
+      expect(field).toHaveAttribute("maxLength", String(LEGACY_NOTE_MAX));
       expect(field).toHaveAttribute("placeholder", "Add a note");
       // Under I'm lost and Save this in the panel.
       const save = screen.getByRole("button", { name: "Save this" });
@@ -381,6 +382,33 @@ describe("LostButton", () => {
       expect(noteField()).toBeInTheDocument();
       undo();
       expect(noteField()).toBeInTheDocument();
+    });
+
+    it("takes a note up to noteMax (2000 once the database has 0020) and sends all of it", async () => {
+      const { send } = setup({ noteMax: 2000 });
+      await settle();
+      expect(noteField()).toHaveAttribute("maxLength", "2000");
+      const long = "d".repeat(700);
+      typeNote(long);
+      expect(noteField()).toHaveValue(long);
+      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
+      typeNote("d".repeat(1985));
+      expect(screen.getByText("15 left")).toBeInTheDocument();
+      typeNote("d".repeat(2500));
+      expect(noteField().value).toHaveLength(2000);
+      typeNote(long);
+      saveNote();
+      await settle();
+      const [insert] = ops(send);
+      if (insert.op !== "insert") throw new Error("expected an insert");
+      expect(insert.tap.note).toBe(long);
+    });
+
+    it("cuts a note at 140 without noteMax (the database before 0020)", async () => {
+      setup();
+      await settle();
+      typeNote("e".repeat(700));
+      expect(noteField().value).toHaveLength(140);
     });
 
     it("shows a quiet counter only near the limit", async () => {
