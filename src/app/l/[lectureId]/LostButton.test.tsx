@@ -926,6 +926,24 @@ describe("LostButton", () => {
         expect(checked()).toBeInTheDocument();
       });
 
+      it("Removed, Undo (still queued), Removed again: not lost after a reload, and the page is never told it is (K1 re-review N2)", async () => {
+        localStorage.setItem(
+          KEY,
+          JSON.stringify([
+            { op: "update", id: "a", patch: { undone: true } },
+            { op: "update", id: "a", patch: { undone: false }, spot: { slide: 7, kind: "lost" } },
+            { op: "update", id: "a", patch: { undone: true } },
+          ]),
+        );
+        const onLostChange = vi.fn();
+        // Offline, and a read that has the row (the first take-back never went out).
+        setup({ send: vi.fn<Send>(async () => "offline"), onLostChange, loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const }]) });
+        await settle();
+        await settle();
+        expect(screen.getByRole("button", { name: "I'm lost" })).toBeInTheDocument();
+        expect(onLostChange).not.toHaveBeenCalledWith(7, true);
+      });
+
       it("a fresh read taken while the bring-back waits (undone true already in) keeps the slide lost", async () => {
         // The database: a is undone (the take-back went), the bring-back is offline.
         const send = vi.fn<Send>(async (op) => (op.op === "update" && op.patch.undone === false ? "offline" : "ok"));

@@ -171,16 +171,18 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
       void flush();
       void reload();
     };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") again();
-    };
-    // My spots in a second window beside this one: coming back to this window reads again (at most every 2 s).
-    let lastFocus = 0;
-    const onFocus = () => {
-      if (Date.now() - lastFocus < FOCUS_READ_MS) return;
-      lastFocus = Date.now();
+    // Back to the tab fires both visibilitychange and focus: one read for both (at most every 2 s).
+    // My spots in a second window beside this one: coming back to this window reads again too.
+    let lastBack = 0;
+    const onBack = () => {
+      if (Date.now() - lastBack < FOCUS_READ_MS) return;
+      lastBack = Date.now();
       again();
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") onBack();
+    };
+    const onFocus = onBack;
     window.addEventListener("online", again);
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
@@ -194,14 +196,17 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
     };
   }, [refresh, flush, reload]);
 
+  // Each time the connection comes back, once: Next showing the page again runs this effect again
+  // with the same count, and the mount effect has already read then.
+  const reconnectsDone = useRef(0);
   useEffect(() => {
-    if (reconnects === 0) return;
+    if (reconnects <= reconnectsDone.current) return;
+    reconnectsDone.current = reconnects;
     void Promise.resolve().then(() => {
       void flush();
       void reload();
     });
   }, [reconnects, flush, reload]);
-
 
   const marks = useMemo(() => [...shown.values()], [shown]);
 

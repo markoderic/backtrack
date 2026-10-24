@@ -65,8 +65,61 @@ export async function saveNotebookNote(
   }
 }
 
+/**
+ * The student's notebook notes of every lecture they joined, as (lecture, slide) pairs: only which
+ * slides have a note, for the counts on My lectures. Before 0020 it says { status: "missing" }.
+ */
+export async function loadNotebookSlides(supabase: SupabaseClient): Promise<Loaded<{ lectureId: string; slide: number }[]>> {
+  try {
+    // Row level security gives only the signed in student's own rows; a note with no text has no row.
+    const { data, error, status } = await supabase.from("notebook_notes").select("lecture_id, slide_number");
+    if (error) {
+      if (isMissingSchema(error)) return { status: "missing" };
+      if (classifyError(error, status) === "offline") return { status: "offline" };
+      throw new Error(error.message);
+    }
+    return {
+      status: "ok",
+      data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ lectureId: String(r.lecture_id), slide: Number(r.slide_number) })),
+    };
+  } catch (e) {
+    classifyThrown(e); // throws unless the network is down
+    return { status: "offline" };
+  }
+}
+
 /** Where one slide's note is: waiting for the pause, being sent, saved, or why it is not. */
 export type NoteState = "pending" | "saving" | "saved" | "offline" | "failed" | "missing";
+
+/** localStorage key of the notebook text of a lecture that is not saved yet, by slide. */
+export const notebookKey = (lectureId: string) => `backtrack:notebook:${lectureId}`;
+
+/** The text kept on the device under a key: { "7": "text" }. Anything unreadable is left out. */
+function readStored(key: string): Map<number, string> {
+  const out = new Map<number, string>();
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return out;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return out;
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const slide = Number(k);
+      if (Number.isInteger(slide) && slide >= 1 && typeof v === "string") out.set(slide, v);
+    }
+  } catch {
+    // Storage is blocked or the value is broken: nothing kept.
+  }
+  return out;
+}
+
+function writeStored(key: string, map: ReadonlyMap<number, string>): void {
+  try {
+    if (map.size === 0) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, JSON.stringify(Object.fromEntries(map)));
+  } catch {
+    // Storage is blocked or full. The text is still in memory and goes with the next save.
+  }
+}
 
 type SaverOptions = {
   /** Saves one slide's text (saveNotebookNote with the client and lecture filled in). */
@@ -77,6 +130,12 @@ type SaverOptions = {
   onState?: (slide: number, state: NoteState) => void;
   /** Told when save threw instead of answering (a bug, not the network). The text is kept. */
   onError?: (error: unknown) => void;
+  /**
+   * Keeps the text that is not saved yet on the device (localStorage, notebookKey), so it survives a
+   * reload, a closed tab or the page being thrown away while hidden. A new saver with the same key
+   * starts with what was left there and sends it with its first flush.
+   */
+  storageKey?: string;
 };
 
 /**
@@ -85,28 +144,45 @@ type SaverOptions = {
  * (on blur, a slide change or the page being hidden). Text that did not save, for any reason
  * (offline, a login that needs a moment, a refusal, 0020 not there yet, or a bug), is never
  * dropped: it stays in pending() and goes again with the next change or flush. Only the newest
- * text of a slide is ever sent, one save per slide at a time.
+ * text of a slide is ever sent, one save per slide at a time. pending() also has the text of a save
+ * that is still out, until the database says it is saved.
  */
 export class NotebookSaver {
   private readonly save: SaverOptions["save"];
   private readonly delayMs: number;
   private readonly onState?: SaverOptions["onState"];
   private readonly onError?: SaverOptions["onError"];
-  /** Text not saved yet, by slide. */
+  private readonly storageKey?: string;
+  /** Text not sent yet, by slide. */
   private readonly waiting = new Map<number, string>();
+  /** Text that is out right now, by slide (not saved until the database says so). */
+  private readonly inFlight = new Map<number, string>();
+  /** The text this saver last saw saved, by slide, so its copy on the device can go. */
+  private readonly saved = new Map<number, string>();
+  /** The slides this saver had text for: only these are ever changed in the device copy. */
+  private readonly touched = new Set<number>();
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly sending = new Map<number, Promise<void>>();
 
-  constructor({ save, delayMs = 800, onState, onError }: SaverOptions) {
+  constructor({ save, delayMs = 800, onState, onError, storageKey }: SaverOptions) {
     this.save = save;
     this.delayMs = delayMs;
     this.onState = onState;
     this.onError = onError;
+    this.storageKey = storageKey;
+    if (storageKey) {
+      for (const [slide, body] of readStored(storageKey)) {
+        this.waiting.set(slide, body);
+        this.touched.add(slide);
+      }
+    }
   }
 
   /** The student typed: this is the slide's whole text now. */
   set(slide: number, body: string): void {
     this.waiting.set(slide, body);
+    this.touched.add(slide);
+    this.persist();
     this.onState?.(slide, "pending");
     clearTimeout(this.timers.get(slide));
     this.timers.set(
@@ -127,15 +203,44 @@ export class NotebookSaver {
     await Promise.all([...new Set([...this.waiting.keys(), ...this.sending.keys()])].map((slide) => this.send(slide)));
   }
 
-  /** The text that is not saved yet, by slide (for the page to keep on the device). */
+  /**
+   * The text that is not saved yet, by slide: what is out right now and what waits (the newer
+   * waiting text wins), for the page to show and keep on the device.
+   */
   pending(): ReadonlyMap<number, string> {
-    return new Map(this.waiting);
+    return new Map([...this.inFlight, ...this.waiting]);
   }
 
-  /** Stops the timers (the page is going). Waiting text stays in pending(). */
+  /**
+   * Writes the text that is not saved yet to the device now (the page calls it when it is hidden,
+   * before it flushes). Only this saver's slides change there: a slide saved since leaves, a slide
+   * another tab or page wrote newer text for stays as it is.
+   */
+  persist(): void {
+    if (!this.storageKey) return;
+    const stored = readStored(this.storageKey);
+    const pending = this.pending();
+    let changed = false;
+    for (const slide of this.touched) {
+      const text = pending.get(slide);
+      if (text !== undefined) {
+        if (stored.get(slide) !== text) {
+          stored.set(slide, text);
+          changed = true;
+        }
+      } else if (stored.has(slide) && stored.get(slide) === this.saved.get(slide)) {
+        stored.delete(slide);
+        changed = true;
+      }
+    }
+    if (changed) writeStored(this.storageKey, stored);
+  }
+
+  /** Stops the timers (the page is going). Waiting text stays in pending() and on the device. */
   dispose(): void {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    this.persist();
   }
 
   private send(slide: number): Promise<void> {
@@ -145,6 +250,7 @@ export class NotebookSaver {
     const body = this.waiting.get(slide);
     if (body === undefined) return Promise.resolve();
     this.waiting.delete(slide);
+    this.inFlight.set(slide, body);
     this.onState?.(slide, "saving");
     const run = this.save(slide, body)
       .catch((e: unknown) => {
@@ -153,12 +259,16 @@ export class NotebookSaver {
       })
       .then((result) => {
         this.sending.delete(slide);
+        this.inFlight.delete(slide);
         if (result === "ok") {
+          this.saved.set(slide, body);
+          this.persist();
           if (!this.waiting.has(slide)) this.onState?.(slide, "saved");
           return;
         }
         // Kept for the next try, unless newer text came in meanwhile.
         if (!this.waiting.has(slide)) this.waiting.set(slide, body);
+        this.persist();
         this.onState?.(slide, result === "offline" || result === "throttled" ? "offline" : result === "missing" ? "missing" : "failed");
       });
     this.sending.set(slide, run);

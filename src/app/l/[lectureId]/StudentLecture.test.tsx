@@ -36,7 +36,7 @@ const markUpsert = vi.fn();
 const markUpdate = vi.fn();
 const markUpdateFilters = vi.fn();
 const markDelete = vi.fn();
-const markWrite = async () => ({ error: null, status: 204 });
+const markWrite = vi.fn(async (): Promise<{ error: { code: string; message: string } | null; status: number }> => ({ error: null, status: 204 }));
 // update(...).eq(...)[.eq(...).neq(...)], delete().eq(...): each step records its filter and can be awaited.
 function filtered(record: (...a: unknown[]) => void) {
   const step: Record<string, unknown> = {
@@ -143,6 +143,8 @@ beforeEach(() => {
     m.mockClear(),
   );
   [myMarks, markUpsert, markUpdate, markUpdateFilters, markDelete].forEach((m) => m.mockReset());
+  markWrite.mockReset();
+  markWrite.mockImplementation(async () => ({ error: null, status: 204 }));
   // Before 0020 there is no my_slide_marks function either.
   myMarks.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 });
   markUpsert.mockResolvedValue({ error: null, status: 201 });
@@ -1333,6 +1335,20 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     await act(async () => new Promise((r) => setTimeout(r, 1200)));
     expect(markUpdate).toHaveBeenCalledTimes(2);
   });
+
+  it("asks for a kind change once even when the database refuses it slowly (K1 re-review N1)", async () => {
+    ownRows.mockResolvedValue({ data: [{ id: "t1", slide_number: 7, kind: "lost", note: null, hl_x: null, hl_y: null, hl_w: null, hl_h: null }], error: null, status: 200 });
+    myMarks.mockResolvedValue({ data: [markRow({ kind: "save" })], error: null, status: 200 });
+    // Refused 1.2 s after it is sent: longer than the 1 s the reconcile waits.
+    markWrite.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r({ error: { code: "42501", message: "permission denied" }, status: 403 }), 1200)),
+    );
+    show(7);
+    await waitFor(() => expect(markUpdate).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    // In short steps, so the screen redraws in between (as it would in a browser).
+    for (let i = 0; i < 8; i++) await act(async () => new Promise((r) => setTimeout(r, 400)));
+    expect(markUpdate).toHaveBeenCalledTimes(1);
+  }, 10_000);
 
   it("reads the marks again after taking a tap back (0020's trigger can delete an old highlight with it)", async () => {
     ownRows.mockResolvedValue({ data: [{ id: "t1", slide_number: 7, kind: "save", note: null, hl_x: null, hl_y: null, hl_w: null, hl_h: null }], error: null, status: 200 });

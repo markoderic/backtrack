@@ -149,6 +149,8 @@ function pendingSpots(
       const spot = spots.get(op.id);
       if (spot) removed.set(op.id, spot);
       spots.delete(op.id);
+      // Brought back and then taken back again: it is not lost after all.
+      for (let i = restored.length - 1; i >= 0; i--) if (restored[i].id === op.id) restored.splice(i, 1);
     } else if (op.patch.undone === false) {
       const back = removed.get(op.id) ?? spots.get(op.id) ?? known.get(op.id) ?? (op.spot ? { id: op.id, ...op.spot } : undefined);
       if (back) {

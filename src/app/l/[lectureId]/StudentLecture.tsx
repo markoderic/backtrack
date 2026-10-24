@@ -123,7 +123,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   // The kind stored on each mark follows the slide: 'lost' while the student is lost there, 'save'
   // when not. This screen's own presses set it at once; this puts right what changed elsewhere (My
   // spots took a tap back, a mark drawn before the taps were read) once both are read. Once per
-  // slide and kind, so a change that can not be sent is not asked for again and again.
+  // slide and kind: what was asked for is only asked again once the slide wants the other kind, so a
+  // change the database keeps refusing (or that waits in the queue) is not sent again and again.
   // It waits until both have been still for a moment: a press changes the marks one render before the
   // panel reports its rows, and must never be undone by that in-between state.
   const kindAsked = useRef(new Map<number, "lost" | "save">());
@@ -131,12 +132,13 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     if (marks.mode !== "table" || !spotsLoaded) return;
     const timer = setTimeout(() => {
       const lostSlides = new Set(spots.filter((s) => s.kind === "lost").map((s) => s.slide));
+      const wantOf = (slide: number) => (lostSlides.has(slide) ? "lost" : "save");
       const wrong = new Map<number, "lost" | "save">();
       for (const m of marks.marks) {
-        const want = lostSlides.has(m.slide) ? "lost" : "save";
+        const want = wantOf(m.slide);
         if (m.kind !== want) wrong.set(m.slide, want);
       }
-      for (const [slide, kind] of kindAsked.current) if (wrong.get(slide) !== kind) kindAsked.current.delete(slide);
+      for (const [slide, kind] of kindAsked.current) if (wantOf(slide) !== kind) kindAsked.current.delete(slide);
       for (const [slide, kind] of wrong) {
         if (kindAsked.current.get(slide) === kind) continue;
         kindAsked.current.set(slide, kind);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { WriteResult } from "./schemaCheck";
-import { NotebookSaver, loadNotebook, saveNotebookNote, type NoteState } from "./notebookApi";
+import { NotebookSaver, loadNotebook, loadNotebookSlides, notebookKey, saveNotebookNote, type NoteState } from "./notebookApi";
 
 type Res = { data?: unknown; error: { code?: string; message: string } | null; status?: number };
 
@@ -64,6 +64,19 @@ describe("loadNotebook", () => {
     expect(await loadNotebook(client, LECTURE)).toEqual({ status: "offline" });
     result = { data: null, error: { code: "XX000", message: "boom" }, status: 400 };
     await expect(loadNotebook(client, LECTURE)).rejects.toThrow("boom");
+  });
+});
+
+describe("loadNotebookSlides", () => {
+  it("reads which slides of which lectures have a note (no text), for the counts", async () => {
+    result = { data: [{ lecture_id: LECTURE, slide_number: 4 }], error: null };
+    expect(await loadNotebookSlides(client)).toEqual({ status: "ok", data: [{ lectureId: LECTURE, slide: 4 }] });
+    expect(calls).toEqual([
+      ["from", "notebook_notes"],
+      ["select", "lecture_id, slide_number"],
+    ]);
+    result = { data: null, error: { code: "PGRST205", message: "Could not find the table" }, status: 404 };
+    expect(await loadNotebookSlides(client)).toEqual({ status: "missing" });
   });
 });
 
@@ -231,5 +244,114 @@ describe("NotebookSaver", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(save).not.toHaveBeenCalled();
     expect(saver.pending().get(2)).toBe("left");
+  });
+
+  describe("text that is out (batch K2: J re-review N1)", () => {
+    it("pending() has the text of a save that is still out, until the database says it is saved", async () => {
+      let finish: (r: WriteResult) => void = () => {};
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(() => new Promise<WriteResult>((r) => (finish = r)));
+      const saver = new NotebookSaver({ save });
+      saver.set(2, "in flight");
+      const flushed = saver.flush();
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(saver.pending().get(2)).toBe("in flight");
+      // Newer typing wins over the text that is out.
+      saver.set(2, "newer");
+      expect(saver.pending().get(2)).toBe("newer");
+      finish("ok");
+      await flushed;
+      expect(saver.pending().get(2)).toBe("newer");
+      await vi.advanceTimersByTimeAsync(800);
+      expect(save.mock.calls.map((c) => c[1])).toEqual(["in flight", "newer"]);
+      expect(saver.pending().get(2)).toBe("newer");
+      finish("ok");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(saver.pending().size).toBe(0);
+    });
+
+    it("a save that is out and then fails stays in pending()", async () => {
+      let finish: (r: WriteResult) => void = () => {};
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(() => new Promise<WriteResult>((r) => (finish = r)));
+      const saver = new NotebookSaver({ save });
+      saver.set(3, "kept");
+      const flushed = saver.flush();
+      expect([...saver.pending()]).toEqual([[3, "kept"]]);
+      finish("offline");
+      await flushed;
+      expect([...saver.pending()]).toEqual([[3, "kept"]]);
+    });
+  });
+
+  describe("on the device (storageKey)", () => {
+    const KEY = notebookKey(LECTURE);
+    const stored = () => JSON.parse(localStorage.getItem(KEY) ?? "null") as Record<string, string> | null;
+    beforeEach(() => localStorage.clear());
+
+    it("keeps typed text on the device at once, and takes it off once saved", async () => {
+      let finish: (r: WriteResult) => void = () => {};
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(() => new Promise<WriteResult>((r) => (finish = r)));
+      const saver = new NotebookSaver({ save, storageKey: KEY });
+      saver.set(4, "chain rule");
+      expect(stored()).toEqual({ "4": "chain rule" });
+      const flushed = saver.flush();
+      // Out, not saved: still on the device.
+      expect(stored()).toEqual({ "4": "chain rule" });
+      finish("ok");
+      await flushed;
+      expect(localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it("a new saver starts with what was left on the device and sends it with its first flush", async () => {
+      localStorage.setItem(KEY, JSON.stringify({ "5": "left over", x: "junk", "0": "no slide 0", "6": 7 }));
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "ok");
+      const saver = new NotebookSaver({ save, storageKey: KEY });
+      expect([...saver.pending()]).toEqual([[5, "left over"]]);
+      await saver.flush();
+      expect(save.mock.calls).toEqual([[5, "left over"]]);
+      expect(stored()?.["5"]).toBeUndefined();
+    });
+
+    it("keeps text that did not save (offline) on the device", async () => {
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "offline");
+      const saver = new NotebookSaver({ save, storageKey: KEY });
+      saver.set(2, "offline text");
+      await saver.flush();
+      expect(stored()).toEqual({ "2": "offline text" });
+    });
+
+    it("never takes off newer text another page wrote for the same slide", async () => {
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "ok");
+      const a = new NotebookSaver({ save, storageKey: KEY });
+      a.set(2, "from the live screen");
+      // My spots (another saver) has newer text for slide 2 that it has not sent yet.
+      localStorage.setItem(KEY, JSON.stringify({ "2": "from my spots", "3": "other slide" }));
+      await a.flush();
+      expect(stored()).toEqual({ "2": "from my spots", "3": "other slide" });
+    });
+
+    it("persist() writes what is out and what waits, so a page thrown away while hidden loses nothing", async () => {
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(() => new Promise<WriteResult>(() => {}));
+      const saver = new NotebookSaver({ save, storageKey: KEY });
+      saver.set(2, "typed");
+      localStorage.clear();
+      void saver.flush();
+      saver.persist();
+      expect(stored()).toEqual({ "2": "typed" });
+    });
+
+    it("works with storage blocked (the text stays in memory)", async () => {
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      const save = vi.fn<(slide: number, body: string) => Promise<WriteResult>>(async () => "offline");
+      const saver = new NotebookSaver({ save, storageKey: KEY });
+      saver.set(2, "memory");
+      await saver.flush();
+      expect(saver.pending().get(2)).toBe("memory");
+      vi.restoreAllMocks();
+    });
   });
 });

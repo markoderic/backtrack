@@ -1,5 +1,6 @@
+import { Activity, createElement } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, render, act } from "@testing-library/react";
 import { MARK_FAILED, useLiveMarks } from "./useLiveMarks";
 import type { LiveMark, MarkOp, MarkSendResult } from "./markQueue";
 
@@ -102,5 +103,45 @@ describe("useLiveMarks", () => {
     });
     await settle();
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("going back to the tab (visibilitychange and focus together) reads the marks once (K1 re-review N4)", async () => {
+    const load = vi.fn<Load>(async () => ({ status: "ok", data: [] }));
+    renderHook(() => useLiveMarks(LECTURE, { send: vi.fn(async () => "ok" as const), load }));
+    await settle();
+    expect(load).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("after a reconnect, the page shown again reads the marks once, not twice (K1 re-review N3)", async () => {
+    const load = vi.fn<Load>(async () => ({ status: "ok", data: [] }));
+    const send = vi.fn(async () => "ok" as const);
+    function Probe({ reconnects }: { reconnects: number }) {
+      useLiveMarks(LECTURE, { reconnects, send, load });
+      return null;
+    }
+    const page = (mode: "visible" | "hidden", reconnects: number) =>
+      // eslint-disable-next-line react/no-children-prop -- Activity's types want children in its props
+      createElement(Activity, { mode, children: createElement(Probe, { reconnects }) });
+    const view = render(page("visible", 0));
+    await settle();
+    await settle();
+    expect(load).toHaveBeenCalledTimes(1);
+    view.rerender(page("visible", 1));
+    await settle();
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
+    view.rerender(page("hidden", 1));
+    await settle();
+    view.rerender(page("visible", 1));
+    await settle();
+    await settle();
+    expect(load).toHaveBeenCalledTimes(3);
   });
 });
