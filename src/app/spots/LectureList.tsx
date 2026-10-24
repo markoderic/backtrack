@@ -8,6 +8,8 @@ import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
 import { formatLectureDate } from "@/lib/lectureDate";
+import { loadMyMarks } from "@/lib/marksApi";
+import { loadNotebookSlides } from "@/lib/notebookApi";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 
 type Item = {
@@ -15,7 +17,10 @@ type Item = {
   name: string;
   date: string;
   joinedAt: string;
-  /** How many slides have a spot (one per slide, as on the lecture's page), or null when unknown. */
+  /**
+   * How many slides have a spot (one per slide, as on the lecture's page): a tap, a mark or a notebook
+   * note. Null when unknown.
+   */
   spots: number | null;
   /** The lecture is going on right now. */
   live: boolean;
@@ -28,23 +33,29 @@ type JoinedRow = {
 };
 
 /**
- * The slides with a spot, per lecture: the student's own rows that are not undone, one per
- * slide (two taps on one slide are one spot). Only a label: null when the read fails.
+ * The slides with a spot, per lecture: the student's own rows that are not undone, their marks
+ * (slide_marks) and their notebook notes, one per slide (two taps, or a tap and marks, on one slide
+ * are one spot), as on the lecture's page. Only a label: null when the taps can not be read. Before
+ * migration 0020 (no marks, no notebook) the taps alone.
  */
 async function spotCounts(userId: string): Promise<Map<string, Set<number>> | null> {
   try {
-    const { data, error } = await createBrowserSupabase()
-      .from("lost_taps")
-      .select("lecture_id, slide_number")
-      .eq("anon_id", userId)
-      .eq("undone", false);
-    if (error) return null;
+    const supabase = createBrowserSupabase();
+    const [taps, marks, notes] = await Promise.all([
+      supabase.from("lost_taps").select("lecture_id, slide_number").eq("anon_id", userId).eq("undone", false),
+      loadMyMarks(supabase, null).catch(() => null),
+      loadNotebookSlides(supabase).catch(() => null),
+    ]);
+    if (taps.error) return null;
     const out = new Map<string, Set<number>>();
-    for (const r of (data ?? []) as { lecture_id: string; slide_number: number }[]) {
-      const set = out.get(r.lecture_id) ?? new Set<number>();
-      set.add(r.slide_number);
-      out.set(r.lecture_id, set);
-    }
+    const add = (lecture: string, slide: number) => {
+      const set = out.get(lecture) ?? new Set<number>();
+      set.add(slide);
+      out.set(lecture, set);
+    };
+    for (const r of (taps.data ?? []) as { lecture_id: string; slide_number: number }[]) add(r.lecture_id, r.slide_number);
+    if (marks?.status === "ok") for (const m of marks.data) add(m.lectureId, m.slide);
+    if (notes?.status === "ok") for (const n of notes.data) add(n.lectureId, n.slide);
     return out;
   } catch {
     return null;
@@ -112,7 +123,8 @@ export function LectureList() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <header className="flex h-16 shrink-0 items-center gap-2 pl-4 pr-2">
+      {/* Lined up with the content column below it. */}
+      <header className="mx-auto flex h-16 w-full max-w-5xl shrink-0 items-center gap-2 pl-4 pr-2 sm:pl-6 lg:px-8">
         {/* Up one level: Home. */}
         <Link href="/" aria-label="Back to Home" className={backButtonClass}>
           <Icon name="back" />
@@ -126,13 +138,13 @@ export function LectureList() {
         <span aria-hidden data-theme-slot="" className="size-9 shrink-0" />
       </header>
 
-      <main className="mx-auto flex w-full max-w-180 animate-page-in flex-col gap-1 px-4 pb-12 pt-6 sm:px-6">
-        <h1 className="type-display text-ink">My spots</h1>
+      <main className="mx-auto flex w-full max-w-5xl animate-page-in flex-col gap-1 px-4 pb-16 pt-6 sm:px-6 lg:px-8 lg:pt-10">
+        <h1 className="type-display text-ink lg:text-[40px] lg:leading-12">My lectures</h1>
         {items &&
           (items.length === 0 ? (
             <p className="pt-2 type-body text-secondary">No lectures yet.</p>
           ) : (
-            <ul className="flex flex-col pt-6">
+            <ul className="flex flex-col pt-6 lg:pt-8">
               {items.map((l, i) => (
                 <li
                   key={l.id}
@@ -141,24 +153,26 @@ export function LectureList() {
                 >
                   <Link
                     href={`/spots/${l.id}`}
-                    className="press -mx-2 flex items-center gap-4 rounded-md px-2 py-4 hover:bg-surface/60 focus-ring"
+                    className="press -mx-2 flex items-center gap-4 rounded-md px-2 py-5 hover:bg-surface/60 focus-ring lg:gap-6 lg:py-6"
                   >
                     <span className="flex min-w-0 flex-1 flex-col gap-1">
                       {l.live && (
-                        // Ink, not red: red is only ever I'm lost.
+                        // The one place red is not I'm lost (Marko: cohesive, and a sense of urgency).
                         <span data-live-now="" className="flex items-center gap-2 type-small-strong text-ink">
-                          <span aria-hidden className="size-2 rounded-full bg-ink" />
+                          <span aria-hidden data-live-dot="" className="size-2 rounded-full bg-lost" />
                           Live now
                         </span>
                       )}
-                      <span className="break-words type-lecture text-ink">{l.name}</span>
+                      <span className="break-words type-lecture text-ink lg:type-lecture-l">{l.name}</span>
                     </span>
                     {l.spots !== null && l.spots > 0 && (
-                      <span data-spot-count="" className="shrink-0 type-small text-ink">
+                      <span data-spot-count="" className="shrink-0 type-small text-ink lg:type-body">
                         {l.spots === 1 ? "1 spot" : `${l.spots} spots`}
                       </span>
                     )}
-                    <span className="shrink-0 type-small text-secondary">{formatLectureDate(l.date)}</span>
+                    <span className="shrink-0 text-right type-small text-secondary sm:w-24 lg:w-28 lg:type-body">
+                      {formatLectureDate(l.date)}
+                    </span>
                     <Icon name="forward" className="text-secondary" />
                   </Link>
                   {l.live && (

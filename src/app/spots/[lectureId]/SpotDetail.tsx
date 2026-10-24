@@ -1,21 +1,46 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
+import { NotebookField, SavedState, isSendKey } from "@/components/NotebookField";
+import { NotebookSaver, NOTEBOOK_MAX, type NoteState } from "@/lib/notebookApi";
 import type { Rect } from "@/lib/rect";
-import { LEGACY_NOTE_MAX, noteCounterFrom } from "@/lib/noteLimit";
+import { LEGACY_NOTE_MAX, cutNote, noteCounterFrom, noteLength } from "@/lib/noteLimit";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
-import { HighlightLayer } from "../../l/[lectureId]/HighlightLayer";
+import { HighlightLayer, type ShownMark } from "../../l/[lectureId]/HighlightLayer";
+import { MarkPopover } from "../../l/[lectureId]/MarkPopover";
 import type { Spot } from "../group";
 import { formatClock } from "../time";
 
 export type { Spot } from "../group";
 
+/** What a slide in My spots is: an I'm lost, a save, only marks, or only a notebook note. */
+export type SpotKindShown = "lost" | "save" | "mark" | "note";
+
+/** The marks of the slide in the detail (migration 0020), and how to change them. */
+export type DetailMarks = {
+  /** The slide's marks, colored as the slide is (red where the student is lost). */
+  list: ShownMark[];
+  add: (rect: Rect) => void;
+  remove: (id: string) => void;
+  setNote: (id: string, text: string) => void;
+  /** A mark that did not save, said under the buttons. */
+  problem: string | null;
+};
+
+/** The student's notebook note of the slide, saved by itself (useNotebook on the page). */
+export type DetailNotebook = { text: string; state: NoteState | null; onChange: (text: string) => void; onFlush: () => void };
+
 type Props = {
   lectureId: string;
-  spot: Spot;
+  /** The slide's I'm lost or save (its rows), or null for a slide with only marks or a notebook note. */
+  spot: Spot | null;
+  /** The slide, when there is no spot (a slide with only marks or a note). */
+  slideNumber?: number;
+  /** What the slide is, when there is no spot: "mark" (only marks) or "note" (only a notebook note). */
+  kind?: "mark" | "note";
   /** The first line of the spot's slide, for the heading. */
   firstLine?: string;
   /** How many different students are lost on the spot's slide. */
@@ -29,7 +54,7 @@ type Props = {
   urlFor: (n: number) => string | undefined;
   /**
    * The course's time for students to see the slides is over: the database no longer gives this
-   * student the slides, so the page says so in their place. The note and the spot stay.
+   * student the slides, so the page says so in their place. The notes and the spot stay.
    */
   expired?: boolean;
   /** Told which slide is on screen, so the page preloads the next one. */
@@ -41,13 +66,24 @@ type Props = {
    * a student only knows the slides up to the live one. Null once the lecture has ended.
    */
   liveSlide?: number | null;
+  /** Called after the note to the teacher was saved (null: no note any more). */
   onNoteSaved: (note: string | null) => void;
-  /** The longest note: 2000 once the database has migration 0020, else 140 (the page asks, useTeacherNoteMax). */
+  /** The longest note to the teacher: 2000 once the database has migration 0020, else 140 (useTeacherNoteMax). */
   noteMax?: number;
-  /** Called after the spot's mark was saved (a box) or cleared (null). */
+  /**
+   * The slide's marks once the database has migration 0020 (several, each with a note). Without it
+   * (before 0020) a spot has its one mark on its row: Mark the spot and Clear mark.
+   */
+  marks?: DetailMarks | null;
+  /** The slide's notebook note (any spot). Without it, no notebook (before the page has one). */
+  notebook?: DetailNotebook | null;
+  /** Called after the spot's one mark (before 0020) was saved (a box) or cleared (null). */
   onHighlightSaved?: (rect: Rect | null) => void;
-  /** Called after the spot was removed (its rows are marked undone, like Undo). */
-  onRemoved?: () => void;
+  /**
+   * Remove. "tap": the I'm lost or save was taken back here (its rows are marked undone, like Undo;
+   * the marks and notes stay). "all": a slide with only marks or a note: the page deletes them.
+   */
+  onRemoved?: (what: "tap" | "all") => void;
   onBack: () => void;
   /** Open the spot before or after this one in the list. Missing at either end. */
   onPrevSpot?: () => void;
@@ -55,7 +91,7 @@ type Props = {
 };
 
 /** The line about other students, or null when there is nothing to say. */
-export function countLine(kind: Spot["kind"], students: number): string | null {
+export function countLine(kind: SpotKindShown, students: number): string | null {
   if (kind === "lost") {
     if (students >= 2) return `${students} people got lost here`;
     if (students === 1) return "Only you got lost here";
@@ -66,17 +102,34 @@ export function countLine(kind: Spot["kind"], students: number): string | null {
   return null;
 }
 
-/** "Lost at 10:41" or "Saved for later at 10:52". */
-export function whenLine(spot: Pick<Spot, "kind" | "tappedAt">): string {
-  const at = formatClock(spot.tappedAt);
+/** "Lost at 10:41", "Saved for later at 10:52", "You marked this" or "Your notes". */
+export function whenLine(spot: { kind: SpotKindShown; tappedAt?: string }): string {
+  if (spot.kind === "mark") return "You marked this";
+  if (spot.kind === "note") return "Your notes";
+  const at = formatClock(spot.tappedAt ?? "");
   const what = spot.kind === "lost" ? "Lost" : "Saved for later";
   return at ? `${what} at ${at}` : what;
 }
 
-/** The look of a saved mark: lost is red on its tint, a save is an ink outline. */
-export function highlightClass(kind: Spot["kind"], thin = false): string {
-  if (kind === "lost") return `rounded-xs ${thin ? "border" : "border-2"} border-lost bg-lost-tint mix-blend-multiply`;
-  return `rounded-xs ${thin ? "border" : "border-[1.5px]"} border-ink`;
+/**
+ * The look of a mark in My spots, as on the live screen: a highlighter, yellow, or red where the
+ * student is lost (--color-mark, --color-mark-lost), multiplied over the slide, no border.
+ */
+export function highlightClass(kind: "lost" | "save"): string {
+  return `rounded-xs mix-blend-multiply ${kind === "lost" ? "bg-mark-lost" : "bg-mark"}`;
+}
+
+/** The small dot that says what a slide is, as in the live screen's strip. */
+export function KindDot({ kind, className = "" }: { kind: SpotKindShown; className?: string }) {
+  const look =
+    kind === "lost"
+      ? "bg-lost"
+      : kind === "mark"
+        ? "border-[1.5px] border-ink bg-mark"
+        : kind === "note"
+          ? "bg-ink"
+          : "border-[1.5px] border-ink bg-bg";
+  return <span aria-hidden data-kind-dot={kind} className={`inline-block size-2.5 shrink-0 rounded-full ${look} ${className}`} />;
 }
 
 /** Said in place of the slide once the course's time for students to see it is over. */
@@ -85,16 +138,12 @@ export const NO_LONGER_AVAILABLE = "This slide is no longer available.";
 const NO_HIGHLIGHT = { hl_x: null, hl_y: null, hl_w: null, hl_h: null };
 
 /**
- * What sits above and below the slide in one column, so the slide is sized to leave every button on
+ * What sits above and below the slide in one column, so the slide is sized to leave the buttons on
  * screen (header 64, top 8, the number and title 76, gaps, the arrows row 44, the buttons, bottom 24).
- * Phone: the buttons take two rows (352). From 640: one row (300). From 1024 the buttons sit beside
- * the slide, so only the header, title and arrows count (236).
- * While a note is being written, its label, 3 line field and Save note / Cancel row (about 180 px)
- * come under the slide too, so the slide gets smaller and Save note stays on screen.
+ * Phone: the buttons take two rows (352). From 640: one row (300). From 1024 the buttons and the notes
+ * sit beside the slide, so only the header, title and arrows count (236).
  */
-const SPOT_ROOM =
-  "[--spot-room:352px] sm:[--spot-room:300px] lg:[--spot-room:236px] " +
-  "data-editing:[--spot-room:532px] sm:data-editing:[--spot-room:488px] lg:data-editing:[--spot-room:236px]";
+const SPOT_ROOM = "[--spot-room:352px] sm:[--spot-room:300px] lg:[--spot-room:236px]";
 const WIDE = 16 / 9;
 
 /** 36 px icon buttons (a 44 px hit area on a touch screen), for browsing the slides. */
@@ -105,7 +154,10 @@ const iconButton =
 /** The 44 px white back arrow at the top left (spot → the lecture's list → all lectures). */
 export const backButtonClass = `${buttonSecondaryClass} size-11 shrink-0 px-0`;
 
-function Alert({ children }: { children: React.ReactNode }) {
+/** The note to the teacher saves by itself this long after the typing pauses. */
+export const TEACHER_NOTE_SAVE_MS = 800;
+
+function Alert({ children }: { children: ReactNode }) {
   return (
     <p role="alert" className="flex animate-fade-in items-center gap-2 type-small text-ink">
       <Icon name="alert" size={18} />
@@ -115,16 +167,25 @@ function Alert({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One spot: its slide, how many got lost on it, the note and the mark. The note
- * and Mark the spot work as on the live screen: Add a note opens a 3 line field (Enter saves,
- * Shift+Enter is a new line, Esc drops it); Mark the spot takes one drag on the slide and saves
- * it when you let go, and Clear mark takes it off. Every button stays on screen without scrolling:
- * the slide is sized to the window's height, and from 1024 px the buttons sit beside it. While the
- * lecture is live, Back to lecture (black) goes back into class.
+ * One spot: its slide, how many got lost on it, its marks and notes. Everything saves by itself:
+ *
+ * - the marks (migration 0020): drawn as on the live screen (several, highlighter yellow or red). Mark
+ *   turns on drawing; a mark opens a small popover with its own note and Delete.
+ * - the note to the teacher, on a lost spot: a line typed on the page, saved a moment after typing
+ *   stops (and at once on Enter or when the field loses the focus).
+ * - the notebook note of the slide: typed on the page like the live screen's notebook.
+ * - Remove (asked once): takes back the I'm lost or save (the marks turn yellow and stay, as do the
+ *   notes); a slide with only marks or a note loses them.
+ *
+ * Every button stays on screen without scrolling: the slide is sized to the window's height, and from
+ * 1024 px the buttons and notes sit beside it. While the lecture is live, Back to lecture (black) goes
+ * back into class.
  */
 export function SpotDetail({
   lectureId,
   spot,
+  slideNumber: slideProp,
+  kind: kindProp = "mark",
   firstLine,
   students,
   slideCount,
@@ -135,19 +196,24 @@ export function SpotDetail({
   liveSlide = null,
   onNoteSaved,
   noteMax = LEGACY_NOTE_MAX,
+  marks = null,
+  notebook = null,
   onHighlightSaved,
   onRemoved,
   onBack,
   onPrevSpot,
   onNextSpot,
 }: Props) {
+  const slideNumber = spot?.slideNumber ?? slideProp ?? 1;
+  const kind: SpotKindShown = spot?.kind ?? kindProp;
+  const lost = kind === "lost";
   // The slide on screen. Browsing moves this; the spot stays on its slide.
-  const [viewing, setViewing] = useState(spot.slideNumber);
+  const [viewing, setViewing] = useState(slideNumber);
   // The slide's own shape, from the image once it loads.
   const [ratio, setRatio] = useState(WIDE);
   const url = expired ? undefined : urlFor(viewing);
   // While the lecture is live, the last slide a student may see is the live one.
-  const lastSlide = liveSlide ?? slideCount ?? spot.slideNumber;
+  const lastSlide = liveSlide ?? slideCount ?? slideNumber;
   const onViewingRef = useRef(onViewingChange);
   useEffect(() => {
     onViewingRef.current = onViewingChange;
@@ -170,20 +236,23 @@ export function SpotDetail({
   const markButtonRef = useRef<HTMLButtonElement>(null);
   const removeRef = useRef<HTMLButtonElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
-  const noteButtonRef = useRef<HTMLButtonElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fieldId = useId();
+  const counterId = useId();
 
-  const [rect, setRect] = useState<Rect | null>(spot.rect ?? null);
-  // Mark the spot is on: the slide takes one drag, saved when it ends.
+  const [rect, setRect] = useState<Rect | null>(spot?.rect ?? null);
+  // Marking is on: before 0020 the slide takes one drag, saved when it ends; after, every drag adds a mark.
   const [marking, setMarking] = useState(false);
   const [savingMark, setSavingMark] = useState(false);
   const [markError, setMarkError] = useState(false);
+  // The mark whose popover is open (0020), and whether it was opened with the keyboard.
+  const [selected, setSelected] = useState<{ id: string; keyboard: boolean } | null>(null);
   const [said, setSaid] = useState<{ n: number; text: string } | null>(null);
   const say = (text: string) => setSaid((s) => ({ n: (s?.n ?? 0) + 1, text }));
-  // The mark belongs to the slide of the spot, so it only shows and changes there.
-  const onSpotSlide = viewing === spot.slideNumber;
-  if (marking && !onSpotSlide) setMarking(false);
+  // The marks belong to the slide of the spot, so they only show and change there.
+  const onSpotSlide = viewing === slideNumber;
+  if ((marking || selected) && !onSpotSlide) {
+    setMarking(false);
+    setSelected(null);
+  }
 
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -196,26 +265,6 @@ export function SpotDetail({
     confirmShown.current = confirmRemove;
   }, [confirmRemove]);
 
-  const [note, setNote] = useState(spot.note);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [savingNote, setSavingNote] = useState(false);
-  const [noteError, setNoteError] = useState(false);
-  const editing = draft !== null;
-  const focusAfterNote = useRef<"textarea" | "button" | null>(null);
-  useEffect(() => {
-    const want = focusAfterNote.current;
-    focusAfterNote.current = null;
-    if (want === "textarea") textareaRef.current?.focus();
-    else if (want === "button") noteButtonRef.current?.focus();
-  }, [editing]);
-  // The field grows with its text (3 lines at least).
-  useEffect(() => {
-    const field = textareaRef.current;
-    if (!field || draft === null) return;
-    field.style.height = "auto";
-    if (field.scrollHeight > 0) field.style.height = `${field.scrollHeight + 2}px`;
-  }, [draft]);
-
   /**
    * Updates rows of this spot, then checks every one of them came back changed:
    * update(...).select("id") so a row the database refused (no error, no row) is not taken for a success.
@@ -225,22 +274,75 @@ export function SpotDetail({
     return !error && !!data && data.length === ids.length;
   }
 
+  // The note to the teacher (a lost spot): typed on the page, saved by itself, one save at a time.
+  const [note, setNote] = useState(spot?.note ?? "");
+  const [noteState, setNoteState] = useState<NoteState | null>(null);
+  const spotRef = useRef(spot);
+  const onNoteSavedRef = useRef(onNoteSaved);
+  useEffect(() => {
+    spotRef.current = spot;
+    onNoteSavedRef.current = onNoteSaved;
+  });
+  const saverRef = useRef<NotebookSaver | null>(null);
+  // Made on first use (in a handler), never while rendering.
+  const noteSaver = () =>
+    (saverRef.current ??= new NotebookSaver({
+        delayMs: TEACHER_NOTE_SAVE_MS,
+        save: async (_slide, body) => {
+          const s = spotRef.current;
+          if (!s) return "rejected";
+          const next = body.trim() === "" ? null : body.trim();
+          try {
+            // A note goes on the main row; an emptied note clears every note on the slide's rows.
+            if (!(await change(next === null ? s.ids : [s.id], { note: next }))) return "rejected";
+          } catch {
+            return "offline";
+          }
+          onNoteSavedRef.current(next);
+          return "ok";
+        },
+        onState: (_slide, state) => setNoteState(state),
+      }));
+  // Leaving the spot (another spot, back to the list): what was typed goes now.
+  useEffect(() => () => void saverRef.current?.flush(), []);
+
+  function onNoteValue(value: string) {
+    const next = cutNote(value, noteMax);
+    setNote(next);
+    noteSaver().set(slideNumber, next);
+  }
+
+  function onNoteKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (isSendKey(e)) {
+      e.preventDefault();
+      void noteSaver().flush();
+    }
+  }
+
   async function remove() {
     if (removing) return;
     setRemoving(true);
     setRemoveError(false);
     try {
-      // Marked undone, the same as Undo: it leaves My spots and never counts in the stats.
-      if (!(await change(spot.ids, { undone: true }))) throw new Error("not changed");
-      onRemoved?.();
+      if (spot) {
+        // Marked undone, the same as Undo: it leaves My spots and never counts in the stats.
+        if (!(await change(spot.ids, { undone: true }))) throw new Error("not changed");
+        onRemoved?.("tap");
+      } else {
+        onRemoved?.("all");
+      }
+      setConfirmRemove(false);
+      setRemoving(false);
+      say("Removed.");
     } catch {
       setRemoveError(true);
       setRemoving(false);
     }
   }
 
+  // Before 0020: the spot's one mark on its row.
   async function saveMark(next: Rect | null) {
-    if (savingMark) return;
+    if (savingMark || !spot) return;
     setSavingMark(true);
     setMarkError(false);
     try {
@@ -262,69 +364,39 @@ export function SpotDetail({
 
   function onMarkButton() {
     setMarkError(false);
+    setSelected(null);
+    if (marks) {
+      setMarking((m) => !m);
+      return;
+    }
     if (marking) setMarking(false);
     else if (rect) void saveMark(null);
     else setMarking(true);
   }
 
-  function startNote() {
-    setMarking(false);
-    setNoteError(false);
-    focusAfterNote.current = "textarea";
-    setDraft(note ?? "");
+  function addMark(r: Rect) {
+    if (marks) {
+      marks.add(r);
+      say("Marked.");
+    } else void saveMark(r);
   }
 
-  function closeNote() {
-    focusAfterNote.current = "button";
-    setDraft(null);
-    setNoteError(false);
-  }
+  const shownMarks: ShownMark[] = marks ? marks.list : rect && spot ? [{ id: spot.id, rect, kind: lost ? "lost" : "save" }] : [];
+  const selectedIndex = selected ? shownMarks.findIndex((m) => m.id === selected.id) : -1;
+  const selectedMark = marks && selectedIndex >= 0 ? shownMarks[selectedIndex] : null;
 
-  async function saveNote(e?: FormEvent) {
-    e?.preventDefault();
-    if (savingNote || draft === null) return;
-    const next = draft.trim() === "" ? null : draft.trim();
-    if (next === note) {
-      // Nothing changed: Save just closes the field.
-      closeNote();
-      return;
-    }
-    setSavingNote(true);
-    setNoteError(false);
-    try {
-      // A note goes on the main row; an emptied note clears every note on the slide's rows.
-      if (!(await change(next === null ? spot.ids : [spot.id], { note: next }))) throw new Error("not changed");
-      setNote(next);
-      onNoteSaved(next);
-      say(next ? "Note saved." : "Note removed.");
-      closeNote();
-    } catch {
-      setNoteError(true);
-    } finally {
-      setSavingNote(false);
-    }
-  }
-
-  // Enter saves (Shift+Enter is a new line), Esc drops the changes.
-  function onNoteKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void saveNote();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      closeNote();
-    }
-  }
-
-  const line = countLine(spot.kind, students);
-  const lost = spot.kind === "lost";
-  const counter = draft !== null && draft.length >= noteCounterFrom(noteMax) ? noteMax - draft.length : null;
-  const canMark = onSpotSlide && !expired && !!url;
+  const line = countLine(kind, students);
+  const counter = noteLength(note) >= noteCounterFrom(noteMax) ? noteMax - noteLength(note) : null;
+  const canMark = onSpotSlide && !expired && !!url && (!!marks || !!spot);
   const live = liveSlide !== null;
+  // A save's own note from before the notebook (lost_taps.note on a save row): shown as it is.
+  const oldSaveNote = spot?.kind === "save" && spot.note ? spot.note : null;
+  const keeps = shownMarks.length > 0 || !!notebook?.text.trim();
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <header className="flex h-16 shrink-0 items-center gap-2 px-4">
+      {/* Lined up with the content column below it. */}
+      <header className="mx-auto flex h-16 w-full max-w-180 shrink-0 items-center gap-2 px-4 lg:max-w-330 lg:px-8">
         <button type="button" onClick={onBack} aria-label="Back to My spots" className={backButtonClass}>
           <Icon name="back" />
         </button>
@@ -359,67 +431,96 @@ export function SpotDetail({
         </button>
       </header>
 
-      <main
-        data-editing={editing ? "" : undefined}
-        className={`mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-6 pt-2 lg:max-w-300 ${SPOT_ROOM}`}
-      >
+      <main className={`mx-auto flex w-full max-w-180 animate-page-in flex-col gap-5 px-4 pb-6 pt-2 lg:max-w-330 lg:px-8 ${SPOT_ROOM}`}>
         <div className="flex min-w-0 items-center gap-4">
           <span aria-hidden data-spot-number="" className={`shrink-0 type-number-l ${lost ? "text-lost" : "text-ink"}`}>
-            {spot.slideNumber}
+            {slideNumber}
           </span>
           <div className="flex min-w-0 flex-col gap-0.5">
             <h1 ref={headingRef} tabIndex={-1} className="break-words type-title text-ink outline-hidden">
-              <span className="sr-only">Slide {spot.slideNumber}: </span>
-              {firstLine || `Slide ${spot.slideNumber}`}
+              <span className="sr-only">Slide {slideNumber}: </span>
+              {firstLine || `Slide ${slideNumber}`}
             </h1>
-            <p className="type-small text-secondary">
-              {whenLine(spot)}.{line && <> <span>{line}</span>.</>}
+            <p className="flex items-center gap-2 type-small text-secondary">
+              <KindDot kind={kind} />
+              <span>
+                {whenLine({ kind, tappedAt: spot?.tappedAt })}.{line && <> <span>{line}</span>.</>}
+              </span>
             </p>
           </div>
         </div>
 
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-8">
           <div data-spot-stage="" className="flex min-w-0 flex-col gap-2 lg:flex-1">
             {/* As wide as the column, but never so tall that the buttons leave the screen. */}
             <div
               data-spot-slide=""
-              className="relative max-w-full overflow-hidden rounded-sm bg-surface shadow-slide"
+              className="relative max-w-full"
               style={{ width: `min(100%, max(12rem, calc((100dvh - var(--spot-room)) * ${ratio.toFixed(4)})))` } as CSSProperties}
             >
-              {expired ? (
-                <div data-slide-gone="" className="flex aspect-video w-full items-center justify-center px-6 text-center">
-                  <p className="type-body text-secondary">{NO_LONGER_AVAILABLE}</p>
-                </div>
-              ) : url ? (
-                <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    ref={imageRef}
-                    src={url}
-                    alt={`Slide ${viewing}`}
-                    draggable={false}
-                    onLoad={(e) => {
-                      const img = e.currentTarget;
-                      if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
-                    }}
-                    className="block h-auto w-full"
-                  />
-                  {onSpotSlide && (
-                    <HighlightLayer
-                      imageRef={imageRef}
-                      marking={marking}
-                      markingKind={spot.kind}
-                      onMark={(r) => void saveMark(r)}
-                      onCancel={() => {
-                        setMarking(false);
-                        markButtonRef.current?.focus();
+              <div data-spot-frame="" className="relative w-full overflow-hidden rounded-sm bg-surface shadow-slide">
+                {expired ? (
+                  <div data-slide-gone="" className="flex aspect-video w-full items-center justify-center px-6 text-center">
+                    <p className="type-body text-secondary">{NO_LONGER_AVAILABLE}</p>
+                  </div>
+                ) : url ? (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      ref={imageRef}
+                      src={url}
+                      alt={`Slide ${viewing}`}
+                      draggable={false}
+                      onLoad={(e) => {
+                        const img = e.currentTarget;
+                        if (img.naturalWidth > 0 && img.naturalHeight > 0) setRatio(img.naturalWidth / img.naturalHeight);
                       }}
-                      shown={rect ? { kind: spot.kind, rect } : null}
+                      className="block h-auto w-full"
                     />
-                  )}
-                </>
-              ) : (
-                <div className="aspect-video w-full" />
+                    {onSpotSlide && (
+                      <HighlightLayer
+                        imageRef={imageRef}
+                        marking={marking}
+                        markingKind={lost ? "lost" : "save"}
+                        marks={marks ? shownMarks : []}
+                        selectedId={selectedMark?.id ?? null}
+                        onSelect={(id, keyboard) => {
+                          setMarking(false);
+                          setSelected(id ? { id, keyboard } : null);
+                        }}
+                        onMark={addMark}
+                        onCancel={() => {
+                          setMarking(false);
+                          markButtonRef.current?.focus();
+                        }}
+                        shown={!marks && rect ? { kind: lost ? "lost" : "save", rect } : null}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <div className="aspect-video w-full" />
+                )}
+              </div>
+              {selectedMark && marks && (
+                // Outside the slide's clipping, so it can sit over the edge of a mark near the bottom.
+                <MarkPopover
+                  key={selectedMark.id}
+                  mark={selectedMark}
+                  n={selectedIndex + 1}
+                  focusNote={selected?.keyboard}
+                  onNote={(text) => marks.setNote(selectedMark.id, text)}
+                  onDelete={() => {
+                    marks.remove(selectedMark.id);
+                    setSelected(null);
+                    say("Mark deleted.");
+                    markButtonRef.current?.focus();
+                  }}
+                  onClose={(back) => {
+                    const id = selectedMark.id;
+                    setSelected(null);
+                    if (back) (document.querySelector(`[data-mark="${id}"]`) as HTMLElement | null)?.focus();
+                  }}
+                />
               )}
             </div>
 
@@ -447,8 +548,8 @@ export function SpotDetail({
                 </button>
                 {!onSpotSlide && (
                   <div className="flex min-w-0 animate-fade-in items-center pl-3">
-                    <button type="button" onClick={() => setViewing(spot.slideNumber)} className={buttonSecondaryClass}>
-                      Back to slide {spot.slideNumber}
+                    <button type="button" onClick={() => setViewing(slideNumber)} className={buttonSecondaryClass}>
+                      Back to slide {slideNumber}
                     </button>
                   </div>
                 )}
@@ -456,11 +557,13 @@ export function SpotDetail({
             )}
           </div>
 
-          {/* The spot's buttons first (right under the slide, or beside it from 1024 px), then the note. */}
-          <div data-spot-side="" className="flex w-full max-w-120 flex-col gap-3 lg:w-80 lg:shrink-0">
+          {/* The spot's buttons first (right under the slide, or beside it from 1024 px), then the notes. */}
+          <div data-spot-side="" className="flex w-full max-w-120 flex-col gap-4 lg:w-96 lg:shrink-0">
             {confirmRemove ? (
               <div className="flex animate-fade-in flex-wrap items-center gap-x-4 gap-y-3">
-                <p className="type-small text-ink">Remove this spot?</p>
+                <p className="type-small text-ink">
+                  {spot ? (keeps ? "Remove this spot? Your marks and notes stay." : "Remove this spot?") : "Remove this spot? Its marks and notes go too."}
+                </p>
                 <button type="button" onClick={() => void remove()} disabled={removing} className={buttonSecondaryClass}>
                   Yes, remove
                 </button>
@@ -478,13 +581,8 @@ export function SpotDetail({
                 </button>
               </div>
             ) : (
-              <div data-spot-actions="" className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2">
-                {!editing && (
-                  <button ref={noteButtonRef} type="button" onClick={startNote} className={buttonSecondaryClass}>
-                    {note ? "Edit note" : "Add a note"}
-                  </button>
-                )}
-                {canMark && !editing && (
+              <div data-spot-actions="" className="grid grid-cols-2 gap-2">
+                {canMark && (
                   <button
                     ref={markButtonRef}
                     type="button"
@@ -493,7 +591,18 @@ export function SpotDetail({
                     aria-pressed={marking}
                     className={`${buttonSecondaryClass} ${marking ? "border-ink" : ""}`}
                   >
-                    {marking ? "Stop marking" : rect ? "Clear mark" : "Mark the spot"}
+                    {marks ? (
+                      <>
+                        <span aria-hidden className={`h-3 w-4 shrink-0 rounded-xs ${lost ? "bg-mark-lost" : "bg-mark"}`} />
+                        Mark
+                      </>
+                    ) : marking ? (
+                      "Stop marking"
+                    ) : rect ? (
+                      "Clear mark"
+                    ) : (
+                      "Mark the spot"
+                    )}
                   </button>
                 )}
                 {onRemoved && (
@@ -504,48 +613,66 @@ export function SpotDetail({
               </div>
             )}
             {markError && <Alert>Could not save the mark. Try again.</Alert>}
+            {marks?.problem && <Alert>{marks.problem}</Alert>}
             {removeError && <Alert>Could not remove the spot. Try again.</Alert>}
 
-            {editing ? (
-              <form onSubmit={(e) => void saveNote(e)} className="flex animate-rise-in flex-col gap-2">
-                <label htmlFor={fieldId} className="type-small-strong text-ink">
-                  Your note
-                </label>
-                <textarea
-                  ref={textareaRef}
-                  id={fieldId}
-                  rows={3}
-                  maxLength={noteMax}
-                  enterKeyHint="done"
-                  value={draft}
-                  readOnly={savingNote}
-                  onChange={(e) => setDraft(e.target.value.slice(0, noteMax))}
-                  onKeyDown={onNoteKeyDown}
-                  className="block min-h-[5.5rem] w-full resize-none rounded-md border border-hairline bg-surface px-3 py-2 type-body text-ink outline-hidden transition-colors duration-(--dur-fast) focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)]"
-                />
-                <div className="flex flex-wrap items-center justify-end gap-2">
+            {lost && spot && (
+              // The note to the teacher: what the teacher reads, typed on the page.
+              <div data-teacher-note="" className="flex flex-col gap-1">
+                <div className="flex items-start gap-2">
+                  <span aria-hidden className="mt-2 size-2 shrink-0 rounded-full bg-lost" />
+                  <NotebookField
+                    grow
+                    rows={1}
+                    maxRows={8}
+                    aria-label="Note for the teacher"
+                    aria-describedby={counter !== null ? counterId : undefined}
+                    placeholder="Note for the teacher"
+                    value={note}
+                    onValue={onNoteValue}
+                    onKeyDown={onNoteKeyDown}
+                    onBlur={() => void noteSaver().flush()}
+                    className="flex-1"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-3 pl-4">
                   {counter !== null && (
-                    <span data-counter="" className="mr-auto type-caption text-secondary">
+                    <span id={counterId} data-counter="" className="mr-auto type-caption text-secondary">
                       {counter} left
                     </span>
                   )}
-                  <button type="button" onClick={closeNote} className={buttonSecondaryClass}>
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={savingNote} className={buttonPrimarySmallClass}>
-                    Save note
-                  </button>
+                  {noteState === "failed" || noteState === "offline" ? (
+                    <Alert>Could not save the note. Try again.</Alert>
+                  ) : (
+                    <SavedState state={noteState} className="h-4" />
+                  )}
                 </div>
-              </form>
-            ) : (
-              note && (
-                <div data-note="" className="flex flex-col gap-1 border-t border-hairline pt-3">
-                  <p className="type-caption text-secondary">Your note</p>
-                  <p className="break-words whitespace-pre-wrap type-body text-ink">{note}</p>
-                </div>
-              )
+              </div>
             )}
-            {noteError && <Alert>Could not save the note. Try again.</Alert>}
+
+            {oldSaveNote && (
+              <div data-note="" className="flex flex-col gap-1 border-t border-hairline pt-3">
+                <p className="type-caption text-secondary">Your note</p>
+                <p className="break-words whitespace-pre-wrap type-body text-ink">{oldSaveNote}</p>
+              </div>
+            )}
+
+            {notebook && (
+              // The slide's notebook note, typed on the page like the live screen's notebook.
+              <div data-spot-notebook="" className="flex flex-col gap-1">
+                <NotebookField
+                  grow
+                  rows={4}
+                  maxRows={14}
+                  aria-label={`Your notes, slide ${slideNumber}`}
+                  placeholder="Your notes"
+                  value={notebook.text}
+                  onValue={(text) => notebook.onChange(cutNote(text, NOTEBOOK_MAX))}
+                  onBlur={notebook.onFlush}
+                />
+                <SavedState state={notebook.state} className="h-4 text-right" />
+              </div>
+            )}
           </div>
         </div>
         {/* Always there, so a screen reader says each save (a new line each time). */}

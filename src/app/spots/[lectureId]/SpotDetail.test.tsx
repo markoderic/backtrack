@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 // from("lost_taps").update(patch).in("id", ids).select("id")
 const selectAfter = vi.fn();
@@ -10,14 +10,15 @@ vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ from 
 
 const urlFor = (n: number) => `https://signed/${n}.webp`;
 
-import { SpotDetail, type Spot } from "./SpotDetail";
+import { SpotDetail, TEACHER_NOTE_SAVE_MS, type DetailMarks, type DetailNotebook, type Spot } from "./SpotDetail";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const lostSpot: Spot = { id: "tap-1", ids: ["tap-1"], kind: "lost", slideNumber: 7, note: null, tappedAt: "2026-10-26T14:00:00Z" };
 
 function show(
   o: {
-    spot?: Spot;
+    spot?: Spot | null;
+    slideNumber?: number;
     students?: number;
     slideCount?: number | null;
     liveSlide?: number | null;
@@ -27,11 +28,14 @@ function show(
     onNextSpot?: () => void;
     expired?: boolean;
     noteMax?: number;
+    marks?: DetailMarks | null;
+    notebook?: DetailNotebook | null;
   } = {},
 ) {
   const props = {
     lectureId: LECTURE,
-    spot: o.spot ?? lostSpot,
+    spot: o.spot === undefined ? lostSpot : o.spot,
+    slideNumber: o.slideNumber,
     firstLine: o.firstLine,
     students: o.students ?? 6,
     slideCount: o.slideCount === undefined ? 23 : o.slideCount,
@@ -42,6 +46,8 @@ function show(
     focusOnOpen: o.focusOnOpen,
     onNoteSaved: vi.fn(),
     noteMax: o.noteMax,
+    marks: o.marks,
+    notebook: o.notebook,
     onHighlightSaved: vi.fn(),
     onRemoved: vi.fn(),
     onBack: vi.fn(),
@@ -172,26 +178,16 @@ describe("SpotDetail: every button on screen", () => {
     for (const room of ["[--spot-room:352px]", "sm:[--spot-room:300px]", "lg:[--spot-room:236px]"]) expect(main.className).toContain(room);
   });
 
-  it("while a note is being written, keeps more room under the slide so Save note and Cancel stay on screen", () => {
-    show();
-    const main = screen.getByRole("main");
-    expect(main).not.toHaveAttribute("data-editing");
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    expect(main).toHaveAttribute("data-editing");
-    for (const room of ["data-editing:[--spot-room:532px]", "sm:data-editing:[--spot-room:488px]", "lg:data-editing:[--spot-room:236px]"])
-      expect(main.className).toContain(room);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(main).not.toHaveAttribute("data-editing");
-  });
-
-  it("puts the buttons right after the slide (beside it on a wide screen), before the note", () => {
-    const { container } = show({ spot: { ...lostSpot, note: "a long note" } });
+  it("puts the buttons right after the slide (beside it on a wide screen), then the notes", () => {
+    const { container } = show({ spot: { ...lostSpot, note: "a long note" }, notebook: { text: "", state: null, onChange: vi.fn(), onFlush: vi.fn() } });
     const actions = container.querySelector("[data-spot-actions]") as HTMLElement;
-    const note = container.querySelector("[data-note]") as HTMLElement;
+    const note = container.querySelector("[data-teacher-note]") as HTMLElement;
+    const notebook = container.querySelector("[data-spot-notebook]") as HTMLElement;
     expect(actions.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.compareDocumentPosition(notebook) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const side = container.querySelector("[data-spot-side]") as HTMLElement;
     expect(side).toContainElement(actions);
-    expect(side.className).toContain("lg:w-80");
+    expect(side.className).toContain("lg:w-96");
     expect(side.parentElement!.className).toContain("lg:flex-row");
   });
 
@@ -289,157 +285,133 @@ describe("SpotDetail: previous and next slide", () => {
   });
 });
 
-describe("SpotDetail: the note", () => {
-  const input = () => screen.getByLabelText("Your note") as HTMLTextAreaElement;
-  const send = () => fireEvent.submit(input().form!);
+describe("SpotDetail: the note to the teacher", () => {
+  const input = () => screen.getByRole("textbox", { name: "Note for the teacher" }) as HTMLTextAreaElement;
+  const type = (text: string) => fireEvent.change(input(), { target: { value: text } });
 
-  it("shows the note in Geist (not italic Newsreader) under a divider, and its field limits it to 140 characters", () => {
+  it("is on a lost spot only: a line typed on the page (no box, no Add a note, no Save note)", () => {
     show({ spot: { ...lostSpot, note: "the proof step" } });
-    expect(screen.getByText("the proof step")).toBeInTheDocument();
-    expect(screen.getByText("the proof step")).toHaveClass("type-body");
-    expect(screen.getByText("the proof step").className).not.toContain("type-note");
-    expect(screen.getByText("the proof step").closest("[data-note]")).toHaveClass("border-t");
-    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
     expect(input()).toHaveValue("the proof step");
-    expect(input()).toHaveAttribute("maxlength", "140");
-    expect(input().tagName).toBe("TEXTAREA");
-    expect(input()).toHaveAttribute("rows", "3");
-    expect(input()).toHaveFocus();
+    expect(input().className).toContain("bg-ruled");
+    expect(input().className).toContain("border-0");
+    expect(input()).toHaveAttribute("placeholder", "Note for the teacher");
+    expect(screen.queryByRole("button", { name: /Add a note|Edit note|Save note|Cancel/ })).not.toBeInTheDocument();
+    // No maxlength (it would count half an emoji): the page cuts by whole characters.
+    expect(input()).not.toHaveAttribute("maxlength");
   });
 
-  it("Add a note is a white button, and the field has Save note and Cancel buttons", () => {
-    show();
-    const add = screen.getByRole("button", { name: "Add a note" });
-    expect(add.className).toContain("bg-surface");
-    expect(add.className).not.toMatch(/(^|\s)underline(\s|$)/);
-    fireEvent.click(add);
-    expect(screen.getByRole("button", { name: "Save note" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add a note" })).toHaveFocus();
+  it("is not on a saved spot; a save's old note shows as it is", () => {
+    show({ spot: { ...lostSpot, kind: "save", note: "read later" }, students: 0 });
+    expect(screen.queryByRole("textbox", { name: "Note for the teacher" })).not.toBeInTheDocument();
+    expect(screen.getByText("read later")).toHaveClass("type-body");
   });
 
-  it("Enter saves, Shift+Enter does not", async () => {
+  it("saves by itself after a pause, to the main row, and reports it with a quiet Saved", async () => {
+    vi.useFakeTimers();
     const { onNoteSaved } = show();
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(input(), { target: { value: "line one" } });
+    type("ask about step 2");
+    await act(async () => vi.advanceTimersByTime(TEACHER_NOTE_SAVE_MS - 100));
+    expect(update).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(update).toHaveBeenCalledWith({ note: "ask about step 2" });
+    expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]);
+    expect(onNoteSaved).toHaveBeenCalledWith("ask about step 2");
+    expect(document.querySelector("[data-teacher-note] [data-saved-state]")).toHaveTextContent("Saved");
+    vi.useRealTimers();
+  });
+
+  it("Enter saves at once (Shift+Enter does not), and so does leaving the field", async () => {
+    const { onNoteSaved } = show();
+    type("line one");
     fireEvent.keyDown(input(), { key: "Enter", shiftKey: true });
     expect(update).not.toHaveBeenCalled();
     fireEvent.keyDown(input(), { key: "Enter" });
     await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("line one"));
+    type("line two");
+    fireEvent.blur(input());
+    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("line two"));
   });
 
-  it("shows a quiet counter only near the limit", () => {
+  it("shows a quiet counter only near the limit, tied to the field", () => {
     show();
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(input(), { target: { value: "a".repeat(100) } });
+    type("a".repeat(100));
     expect(document.querySelector("[data-counter]")).toBeNull();
-    fireEvent.change(input(), { target: { value: "a".repeat(130) } });
+    type("a".repeat(130));
     expect(document.querySelector("[data-counter]")).toHaveTextContent("10 left");
+    expect(input()).toHaveAccessibleDescription("10 left");
   });
 
-  it("takes up to 2000 characters once the database has 0020 (noteMax), and saves them all", async () => {
+  it("takes up to 2000 characters once the database has 0020, cut by whole characters (an emoji at the end stays whole)", async () => {
     const { onNoteSaved } = show({ noteMax: 2000 });
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    expect(input()).toHaveAttribute("maxlength", "2000");
-    const long = "b".repeat(600);
-    fireEvent.change(input(), { target: { value: long } });
-    expect(input()).toHaveValue(long);
-    expect(document.querySelector("[data-counter]")).toBeNull();
-    fireEvent.change(input(), { target: { value: "b".repeat(1990) } });
-    expect(document.querySelector("[data-counter]")).toHaveTextContent("10 left");
-    fireEvent.change(input(), { target: { value: long } });
-    send();
-    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith(long));
-    expect(update).toHaveBeenCalledWith({ note: long });
+    type("b".repeat(1999) + "😀😀");
+    expect(Array.from(input().value)).toHaveLength(2000);
+    expect(input().value.endsWith("b😀")).toBe(true);
+    fireEvent.blur(input());
+    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("b".repeat(1999) + "😀"));
   });
 
   it("cuts a note at 140 while the database is still on the old limit (no noteMax)", () => {
     show();
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(input(), { target: { value: "c".repeat(600) } });
+    type("c".repeat(600));
     expect(input().value).toHaveLength(140);
   });
 
-  it("offers Add a note when there is none", () => {
-    show();
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    expect(input()).toHaveValue("");
-  });
-
-  it("Enter saves a changed note to the row and reports it", async () => {
-    const { onNoteSaved } = show();
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(input(), { target: { value: "ask about step 2" } });
-    send();
-    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("ask about step 2"));
-    expect(update).toHaveBeenCalledWith({ note: "ask about step 2" });
-    expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]);
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Note saved."));
-    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
-  });
-
-  it("Enter on an unchanged note sends nothing and closes the field", () => {
-    show({ spot: { ...lostSpot, note: "old" } });
-    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
-    send();
-    expect(update).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("Your note")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Edit note" })).toHaveFocus();
-  });
-
-  it("Esc drops what was typed", () => {
-    show({ spot: { ...lostSpot, note: "old" } });
-    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
-    fireEvent.change(input(), { target: { value: "new words" } });
-    fireEvent.keyDown(input(), { key: "Escape" });
-    expect(update).not.toHaveBeenCalled();
-    expect(screen.getByText("old")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
-    expect(input()).toHaveValue("old");
-  });
-
-  it("saves an emptied note as no note", async () => {
-    const { onNoteSaved } = show({ spot: { ...lostSpot, note: "old" } });
-    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
-    fireEvent.change(input(), { target: { value: "   " } });
-    send();
+  it("an emptied note is saved as no note, on every row of the slide", async () => {
+    selectAfter.mockResolvedValue({ data: [{ id: "tap-0" }, { id: "tap-1" }], error: null });
+    const { onNoteSaved } = show({ spot: { ...lostSpot, ids: ["tap-0", "tap-1"], note: "old" } });
+    type("   ");
+    fireEvent.blur(input());
     await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith(null));
     expect(update).toHaveBeenCalledWith({ note: null });
+    expect(inIds).toHaveBeenCalledWith("id", ["tap-0", "tap-1"]);
   });
 
-  it("a new note goes on the main row; an emptied one clears the notes of every row on the slide", async () => {
-    const spot: Spot = { ...lostSpot, ids: ["tap-0", "tap-1"], note: "old" };
-    show({ spot });
-    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
-    fireEvent.change(input(), { target: { value: "new" } });
-    send();
-    await waitFor(() => expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]));
-    fireEvent.click(await screen.findByRole("button", { name: "Edit note" }));
-    selectAfter.mockResolvedValue({ data: [{ id: "tap-0" }, { id: "tap-1" }], error: null });
-    fireEvent.change(input(), { target: { value: "" } });
-    send();
-    await waitFor(() => expect(inIds).toHaveBeenLastCalledWith("id", ["tap-0", "tap-1"]));
-    expect(update).toHaveBeenLastCalledWith({ note: null });
-  });
-
-  it("shows the error plainly and keeps what was typed", async () => {
+  it("shows the error plainly and keeps what was typed (sent again with the next change)", async () => {
     selectAfter.mockResolvedValue({ data: null, error: { message: "boom" } });
     const { onNoteSaved } = show();
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(input(), { target: { value: "keep me" } });
-    send();
+    type("keep me");
+    fireEvent.blur(input());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the note");
     expect(onNoteSaved).not.toHaveBeenCalled();
     expect(input()).toHaveValue("keep me");
+    selectAfter.mockResolvedValue({ data: [{ id: "tap-1" }], error: null });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("keep me"));
+  });
+
+  it("what was typed goes when the spot closes", async () => {
+    const { onNoteSaved, unmount } = show();
+    type("leaving now");
+    unmount();
+    await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("leaving now"));
+  });
+});
+
+describe("SpotDetail: the notebook note", () => {
+  it("is typed on the page under the slide's notes, and reports each change and blur", () => {
+    const notebook = { text: "slope = rise over run", state: "saved" as const, onChange: vi.fn(), onFlush: vi.fn() };
+    show({ notebook });
+    const field = screen.getByRole("textbox", { name: "Your notes, slide 7" });
+    expect(field).toHaveValue("slope = rise over run");
+    expect(field.className).toContain("type-note");
+    expect(document.querySelector("[data-spot-notebook] [data-saved-state]")).toHaveTextContent("Saved");
+    fireEvent.change(field, { target: { value: "slope" } });
+    expect(notebook.onChange).toHaveBeenCalledWith("slope");
+    fireEvent.blur(field);
+    expect(notebook.onFlush).toHaveBeenCalled();
+  });
+
+  it("is there on a slide with only marks or only a note too (no spot)", () => {
+    const notebook = { text: "just notes", state: null, onChange: vi.fn(), onFlush: vi.fn() };
+    show({ spot: null, notebook });
+    expect(screen.getByRole("textbox", { name: "Your notes, slide 1" })).toHaveValue("just notes");
   });
 });
 
 describe("SpotDetail: remove", () => {
   it("every action is a white button, never underlined text", () => {
     show();
-    const names = ["Add a note", "Mark the spot", "Remove"];
+    const names = ["Mark the spot", "Remove"];
     for (const name of names) {
       const b = screen.getByRole("button", { name });
       expect(b.className, name).toContain("bg-surface");
@@ -457,9 +429,18 @@ describe("SpotDetail: remove", () => {
     expect(update).not.toHaveBeenCalled();
     expect(screen.getByText("Remove this spot?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
-    await waitFor(() => expect(onRemoved).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onRemoved).toHaveBeenCalledWith("tap"));
     expect(update).toHaveBeenCalledWith({ undone: true });
     expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]);
+  });
+
+  it("a slide with no spot (only marks or a note): Remove asks, then the page deletes them (nothing on lost_taps)", async () => {
+    const { onRemoved } = show({ spot: null, slideNumber: 4, notebook: { text: "x", state: null, onChange: vi.fn(), onFlush: vi.fn() } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByText("Remove this spot? Its marks and notes go too.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(onRemoved).toHaveBeenCalledWith("all"));
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("Keep it leaves the spot alone", () => {
@@ -632,7 +613,7 @@ describe("SpotDetail: the mark", () => {
     expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]);
     expect(boxes(container)).toHaveLength(1);
     expect(markButton("Clear mark")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Spot marked.");
+    expect(document.querySelector("main > [role=status]")).toHaveTextContent("Spot marked.");
   });
 
   it("a finger can drag once Mark the spot is on", async () => {
@@ -697,12 +678,78 @@ describe("SpotDetail: a slide that is no longer available", () => {
     show({ spot: { ...lostSpot, note: "my note" }, expired: true });
     expect(screen.getByText("This slide is no longer available.")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.getByText("my note")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Note for the teacher" })).toHaveValue("my note");
     expect(screen.getByText("6 people got lost here")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Edit note" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
     // Nothing to browse or mark without the slide.
     expect(screen.queryByRole("button", { name: "Next slide" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /mark/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("SpotDetail: marks (migration 0020: several on the slide, each with a note)", () => {
+  const R = { x: 0.1, y: 0.2, w: 0.3, h: 0.1 };
+  function marksApi(list: DetailMarks["list"] = [{ id: "m1", rect: R, kind: "lost", note: "this part" }, { id: "m2", rect: { ...R, x: 0.5 }, kind: "lost" }]) {
+    return { list, add: vi.fn(), remove: vi.fn(), setNote: vi.fn(), problem: null as string | null };
+  }
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, width: 1000, height: 500, toJSON: () => ({}),
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("draws every mark in the highlighter look (red on a lost slide), each a button, with a Mark toggle (no Mark the spot)", () => {
+    show({ marks: marksApi() });
+    const marks = Array.from(document.querySelectorAll<HTMLElement>("[data-mark]"));
+    expect(marks.map((m) => m.dataset.kind)).toEqual(["lost", "lost"]);
+    expect(marks[0].className).toContain("bg-mark-lost");
+    expect(marks[0]).toHaveAccessibleName("Mark 1, lost: this part");
+    expect(screen.queryByRole("button", { name: "Mark the spot" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("Mark, then drags, adds a mark for each; Mark again turns it off", () => {
+    const api = marksApi([]);
+    show({ marks: api });
+    fireEvent.click(screen.getByRole("button", { name: "Mark" }));
+    const layer = document.querySelector("[data-highlight-layer]") as HTMLElement;
+    const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
+    for (const [a, b] of [[100, 300], [500, 900]]) {
+      fireEvent.pointerDown(layer, { ...mouse, clientX: a, clientY: 100 });
+      fireEvent.pointerMove(layer, { ...mouse, clientX: b, clientY: 200 });
+      fireEvent.pointerUp(layer, { ...mouse, clientX: b, clientY: 200 });
+    }
+    expect(api.add).toHaveBeenCalledTimes(2);
+    expect(api.add.mock.calls[0][0]).toEqual({ x: 0.1, y: 0.2, w: 0.2, h: 0.2 });
+    fireEvent.click(screen.getByRole("button", { name: "Mark" }));
+    expect(screen.getByRole("button", { name: "Mark" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("a mark opens its popover: its note saves by itself, Delete deletes it", async () => {
+    const api = marksApi();
+    show({ marks: api });
+    fireEvent.click(document.querySelector("[data-mark='m1']")!, { detail: 1 });
+    const note = screen.getByRole("textbox", { name: "Note on this mark" });
+    expect(note).toHaveValue("this part");
+    fireEvent.change(note, { target: { value: "this part, again" } });
+    fireEvent.blur(note);
+    expect(api.setNote).toHaveBeenCalledWith("m1", "this part, again");
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(api.remove).toHaveBeenCalledWith("m1");
+    expect(screen.queryByRole("dialog", { name: "Mark 1" })).not.toBeInTheDocument();
+  });
+
+  it("says when a mark did not save", () => {
+    show({ marks: { ...marksApi(), problem: "Too many marks on this slide." } });
+    expect(screen.getByRole("alert")).toHaveTextContent("Too many marks on this slide.");
+  });
+
+  it("a slide with only marks: yellow marks, You marked this, Remove asks to delete them", () => {
+    show({ spot: null, slideNumber: 4, marks: marksApi([{ id: "m3", rect: R, kind: "save" }]) });
+    expect(screen.getByText(/^You marked this/)).toBeInTheDocument();
+    expect(document.querySelector("[data-spot-number]")).toHaveClass("text-ink");
+    expect(document.querySelector("[data-mark]")).toHaveAttribute("data-kind", "save");
+    expect(screen.queryByRole("textbox", { name: "Note for the teacher" })).not.toBeInTheDocument();
   });
 });

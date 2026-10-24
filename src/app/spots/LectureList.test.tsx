@@ -15,8 +15,19 @@ const tapChain = {
   },
   then: (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => Promise.resolve(tapRows()).then(ok, bad),
 };
-const from = vi.fn((table: string) => (table === "lost_taps" ? { select: () => tapChain } : { select }));
-vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ auth: { getSession }, from }) }));
+// The student's marks of every lecture (rpc my_slide_marks with no lecture) and notebook notes
+// (notebook_notes.select("lecture_id, slide_number")), migration 0020: they count as spots too.
+const myMarks = vi.fn();
+const noteRows = vi.fn();
+const rpc = vi.fn((name: string, args: unknown) => (name === "my_slide_marks" ? myMarks(args) : undefined));
+const from = vi.fn((table: string) =>
+  table === "lost_taps"
+    ? { select: () => tapChain }
+    : table === "notebook_notes"
+      ? { select: (cols: string) => ({ then: (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => Promise.resolve(noteRows(cols)).then(ok, bad) }) }
+      : { select },
+);
+vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ auth: { getSession }, from, rpc }) }));
 
 import { LectureList } from "./LectureList";
 
@@ -29,6 +40,9 @@ beforeEach(() => {
   [getSession, result, eq, select, from].forEach((m) => m.mockClear());
   tapEqs.length = 0;
   tapRows.mockReset().mockResolvedValue({ data: [], error: null });
+  // Before 0020: neither is there.
+  myMarks.mockReset().mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 });
+  noteRows.mockReset().mockResolvedValue({ data: null, error: { code: "PGRST205", message: "Could not find the table" }, status: 404 });
   getSession.mockResolvedValue({ data: { session: { user: { id: "s1" } } }, error: null });
   result.mockResolvedValue({
     data: [
@@ -80,10 +94,11 @@ describe("LectureList", () => {
       expect(within(items[0]).getByText("Live now")).toBeInTheDocument();
       expect(items[1]).toHaveTextContent("Lecture 3, Oct 26");
       for (const other of items.slice(1)) expect(within(other).queryByText("Live now")).not.toBeInTheDocument();
-      // Ink, never the lost red.
+      // The dot is red (Marko: cohesive, and a sense of urgency); the words stay ink.
       const marker = items[0].querySelector("[data-live-now]") as HTMLElement;
       expect(marker.className).toContain("text-ink");
-      expect(marker.innerHTML).not.toContain("lost");
+      expect(marker.querySelector("[data-live-dot]")!.className).toContain("bg-lost");
+      expect(marker.querySelector("[data-live-dot]")!.className).not.toContain("bg-ink");
     });
 
     it("has a black Back to lecture button that goes back into class, and its row still opens its spots", async () => {
@@ -198,6 +213,23 @@ describe("LectureList", () => {
     ]);
   });
 
+  it("counts a slide with only marks or only a notebook note as a spot too, once per slide (ruling, Oct 24)", async () => {
+    tapRows.mockResolvedValue({ data: [{ lecture_id: "l3", slide_number: 4 }], error: null });
+    const mark = (lecture: string, slide: number, id: string) => ({
+      id, lecture_id: lecture, slide_number: slide, x: 0.1, y: 0.1, w: 0.2, h: 0.2, kind: "save", note: null, created_at: "x", updated_at: "x",
+    });
+    myMarks.mockResolvedValue({ data: [mark("l3", 4, "a"), mark("l3", 6, "b"), mark("l1", 2, "c")], error: null, status: 200 });
+    noteRows.mockResolvedValue({ data: [{ lecture_id: "l3", slide_number: 6 }, { lecture_id: "l2", slide_number: 9 }], error: null, status: 200 });
+    render(<LectureList />);
+    const items = await screen.findAllByRole("listitem");
+    // l3: slide 4 (a tap and a mark) and 6 (a mark and a note): 2. l2: a note on 9. l1: a mark on 2.
+    expect(items[0]).toHaveTextContent("2 spots");
+    expect(items[1]).toHaveTextContent("1 spot");
+    expect(items[2]).toHaveTextContent("1 spot");
+    expect(myMarks).toHaveBeenCalledWith({ p_lecture_id: null });
+    expect(noteRows).toHaveBeenCalledWith("lecture_id, slide_number");
+  });
+
   it("leaves the counts out when they can not be read, and still lists the lectures", async () => {
     tapRows.mockResolvedValue({ data: null, error: { message: "nope" } });
     render(<LectureList />);
@@ -206,10 +238,13 @@ describe("LectureList", () => {
     expect(document.querySelector("[data-spot-count]")).toBeNull();
   });
 
-  it("heads the page My spots and has a back arrow to Home", async () => {
+  it("heads the page My lectures (not My spots) and has a back arrow to Home", async () => {
     render(<LectureList />);
     await screen.findAllByRole("listitem");
-    expect(screen.getByRole("heading", { level: 1, name: "My spots" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "My lectures" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "My spots" })).not.toBeInTheDocument();
+    // A wider column than before, with bigger lecture names on a laptop.
+    expect(screen.getByRole("main").className).toContain("max-w-5xl");
     const back = screen.getByRole("link", { name: "Back to Home" });
     expect(back).toHaveAttribute("href", "/");
     expect(back).toHaveClass("size-11");

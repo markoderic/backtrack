@@ -42,14 +42,51 @@ const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 const tables: Record<string, Result> = {};
-const rpc = vi.fn();
+// rpc, by name: lecture_slide_stats (the counts), my_slide_marks (the student's marks, 0020) and
+// save_notebook_note (the notebook, 0020).
+const stats = vi.fn();
+const myMarks = vi.fn();
+const notebookSave = vi.fn();
+const rpc = vi.fn((name: string, args?: unknown) =>
+  name === "lecture_slide_stats" ? stats(name, args) : name === "my_slide_marks" ? myMarks(args) : name === "save_notebook_note" ? notebookSave(args) : undefined,
+);
 const selectAfter = vi.fn();
 const eqId = vi.fn(() => ({ select: selectAfter }));
 const update = vi.fn(() => ({ in: eqId }));
-const from = vi.fn((table: string) => ({
-  ...(chain(table, () => tables[table]) as object),
-  update,
-}));
+// Writes on slide_marks (0020): update(...).eq(...)[.eq().neq()], delete().eq(...), upsert(...). Each records its call.
+const markWrites: unknown[][] = [];
+function markStep(record: unknown[]) {
+  const step: Record<string, unknown> = {
+    eq: (...a: unknown[]) => (record.push(["eq", ...a]), step),
+    neq: (...a: unknown[]) => (record.push(["neq", ...a]), step),
+    then: (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => Promise.resolve({ error: null, status: 204 }).then(ok, bad),
+  };
+  return step;
+}
+const from = vi.fn((table: string) =>
+  table === "slide_marks"
+    ? {
+        ...(chain(table, () => tables[table]) as object),
+        update: (row: unknown) => {
+          const rec: unknown[] = ["update", row];
+          markWrites.push(rec);
+          return markStep(rec);
+        },
+        delete: () => {
+          const rec: unknown[] = ["delete"];
+          markWrites.push(rec);
+          return markStep(rec);
+        },
+        upsert: (row: unknown) => {
+          markWrites.push(["upsert", row]);
+          return Promise.resolve({ error: null, status: 201 });
+        },
+      }
+    : {
+        ...(chain(table, () => tables[table]) as object),
+        update,
+      },
+);
 vi.mock("@/lib/supabase/browser", () => ({
   createBrowserSupabase: () => ({
     from,
@@ -124,6 +161,13 @@ beforeEach(() => {
   [rpc, selectAfter, eqId, update, from, flush, refresh, makeChannel, removeChannel, useSlideImages].forEach((m) =>
     m.mockClear(),
   );
+  [stats, myMarks, notebookSave].forEach((m) => m.mockReset());
+  markWrites.length = 0;
+  localStorage.clear();
+  // Before 0020: no my_slide_marks, no notebook_notes.
+  myMarks.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 });
+  notebookSave.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 });
+  tables.notebook_notes = { data: null, error: { code: "PGRST205", message: "Could not find the table" } as { message: string } };
   channel.update = null;
   flush.mockResolvedValue({ sent: 0, rejected: [] });
   tables.lost_taps = {
@@ -143,19 +187,33 @@ beforeEach(() => {
     ],
     error: null,
   };
-  rpc.mockResolvedValue({ data: allStats({ 3: 4, 5: 2, 9: 1 }), error: null });
+  stats.mockResolvedValue({ data: allStats({ 3: 4, 5: 2, 9: 1 }), error: null });
   selectAfter.mockResolvedValue({ data: [{ id: "b" }], error: null });
 });
 
 describe("SpotsView: the list", () => {
-  it("shows My spots, the lecture name and the date as Oct 26, and the course in the top bar", async () => {
+  it("is titled with the lecture's name (the course as a small line above it), not My spots, with the date and the spot count", async () => {
     show();
     expect(await ready()).toHaveLength(3);
-    expect(screen.getByRole("heading", { level: 1, name: "My spots" })).toBeInTheDocument();
-    expect(screen.getByText("Lecture 3, Oct 26")).toBeInTheDocument();
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveTextContent(/^Lecture 3, Oct 26$/);
+    // Newsreader (the lecture name's face), larger on a laptop.
+    expect(title.className).toContain("font-serif");
+    expect(title.className).toContain("lg:text-[40px]");
+    expect(screen.queryByRole("heading", { name: "My spots" })).not.toBeInTheDocument();
+    const course = screen.getByText("CSE 274");
+    expect(course.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(course).toHaveClass("type-small-strong");
     expect(screen.getByText("Oct 26")).toBeInTheDocument();
-    expect(screen.getByText("CSE 274")).toBeInTheDocument();
+    expect(document.querySelector("[data-spot-total]")).toHaveTextContent("3 spots");
     expect(screen.queryByRole("link", { name: "Back to lecture" })).not.toBeInTheDocument();
+  });
+
+  it("uses a wider column than before (1024 px), with bigger thumbnails on a laptop", async () => {
+    show();
+    const items = await ready();
+    expect(screen.getByRole("main").className).toContain("max-w-5xl");
+    expect(items[0].querySelector("[data-thumb]")!.className).toContain("lg:w-72");
   });
 
   it("says when an ended lecture ended", async () => {
@@ -269,16 +327,17 @@ describe("SpotsView: the list", () => {
     expect(calls).toContain("lost_taps.eq(lecture_id," + LECTURE + ")");
     expect(calls).toContain("lost_taps.eq(undone,false)");
     expect(calls).toContain("lost_taps.eq(anon_id," + ME + ")");
-    expect(rpc).toHaveBeenCalledWith("lecture_slide_stats", { p_lecture_id: LECTURE });
+    expect(stats).toHaveBeenCalledWith("lecture_slide_stats", { p_lecture_id: LECTURE });
   });
 
-  it("shows the empty state when there are no spots", async () => {
+  it("shows the empty state when there are no spots, under the lecture's name", async () => {
     tables.lost_taps = { data: [], error: null };
     show();
-    expect(await screen.findByRole("heading", { name: "No spots yet" })).toBeInTheDocument();
+    expect(await screen.findByText("No spots yet")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Lecture 3, Oct 26");
     expect(screen.getByText("Slides you mark show up here.")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/Tap I.m lost/);
-    expect(screen.queryByRole("heading", { name: "My spots" })).not.toBeInTheDocument();
+    expect(document.querySelector("[data-spot-total]")).toBeNull();
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   });
 
@@ -296,14 +355,21 @@ describe("SpotsView: the list", () => {
     expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
   });
 
-  it("has a 44 px back arrow at the top left up to all lectures, and no All lectures text link", async () => {
+  it("has My lectures (a white button with the back arrow) at the top left, up to all lectures", async () => {
     show();
     await ready();
-    const back = screen.getByRole("link", { name: "Back to My spots" });
+    const back = screen.getByRole("link", { name: "My lectures" });
     expect(back).toHaveAttribute("href", "/spots");
-    expect(back).toHaveClass("size-11");
+    expect(back).toHaveClass("h-11");
+    expect(back.querySelector("[data-icon='back']")).not.toBeNull();
     expect(back.parentElement?.firstElementChild).toBe(back);
     expect(screen.queryByRole("link", { name: "All lectures" })).not.toBeInTheDocument();
+  });
+
+  it("after class too: the way back to My lectures is there once the lecture has ended", async () => {
+    show({ endedAt: "2026-10-26T15:00:00Z" });
+    await ready();
+    expect(screen.getByRole("link", { name: "My lectures" })).toHaveAttribute("href", "/spots");
   });
 });
 
@@ -327,7 +393,7 @@ describe("SpotsView: waiting taps and the rejected notice", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("This one didn't save because the lecture had ended.");
     expect(sessionStorage.getItem(rejectedKey(LECTURE))).toBeNull();
-    expect(alert.compareDocumentPosition(screen.getByRole("heading", { name: "My spots" }))).toBe(
+    expect(alert.compareDocumentPosition(screen.getByRole("heading", { level: 1 }))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
     unmount();
@@ -415,31 +481,33 @@ describe("SpotsView: opening a spot", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("a saved note shows in the list", async () => {
+  it("a note to the teacher typed in the detail saves by itself and shows in the list", async () => {
     await open("3");
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(screen.getByLabelText("Your note"), { target: { value: "ask Dr. Lee" } });
     selectAfter.mockResolvedValue({ data: [{ id: "a" }], error: null });
-    fireEvent.submit((screen.getByLabelText("Your note") as HTMLTextAreaElement).form!);
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Note saved."));
+    const field = screen.getByRole("textbox", { name: "Note for the teacher" });
+    fireEvent.change(field, { target: { value: "ask Dr. Lee" } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ note: "ask Dr. Lee" }));
+    await waitFor(() => expect(document.querySelector("[data-teacher-note] [data-saved-state]")).toHaveTextContent("Saved"));
     fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     const items = await screen.findAllByRole("listitem");
     expect(within(items[0]).getByText("ask Dr. Lee")).toBeInTheDocument();
   });
 
-  it("the note takes 140 characters before 0020 and 2000 once the database has it", async () => {
+  it("the note to the teacher takes 140 characters before 0020 and 2000 once the database has it", async () => {
     await open("3");
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    expect(screen.getByLabelText("Your note")).toHaveAttribute("maxlength", "140");
+    fireEvent.change(screen.getByRole("textbox", { name: "Note for the teacher" }), { target: { value: "x".repeat(2500) } });
+    expect((screen.getByRole("textbox", { name: "Note for the teacher" }) as HTMLTextAreaElement).value).toHaveLength(140);
     fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     cleanup();
     forgetTeacherNoteMax();
     tables.slide_marks = { data: [], error: null };
     await open("3");
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    await waitFor(() => expect(screen.getByLabelText("Your note")).toHaveAttribute("maxlength", "2000"));
+    await waitFor(() => expect(calls).toContain("slide_marks.limit(0)"));
+    await act(async () => {});
+    fireEvent.change(screen.getByRole("textbox", { name: "Note for the teacher" }), { target: { value: "x".repeat(2500) } });
+    expect((screen.getByRole("textbox", { name: "Note for the teacher" }) as HTMLTextAreaElement).value).toHaveLength(2000);
     expect(calls).toContain("slide_marks.select(id)");
-    expect(calls).toContain("slide_marks.limit(0)");
   });
 
   it("goes to the previous and next spot in slide order", async () => {
@@ -524,36 +592,36 @@ describe("SpotsView: opening a spot", () => {
   it("a removed spot is gone at once, even before the counts come back", async () => {
     await open("9");
     let answer!: (v: unknown) => void;
-    rpc.mockReturnValue(new Promise((r) => (answer = r)));
+    stats.mockReturnValue(new Promise((r) => (answer = r)));
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
     expect(screen.queryByText("Induction")).not.toBeInTheDocument();
     // Focus moves in an effect after the list renders: wait for it rather than race it.
-    await waitFor(() => expect(screen.getByRole("heading", { name: "My spots" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     await act(async () => answer({ data: allStats({ 3: 4, 5: 2 }), error: null }));
   });
 
   it("keeps the list when the counts can not be read after a remove", async () => {
     await open("9");
-    rpc.mockResolvedValue({ data: null, error: { message: "stats broke" } });
+    stats.mockResolvedValue({ data: null, error: { message: "stats broke" } });
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
-    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(stats).toHaveBeenCalledTimes(2));
     expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("4 people got lost here");
   });
 
   it("a removed spot leaves the list, and the counts are read again", async () => {
     await open("9");
     selectAfter.mockResolvedValue({ data: [{ id: "b" }], error: null });
-    rpc.mockResolvedValue({ data: allStats({ 3: 4, 5: 2 }), error: null });
+    stats.mockResolvedValue({ data: allStats({ 3: 4, 5: 2 }), error: null });
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
     expect(update).toHaveBeenCalledWith({ undone: true });
     expect(eqId).toHaveBeenCalledWith("id", ["b"]);
-    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(stats).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Induction")).not.toBeInTheDocument();
   });
 });
@@ -608,7 +676,7 @@ describe("SpotsView: highlights", () => {
     const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
     fireEvent.pointerDown(layer, { ...mouse, clientX: 500, clientY: 250 });
     fireEvent.pointerUp(layer, { ...mouse, clientX: 900, clientY: 450 });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Spot marked."));
+    await waitFor(() => expect(document.querySelector("main > [role=status]")).toHaveTextContent("Spot marked."));
     expect(update).toHaveBeenCalledWith({ hl_x: 0.5, hl_y: 0.5, hl_w: 0.4, hl_h: 0.4 });
     expect(eqId).toHaveBeenCalledWith("id", ["b"]);
     fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
@@ -659,3 +727,161 @@ describe("SpotsView: after the course's time to see slides is over", () => {
   });
 });
 
+describe("SpotsView: marks and notebook notes (migration 0020, batch K2)", () => {
+  const markRow = (id: string, slide: number, o: Partial<{ kind: string; note: string | null; x: number }> = {}) => ({
+    id, lecture_id: LECTURE, slide_number: slide, x: o.x ?? 0.1, y: 0.2, w: 0.3, h: 0.1, kind: o.kind ?? "save", note: o.note ?? null,
+    created_at: "2026-10-26T14:00:00Z", updated_at: "2026-10-26T14:00:00Z",
+  });
+  const boxes = (el: ParentNode = document) => Array.from(el.querySelectorAll<HTMLElement>("[data-highlight-box]"));
+
+  beforeEach(() => {
+    tables.slide_marks = { data: [], error: null };
+    myMarks.mockResolvedValue({
+      data: [markRow("m1", 9, { kind: "lost", note: "this line" }), markRow("m2", 9, { kind: "lost", x: 0.5 }), markRow("m3", 4)],
+      error: null,
+      status: 200,
+    });
+    tables.notebook_notes = {
+      data: [
+        { slide_number: 9, body: "induction step:\nassume n, show n+1", updated_at: "x" },
+        { slide_number: 8, body: "base case first", updated_at: "x" },
+      ],
+      error: null,
+    };
+    notebookSave.mockResolvedValue({ data: "x", error: null, status: 200 });
+  });
+
+  async function openSlide(n: number) {
+    show();
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(5));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^Slide ${n}:`) }));
+  }
+
+  it("lists every slide with a tap, a mark or a notebook note, in slide order, and counts them all", async () => {
+    show();
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(5));
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((i) => i.querySelector("[data-spot-number]")!.textContent)).toEqual(["3", "4", "5", "8", "9"]);
+    expect(document.querySelector("[data-spot-total]")).toHaveTextContent("5 spots");
+    // A slide with only marks: "you marked this" look (a yellow dot in an ink ring), ink number.
+    expect(items[1]).toHaveTextContent("You marked this");
+    expect(items[1].querySelector("[data-kind-dot]")).toHaveAttribute("data-kind-dot", "mark");
+    expect(items[1].querySelector("[data-kind-dot]")!.className).toContain("bg-mark");
+    expect(items[1].querySelector("[data-spot-number]")).toHaveClass("text-ink");
+    // A slide with only a notebook note.
+    expect(items[3]).toHaveTextContent("Your notes");
+    expect(items[3]).toHaveTextContent("base case first");
+    expect(items[3].querySelector("[data-kind-dot]")).toHaveAttribute("data-kind-dot", "note");
+  });
+
+  it("shows each slide's marks (yellow, red where lost, the highlighter look), its note to the teacher and its notebook note", async () => {
+    show();
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(5));
+    const items = screen.getAllByRole("listitem");
+    const lost9 = items[4];
+    expect(boxes(lost9)).toHaveLength(2);
+    for (const b of boxes(lost9)) {
+      expect(b.className).toContain("bg-mark-lost");
+      expect(b.className).toContain("mix-blend-multiply");
+      expect(b.className).not.toContain("border");
+    }
+    expect(lost9).toHaveTextContent("2 marks");
+    expect(lost9.querySelector("[data-list-teacher-note]")).toHaveTextContent("the proof");
+    const nb = lost9.querySelector("[data-list-notebook]") as HTMLElement;
+    expect(nb).toHaveTextContent("induction step: assume n, show n+1");
+    expect(nb.className).toContain("type-note");
+    expect(boxes(items[1])[0].className).toContain("bg-mark");
+    expect(boxes(items[1])[0].className).not.toContain("bg-mark-lost");
+  });
+
+  it("reads marks only through my_slide_marks, never select('*') on slide_marks", async () => {
+    show();
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(5));
+    expect(myMarks).toHaveBeenCalledWith({ p_lecture_id: LECTURE });
+    expect(calls.filter((c) => c.startsWith("slide_marks.select(") && c !== "slide_marks.select(id)")).toEqual([]);
+  });
+
+  it("sends the marks still waiting from the live screen (backtrack:marks:<lecture>) and the notebook text left on the device", async () => {
+    localStorage.setItem(`backtrack:marks:${LECTURE}`, JSON.stringify([{ op: "add", mark: { id: "m9", slide: 5, rect: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, kind: "save" } }]));
+    localStorage.setItem(`backtrack:notebook:${LECTURE}`, JSON.stringify({ "5": "typed offline" }));
+    show();
+    await waitFor(() => expect(markWrites).toContainEqual(["upsert", expect.objectContaining({ id: "m9", slide_number: 5 })]));
+    await waitFor(() => expect(notebookSave).toHaveBeenCalledWith({ p_lecture_id: LECTURE, p_slide_number: 5, p_body: "typed offline" }));
+    await waitFor(() => expect(localStorage.getItem(`backtrack:marks:${LECTURE}`)).toBeNull());
+    expect(localStorage.getItem(`backtrack:notebook:${LECTURE}`)).toBeNull();
+  });
+
+  it("an open spot shows its marks; a mark opens its popover with its note and Delete, which deletes it", async () => {
+    await openSlide(9);
+    const marks = Array.from(document.querySelectorAll<HTMLElement>("[data-mark]"));
+    expect(marks.map((m) => m.dataset.kind)).toEqual(["lost", "lost"]);
+    fireEvent.click(marks[0], { detail: 1 });
+    const popover = screen.getByRole("dialog", { name: "Mark 1" });
+    expect(within(popover).getByRole("textbox", { name: "Note on this mark" })).toHaveValue("this line");
+    fireEvent.click(within(popover).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(markWrites).toContainEqual(["delete", ["eq", "id", "m1"]]));
+    expect(document.querySelectorAll("[data-mark]")).toHaveLength(1);
+  });
+
+  it("the notebook note of an open spot is typed on the page and saves by itself", async () => {
+    await openSlide(9);
+    const field = screen.getByRole("textbox", { name: "Your notes, slide 9" });
+    expect(field).toHaveValue("induction step:\nassume n, show n+1");
+    expect(field.className).toContain("bg-ruled");
+    fireEvent.change(field, { target: { value: "induction step: done" } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(notebookSave).toHaveBeenCalledWith({ p_lecture_id: LECTURE, p_slide_number: 9, p_body: "induction step: done" }));
+    await waitFor(() => expect(document.querySelector("[data-spot-notebook] [data-saved-state]")).toHaveTextContent("Saved"));
+  });
+
+  it("Remove of a lost tap takes it back, sets the slide's marks back to save, and the slide stays (its marks and notes stay)", async () => {
+    await openSlide(9);
+    selectAfter.mockResolvedValue({ data: [{ id: "b" }], error: null });
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByText("Remove this spot? Your marks and notes stay.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ undone: true }));
+    await waitFor(() =>
+      expect(markWrites).toContainEqual(["update", { kind: "save" }, ["eq", "lecture_id", LECTURE], ["eq", "slide_number", 9], ["neq", "kind", "save"]]),
+    );
+    // Still open, now a marked slide, its marks yellow.
+    await waitFor(() => expect(screen.getByText(/^You marked this/)).toBeInTheDocument());
+    expect(Array.from(document.querySelectorAll<HTMLElement>("[data-mark]")).map((m) => m.dataset.kind)).toEqual(["save", "save"]);
+    expect(screen.getByRole("textbox", { name: "Your notes, slide 9" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
+    const items = await screen.findAllByRole("listitem");
+    expect(items).toHaveLength(5);
+    expect(items[4].querySelector("[data-spot-number]")).toHaveClass("text-ink");
+  });
+
+  it("Remove of a slide with only marks deletes them; of a slide with only a note, empties it", async () => {
+    await openSlide(4);
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.getByText("Remove this spot? Its marks and notes go too.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(markWrites).toContainEqual(["delete", ["eq", "id", "m3"]]));
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(4));
+    fireEvent.click(screen.getByRole("button", { name: /^Slide 8:/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove" }));
+    await waitFor(() => expect(notebookSave).toHaveBeenCalledWith({ p_lecture_id: LECTURE, p_slide_number: 8, p_body: "" }));
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(3));
+  });
+
+  it("Mark in an open spot adds a mark (yellow on a saved slide) with a browser made id", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, width: 1000, height: 500, toJSON: () => ({}),
+    });
+    await openSlide(5);
+    fireEvent.click(screen.getByRole("button", { name: "Mark" }));
+    const layer = document.querySelector("[data-highlight-layer]") as HTMLElement;
+    const mouse = { pointerType: "mouse", button: 0, pointerId: 1 };
+    fireEvent.pointerDown(layer, { ...mouse, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(layer, { ...mouse, clientX: 300, clientY: 200 });
+    fireEvent.pointerUp(layer, { ...mouse, clientX: 300, clientY: 200 });
+    await waitFor(() => expect(markWrites).toContainEqual(["upsert", expect.objectContaining({ slide_number: 5, kind: "save" })]));
+    const row = markWrites.find((w) => w[0] === "upsert")![1] as { id: string };
+    expect(row.id).not.toBe("c");
+    vi.restoreAllMocks();
+  });
+});
