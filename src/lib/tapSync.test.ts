@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushLeftoverTaps, rejectedKey } from "./tapSync";
+import { sharedTapQueue } from "./sharedQueues";
 import type { QueueOp, SendResult } from "./tapQueue";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
@@ -85,5 +86,21 @@ describe("flushLeftoverTaps", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("uses the page's one tap queue: what the live screen (hidden, still alive) holds is sent once, never again from there (K2 review M4)", async () => {
+    // The live screen queued a note on its tap while offline, then Next hid it (its queue stays in memory).
+    const live = sharedTapQueue(LECTURE);
+    live.update(tap(4).id, { note: "old" });
+    // My spots sends what waits.
+    const s = send("ok");
+    await flushLeftoverTaps(LECTURE, s);
+    expect(s).toHaveBeenCalledTimes(1);
+    // Back on the live screen: nothing left to send again (it would undo a note edited in My spots).
+    expect(live.pending()).toEqual([]);
+    const again = send("ok");
+    await live.flush(again);
+    expect(again).not.toHaveBeenCalled();
+    expect(sharedTapQueue(LECTURE)).toBe(live);
   });
 });

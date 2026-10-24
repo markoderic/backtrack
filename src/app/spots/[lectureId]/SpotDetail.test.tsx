@@ -4,7 +4,10 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 // from("lost_taps").update(patch).in("id", ids).select("id")
 const selectAfter = vi.fn();
 const inIds = vi.fn(() => ({ select: selectAfter }));
-const update = vi.fn(() => ({ in: inIds }));
+// The note to the teacher goes through the lecture's tap queue (shared with the live screen, kept on
+// the device until sent): update(patch).eq("id", id), one row at a time.
+const noteEq = vi.fn(async (...args: unknown[]): Promise<{ error: { code?: string; message: string } | null; status: number }> => (void args, { error: null, status: 204 }));
+const update = vi.fn((...args: unknown[]) => (void args, { in: inIds, eq: noteEq }));
 const from = vi.fn(() => ({ update }));
 vi.mock("@/lib/supabase/browser", () => ({ createBrowserSupabase: () => ({ from }) }));
 
@@ -62,6 +65,9 @@ const shownSrc = () => screen.getByRole("img").getAttribute("src");
 
 beforeEach(() => {
   [selectAfter, inIds, update, from].forEach((m) => m.mockClear());
+  noteEq.mockReset();
+  noteEq.mockImplementation(async () => ({ error: null, status: 204 }));
+  localStorage.clear();
   selectAfter.mockResolvedValue({ data: [{ id: "tap-1" }], error: null });
 });
 
@@ -306,18 +312,33 @@ describe("SpotDetail: the note to the teacher", () => {
     expect(screen.getByText("read later")).toHaveClass("type-body");
   });
 
-  it("saves by itself after a pause, to the main row, and reports it with a quiet Saved", async () => {
+  it("saves by itself after a pause, through the lecture's tap queue, to the main row, with a quiet Saved", async () => {
     vi.useFakeTimers();
+    try {
+      const { onNoteSaved } = show();
+      type("ask about step 2");
+      await act(async () => vi.advanceTimersByTime(TEACHER_NOTE_SAVE_MS - 100));
+      expect(update).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(200));
+      expect(update).toHaveBeenCalledWith({ note: "ask about step 2" });
+      expect(noteEq).toHaveBeenCalledWith("id", "tap-1");
+      expect(onNoteSaved).toHaveBeenCalledWith("ask about step 2");
+      expect(document.querySelector("[data-teacher-note] [data-saved-state]")).toHaveTextContent("Saved");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offline: the note is kept on the device (the tap queue) and says Saved on this device (M3)", async () => {
+    noteEq.mockImplementation(async () => ({ error: { code: "", message: "TypeError: Failed to fetch" }, status: 0 }));
     const { onNoteSaved } = show();
-    type("ask about step 2");
-    await act(async () => vi.advanceTimersByTime(TEACHER_NOTE_SAVE_MS - 100));
-    expect(update).not.toHaveBeenCalled();
-    await act(async () => vi.advanceTimersByTime(200));
-    expect(update).toHaveBeenCalledWith({ note: "ask about step 2" });
-    expect(inIds).toHaveBeenCalledWith("id", ["tap-1"]);
-    expect(onNoteSaved).toHaveBeenCalledWith("ask about step 2");
-    expect(document.querySelector("[data-teacher-note] [data-saved-state]")).toHaveTextContent("Saved");
-    vi.useRealTimers();
+    type("on the train");
+    fireEvent.blur(input());
+    await waitFor(() => expect(document.querySelector("[data-teacher-note] [data-saved-state]")).toHaveTextContent("Saved on this device"));
+    expect(onNoteSaved).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    const queued = JSON.parse(localStorage.getItem(`backtrack:queue:${LECTURE}`) ?? "[]");
+    expect(queued).toEqual([{ op: "update", id: "tap-1", patch: { note: "on the train" } }]);
   });
 
   it("Enter saves at once (Shift+Enter does not), and so does leaving the field", async () => {
@@ -357,24 +378,23 @@ describe("SpotDetail: the note to the teacher", () => {
   });
 
   it("an emptied note is saved as no note, on every row of the slide", async () => {
-    selectAfter.mockResolvedValue({ data: [{ id: "tap-0" }, { id: "tap-1" }], error: null });
     const { onNoteSaved } = show({ spot: { ...lostSpot, ids: ["tap-0", "tap-1"], note: "old" } });
     type("   ");
     fireEvent.blur(input());
     await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith(null));
-    expect(update).toHaveBeenCalledWith({ note: null });
-    expect(inIds).toHaveBeenCalledWith("id", ["tap-0", "tap-1"]);
+    expect(update).toHaveBeenCalledWith({ note: "" });
+    expect(noteEq.mock.calls.map((c) => c[1])).toEqual(["tap-0", "tap-1"]);
   });
 
   it("shows the error plainly and keeps what was typed (sent again with the next change)", async () => {
-    selectAfter.mockResolvedValue({ data: null, error: { message: "boom" } });
+    noteEq.mockImplementation(async () => ({ error: { code: "42501", message: "boom" }, status: 403 }));
     const { onNoteSaved } = show();
     type("keep me");
     fireEvent.blur(input());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the note");
     expect(onNoteSaved).not.toHaveBeenCalled();
     expect(input()).toHaveValue("keep me");
-    selectAfter.mockResolvedValue({ data: [{ id: "tap-1" }], error: null });
+    noteEq.mockImplementation(async () => ({ error: null, status: 204 }));
     fireEvent.keyDown(input(), { key: "Enter" });
     await waitFor(() => expect(onNoteSaved).toHaveBeenCalledWith("keep me"));
   });

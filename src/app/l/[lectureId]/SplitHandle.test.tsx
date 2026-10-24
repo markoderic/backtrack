@@ -48,6 +48,11 @@ describe("SplitHandle on a phone (stacked: the notebook under the slide)", () =>
     expect(handle()).toHaveAttribute("aria-valuemax", "100");
     expect(lecture.style.getPropertyValue("--slide-scale")).toBe("");
     expect(localStorage.getItem(SLIDE_SIZE_KEY)).toBeNull();
+    // The grip is clearly visible (secondary gray), and ink while hovered, focused or dragged.
+    const grip = handle().querySelector("[data-grip]")!;
+    expect(grip.className).toContain("bg-secondary");
+    expect(grip.className).not.toContain("bg-strip");
+    expect(grip.className).toContain("group-hover:bg-ink");
   });
 
   it("dragging it up makes the slide smaller (its height follows the pointer), and the size is remembered", async () => {

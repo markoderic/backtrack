@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { applyMarkOp, MarkQueue, type LiveMark, type MarkOp, type MarkSendResult } from "./markQueue";
+import { applyMarkOp, type LiveMark, type MarkOp, type MarkSendResult } from "./markQueue";
 import { loadMyMarks, makeMarkSend, MARKS_PER_SLIDE, type MarkKind } from "./marksApi";
 import { newId } from "./newId";
 import type { Rect } from "./rect";
 import type { Loaded } from "./schemaCheck";
+import { sharedMarkQueue } from "./sharedQueues";
 import { createBrowserSupabase } from "./supabase/browser";
 
 /**
@@ -57,8 +58,9 @@ export function useLiveMarks(lectureId: string, { reconnects = 0, send, load }: 
   const [shown, setShown] = useState<ReadonlyMap<string, LiveMark>>(new Map());
   const [problem, setProblem] = useState<{ n: number; text: string } | null>(null);
 
-  const queueRef = useRef<MarkQueue | null>(null);
-  const queue = useCallback(() => (queueRef.current ??= new MarkQueue(lectureId)), [lectureId]);
+  // One queue per lecture for the whole page (sharedQueues): the live screen (also while hidden) and My
+  // spots use the same one, so no op is sent twice or out of order. Made on first use, in the browser.
+  const queue = useCallback(() => sharedMarkQueue(lectureId), [lectureId]);
   // What the database holds as far as this screen knows: the last read, plus every op sent since.
   const base = useRef(new Map<string, LiveMark>());
   // The ops sent while a read was out, so the read's answer can be brought up to date.

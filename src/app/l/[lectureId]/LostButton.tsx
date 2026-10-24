@@ -19,6 +19,7 @@ import { NotebookField, isSendKey } from "@/components/NotebookField";
 import { newId } from "@/lib/newId";
 import { LEGACY_NOTE_MAX, cutNote, noteCounterFrom, noteLength } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
+import { sharedTapQueue } from "@/lib/sharedQueues";
 import { TapQueue, isTapLimit, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
 import { useShownAgain } from "@/lib/useShownAgain";
@@ -333,7 +334,8 @@ export function LostButton({
   });
 
   // Made on first use, in the browser, never while rendering: the queue reads localStorage.
-  const queue = useCallback(() => (queueRef.current ??= new TapQueue(lectureId)), [lectureId]);
+  // One queue per lecture for the whole page (sharedQueues), shared with My spots.
+  const queue = useCallback(() => (queueRef.current ??= sharedTapQueue(lectureId)), [lectureId]);
 
   const say = useCallback((text: string) => setSaid((s) => ({ n: (s?.n ?? 0) + 1, text })), []);
 
@@ -908,7 +910,8 @@ export function LostButton({
         onBlur={onNoteBlur}
         className="flex-1"
       />
-      <span className="flex min-h-6 shrink-0 items-center gap-2 type-caption text-secondary">
+      {/* A fixed width, so "Saved" coming and going never changes the field's width. */}
+      <span className="flex min-h-6 w-16 shrink-0 items-center justify-end gap-2 type-caption text-secondary">
         {otherSlide !== null && <span data-note-slide="">Slide {otherSlide}</span>}
         {counter !== null ? (
           <span id={counterId} data-counter="">

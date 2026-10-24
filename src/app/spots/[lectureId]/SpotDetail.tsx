@@ -5,10 +5,13 @@ import Link from "next/link";
 import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { NotebookField, SavedState, isSendKey } from "@/components/NotebookField";
-import { NotebookSaver, NOTEBOOK_MAX, type NoteState } from "@/lib/notebookApi";
+import { makeSend } from "@/lib/lostTapApi";
+import { NOTEBOOK_MAX, type NoteState } from "@/lib/notebookApi";
 import type { Rect } from "@/lib/rect";
 import { LEGACY_NOTE_MAX, cutNote, noteCounterFrom, noteLength } from "@/lib/noteLimit";
+import { sharedTapQueue } from "@/lib/sharedQueues";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
+import type { QueueOp } from "@/lib/tapQueue";
 import { HighlightLayer, type ShownMark } from "../../l/[lectureId]/HighlightLayer";
 import { MarkPopover } from "../../l/[lectureId]/MarkPopover";
 import type { Spot } from "../group";
@@ -274,7 +277,9 @@ export function SpotDetail({
     return !error && !!data && data.length === ids.length;
   }
 
-  // The note to the teacher (a lost spot): typed on the page, saved by itself, one save at a time.
+  // The note to the teacher (a lost spot): typed on the page, saved by itself. It goes through the
+  // lecture's tap queue (shared with the live screen, kept on the device until it is sent), so an
+  // offline note is never lost and never crosses a note sent from the live screen.
   const [note, setNote] = useState(spot?.note ?? "");
   const [noteState, setNoteState] = useState<NoteState | null>(null);
   const spotRef = useRef(spot);
@@ -283,39 +288,64 @@ export function SpotDetail({
     spotRef.current = spot;
     onNoteSavedRef.current = onNoteSaved;
   });
-  const saverRef = useRef<NotebookSaver | null>(null);
-  // Made on first use (in a handler), never while rendering.
-  const noteSaver = () =>
-    (saverRef.current ??= new NotebookSaver({
-        delayMs: TEACHER_NOTE_SAVE_MS,
-        save: async (_slide, body) => {
-          const s = spotRef.current;
-          if (!s) return "rejected";
-          const next = body.trim() === "" ? null : body.trim();
-          try {
-            // A note goes on the main row; an emptied note clears every note on the slide's rows.
-            if (!(await change(next === null ? s.ids : [s.id], { note: next }))) return "rejected";
-          } catch {
-            return "offline";
-          }
-          onNoteSavedRef.current(next);
-          return "ok";
-        },
-        onState: (_slide, state) => setNoteState(state),
-      }));
+  // The text not queued yet, and the pause before it is.
+  const noteDirty = useRef<string | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commitNoteRef = useRef<() => Promise<void>>(async () => {});
+
+  async function commitNote() {
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = null;
+    const typed = noteDirty.current;
+    const s = spotRef.current;
+    if (typed === null || !s) return;
+    noteDirty.current = null;
+    const next = typed.trim();
+    // A note goes on the main row; an emptied note clears every note on the slide's rows.
+    const ids = next === "" ? s.ids : [s.id];
+    const queue = sharedTapQueue(lectureId);
+    for (const id of ids) queue.update(id, { note: next });
+    setNoteState("saving");
+    const mine = (op: QueueOp) => op.op === "update" && ids.includes(op.id) && op.patch.note === next;
+    let result;
+    try {
+      result = await queue.flush(makeSend(createBrowserSupabase(), lectureId));
+    } catch {
+      result = { sent: 0, rejected: [] as QueueOp[] };
+    }
+    if (result.rejected.some(mine) || result.gaveUp?.some(mine)) {
+      // Refused: kept here, and sent again with the next change, Enter or blur.
+      noteDirty.current ??= typed;
+      setNoteState("failed");
+      return;
+    }
+    // Still waiting (offline): it is on the device and goes with the next flush (here or on the live screen).
+    if (queue.pending().some(mine)) {
+      setNoteState("offline");
+      return;
+    }
+    onNoteSavedRef.current(next === "" ? null : next);
+    setNoteState("saved");
+  }
+  useEffect(() => {
+    commitNoteRef.current = commitNote;
+  });
   // Leaving the spot (another spot, back to the list): what was typed goes now.
-  useEffect(() => () => void saverRef.current?.flush(), []);
+  useEffect(() => () => void commitNoteRef.current(), []);
 
   function onNoteValue(value: string) {
     const next = cutNote(value, noteMax);
     setNote(next);
-    noteSaver().set(slideNumber, next);
+    noteDirty.current = next;
+    setNoteState("pending");
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => void commitNoteRef.current(), TEACHER_NOTE_SAVE_MS);
   }
 
   function onNoteKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (isSendKey(e)) {
       e.preventDefault();
-      void noteSaver().flush();
+      void commitNote();
     }
   }
 
@@ -631,7 +661,7 @@ export function SpotDetail({
                     value={note}
                     onValue={onNoteValue}
                     onKeyDown={onNoteKeyDown}
-                    onBlur={() => void noteSaver().flush()}
+                    onBlur={() => void commitNote()}
                     className="flex-1"
                   />
                 </div>
@@ -641,7 +671,7 @@ export function SpotDetail({
                       {counter} left
                     </span>
                   )}
-                  {noteState === "failed" || noteState === "offline" ? (
+                  {noteState === "failed" ? (
                     <Alert>Could not save the note. Try again.</Alert>
                   ) : (
                     <SavedState state={noteState} className="h-4" />

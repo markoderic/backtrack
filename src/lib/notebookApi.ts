@@ -120,6 +120,27 @@ function readStored(key: string): Map<number, string> | null {
   return out;
 }
 
+/** The slides typed on blind (before the saved notes were read), kept beside the text. */
+const blindKey = (key: string) => `${key}:blind`;
+
+function readBlind(key: string): number[] {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(blindKey(key)) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((n): n is number => Number.isInteger(n) && n >= 1) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeBlind(key: string, slides: number[]): void {
+  try {
+    if (slides.length === 0) window.localStorage.removeItem(blindKey(key));
+    else window.localStorage.setItem(blindKey(key), JSON.stringify(slides));
+  } catch {
+    // Storage is blocked: the mark stays in memory.
+  }
+}
+
 /** Writes the map under the key; false when storage is blocked or full. */
 function writeStored(key: string, map: ReadonlyMap<number, string>): boolean {
   try {
@@ -146,7 +167,16 @@ type SaverOptions = {
    * starts with what was left there and sends it with its first flush.
    */
   storageKey?: string;
+  /**
+   * Starts holding: text typed is kept (on the device too) but nothing is sent until release(),
+   * which the page calls once it has read the saved notes. Text typed before that ("blind", over an
+   * empty looking field) is then laid after the saved text, never over it.
+   */
+  held?: boolean;
 };
+
+/** Told when a slide's state changes; `body` is the text a save that went through had. */
+export type SaverListener = (slide: number, state: NoteState, body?: string) => void;
 
 /**
  * Saves notebook notes while the student types, without a save button: each change waits for a
@@ -163,11 +193,15 @@ type SaverOptions = {
  * already saved is not sent again (it would undo an edit made there).
  */
 export class NotebookSaver {
-  private readonly save: SaverOptions["save"];
+  private save: SaverOptions["save"];
   private readonly delayMs: number;
-  private readonly onState?: SaverOptions["onState"];
+  private readonly listeners = new Set<SaverListener>();
   private readonly onError?: SaverOptions["onError"];
   private readonly storageKey?: string;
+  /** Nothing is sent while held (the saved notes are not read yet). */
+  private held: boolean;
+  /** Slides typed on while held: their text goes after the saved text once it is known. */
+  private readonly blind = new Set<number>();
   /** Text not sent yet, by slide. */
   private readonly waiting = new Map<number, string>();
   /** Text that is out right now, by slide (not saved until the database says so). */
@@ -181,12 +215,13 @@ export class NotebookSaver {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly sending = new Map<number, Promise<void>>();
 
-  constructor({ save, delayMs = 800, onState, onError, storageKey }: SaverOptions) {
+  constructor({ save, delayMs = 800, onState, onError, storageKey, held = false }: SaverOptions) {
     this.save = save;
     this.delayMs = delayMs;
-    this.onState = onState;
+    if (onState) this.listeners.add(onState);
     this.onError = onError;
     this.storageKey = storageKey;
+    this.held = held;
     if (storageKey) {
       const stored = readStored(storageKey);
       this.seen = stored;
@@ -194,9 +229,53 @@ export class NotebookSaver {
         this.waiting.set(slide, body);
         this.touched.add(slide);
       }
+      // Typed blind on a visit that ended before the saved notes were read: still blind.
+      for (const slide of readBlind(storageKey)) if (this.waiting.has(slide)) this.blind.add(slide);
     }
   }
 
+  private onState(slide: number, state: NoteState, body?: string): void {
+    for (const listener of this.listeners) listener(slide, state, body);
+  }
+
+  /** Listens to the slides' states (a page using this saver). Returns the way to stop. */
+  subscribe(listener: SaverListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /** Sends with this from now on (the page that uses the saver chooses how). */
+  setSave(save: SaverOptions["save"]): void {
+    this.save = save;
+  }
+
+  /** Whether it still waits for the saved notes to be read (nothing is sent meanwhile). */
+  isHeld(): boolean {
+    return this.held;
+  }
+
+  /**
+   * The saved notes are read (`base`, by slide), or the notebook table is not there (null): sending
+   * starts. A slide typed on before this keeps its saved text, with what was typed after it (on a
+   * new line), so nothing typed over an empty looking field ever replaces a saved note.
+   */
+  release(base: ReadonlyMap<number, string> | null): void {
+    if (!this.held) return;
+    this.held = false;
+    if (base) {
+      for (const slide of this.blind) {
+        const typed = this.waiting.get(slide);
+        const saved = base.get(slide) ?? "";
+        if (typed === undefined || saved.trim() === "" || typed.startsWith(saved)) continue;
+        this.waiting.set(slide, typed.trim() === "" ? saved : `${saved}\n${typed}`);
+      }
+    }
+    this.blind.clear();
+    this.persist();
+    for (const slide of this.waiting.keys()) this.onState(slide, "pending");
+  }
   /**
    * Takes the device copy's changes made by another page since this saver last looked: newer text
    * becomes this saver's waiting text; a slide whose text is gone from there (that page saved it)
@@ -225,8 +304,15 @@ export class NotebookSaver {
     this.sync();
     this.waiting.set(slide, body);
     this.touched.add(slide);
+    if (this.held) {
+      // Not sent yet: the saved notes are not read. Kept (and marked blind) on the device.
+      this.blind.add(slide);
+      this.persist();
+      this.onState(slide, "pending");
+      return;
+    }
     this.persist();
-    this.onState?.(slide, "pending");
+    this.onState(slide, "pending");
     clearTimeout(this.timers.get(slide));
     this.timers.set(
       slide,
@@ -240,6 +326,10 @@ export class NotebookSaver {
   /** Sends every slide's waiting text now, and resolves once all of them are done. */
   async flush(): Promise<void> {
     this.sync();
+    if (this.held) {
+      this.persist();
+      return;
+    }
     for (const [slide, timer] of this.timers) {
       clearTimeout(timer);
       this.timers.delete(slide);
@@ -284,6 +374,14 @@ export class NotebookSaver {
     }
     if (changed) this.seen = writeStored(this.storageKey, stored) ? stored : null;
     else if (this.seen !== null) this.seen = stored;
+    writeBlind(this.storageKey, [...this.blind].filter((slide) => stored.has(slide)));
+  }
+
+  /** Stops the timers and drops everything (tests: a fresh saver next time). */
+  halt(): void {
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
+    this.listeners.clear();
   }
 
   /** Stops the timers (the page is going). Waiting text stays in pending() and on the device. */
@@ -301,7 +399,7 @@ export class NotebookSaver {
     if (body === undefined) return Promise.resolve();
     this.waiting.delete(slide);
     this.inFlight.set(slide, body);
-    this.onState?.(slide, "saving");
+    this.onState(slide, "saving");
     const run = this.save(slide, body)
       .catch((e: unknown) => {
         this.onError?.(e);
@@ -313,13 +411,13 @@ export class NotebookSaver {
         if (result === "ok") {
           this.saved.set(slide, body);
           this.persist();
-          if (!this.waiting.has(slide)) this.onState?.(slide, "saved");
+          if (!this.waiting.has(slide)) this.onState(slide, "saved", body);
           return;
         }
         // Kept for the next try, unless newer text came in meanwhile.
         if (!this.waiting.has(slide)) this.waiting.set(slide, body);
         this.persist();
-        this.onState?.(slide, result === "offline" || result === "throttled" ? "offline" : result === "missing" ? "missing" : "failed");
+        this.onState(slide, result === "offline" || result === "throttled" ? "offline" : result === "missing" ? "missing" : "failed");
       });
     this.sending.set(slide, run);
     return run;

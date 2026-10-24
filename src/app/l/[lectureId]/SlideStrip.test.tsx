@@ -200,7 +200,8 @@ describe("SlideStrip", () => {
       const g = geometry(screen.getByRole("list"), 30);
       g.scrollTo.mockClear();
       act(() => observed?.());
-      expect(g.scrollTo).toHaveBeenLastCalledWith({ left: 30 * DOT - 220, behavior: "smooth" });
+      // A width change alone jumps (a smooth scroll from the middle of another could stop short).
+      expect(g.scrollTo).toHaveBeenLastCalledWith({ left: 30 * DOT - 220, behavior: "auto" });
       vi.unstubAllGlobals();
     });
 

@@ -74,3 +74,87 @@ describe("useNotebook", () => {
     expect(JSON.parse(localStorage.getItem(`backtrack:notebook:${LECTURE}`) ?? "{}")).toEqual({ "1": "here only" });
   });
 });
+
+describe("useNotebook: typing before the saved notes are read (K2 review I1)", () => {
+  it("text typed while the first read is out never replaces the saved note: it goes after it, and nothing is sent before", async () => {
+    let answer: (v: Loaded<NotebookNote[]>) => void = () => {};
+    const load = vi.fn<Load>(() => new Promise((r) => (answer = r)));
+    const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
+    const { result } = renderHook(() => useNotebook(LECTURE, { save, load }));
+    await settle();
+    act(() => result.current.set(7, "x"));
+    await act(async () => result.current.flush());
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => answer({ status: "ok", data: [note(7, "two pages of notes from before the reload")] }));
+    await settle();
+    expect(result.current.textOf(7)).toBe("two pages of notes from before the reload\nx");
+    expect(save.mock.calls).toEqual([[7, "two pages of notes from before the reload\nx"]]);
+  });
+
+  it("a first read that fails offline keeps the typing on the device (not sent); the next read that answers merges it", async () => {
+    const load = vi
+      .fn<Load>()
+      .mockResolvedValueOnce({ status: "offline" } as Loaded<NotebookNote[]>)
+      .mockResolvedValue({ status: "ok", data: [note(3, "saved")] });
+    const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
+    const { result } = renderHook(() => useNotebook(LECTURE, { save, load }));
+    await settle();
+    act(() => result.current.set(3, "typed offline"));
+    await act(async () => result.current.flush());
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(`backtrack:notebook:${LECTURE}`) ?? "{}")).toEqual({ "3": "typed offline" });
+    await act(async () => result.current.reload());
+    await settle();
+    expect(save.mock.calls).toEqual([[3, "saved\ntyped offline"]]);
+    expect(result.current.textOf(3)).toBe("saved\ntyped offline");
+  });
+
+  it("text typed blind on a visit that ended before the read is still merged on the next visit", async () => {
+    const first = renderHook(() => useNotebook(LECTURE, { save: vi.fn(async () => "ok" as const), load: () => new Promise(() => {}) }));
+    await settle();
+    act(() => first.result.current.set(2, "before the read"));
+    first.unmount();
+    const { forgetSharedQueues } = await import("./sharedQueues");
+    forgetSharedQueues();
+    const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>(async () => "ok");
+    renderHook(() => useNotebook(LECTURE, { save, load: async () => ({ status: "ok", data: [note(2, "saved")] }) }));
+    await settle();
+    await settle();
+    expect(save.mock.calls).toEqual([[2, "saved\nbefore the read"]]);
+  });
+});
+
+describe("useNotebook: one saver per lecture for the page (K2 review I3)", () => {
+  it("the live screen's save that is out and My spots' newer edit reach the database in order: the newer text wins", async () => {
+    const calls: [number, string][] = [];
+    const finishes: ((r: WriteResult) => void)[] = [];
+    const save = vi.fn<(s: number, b: string) => Promise<WriteResult>>((s, b) => {
+      calls.push([s, b]);
+      return new Promise<WriteResult>((r) => finishes.push(r));
+    });
+    const load = async () => ({ status: "ok" as const, data: [] as NotebookNote[] });
+    const live = renderHook(() => useNotebook(LECTURE, { save, load }));
+    const spots = renderHook(() => useNotebook(LECTURE, { save, load }));
+    await settle();
+    await settle();
+    act(() => live.result.current.set(7, "A"));
+    void live.result.current.flush();
+    await settle();
+    expect(calls).toEqual([[7, "A"]]);
+    // In My spots, while "A" is still out: the student edits the same slide.
+    act(() => spots.result.current.set(7, "B"));
+    void spots.result.current.flush();
+    await settle();
+    // Only one save of the slide at a time, across both pages.
+    expect(calls).toEqual([[7, "A"]]);
+    await act(async () => finishes.shift()!("ok"));
+    await settle();
+    expect(calls).toEqual([
+      [7, "A"],
+      [7, "B"],
+    ]);
+    await act(async () => finishes.shift()!("ok"));
+    expect(spots.result.current.stateOf(7)).toBe("saved");
+    expect(localStorage.getItem(`backtrack:notebook:${LECTURE}`)).toBeNull();
+  });
+});

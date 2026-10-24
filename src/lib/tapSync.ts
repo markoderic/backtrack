@@ -1,6 +1,7 @@
 import { makeSend } from "./lostTapApi";
 import { createBrowserSupabase } from "./supabase/browser";
-import { TapQueue, isTapLimit, type FlushResult, type QueueOp, type SendResult } from "./tapQueue";
+import { sharedTapQueue } from "./sharedQueues";
+import { isTapLimit, type FlushResult, type QueueOp, type SendResult } from "./tapQueue";
 
 /** sessionStorage key that says a tap of this lecture was refused by the database. */
 export const rejectedKey = (lectureId: string) => `backtrack:rejected:${lectureId}`;
@@ -26,7 +27,7 @@ export async function flushLeftoverTaps(
   send: (op: QueueOp) => Promise<SendResult> = (op) => makeSend(createBrowserSupabase(), lectureId)(op),
 ): Promise<FlushResult> {
   const limited = new WeakSet<QueueOp>();
-  const result = await new TapQueue(lectureId).flush(async (op) => {
+  const result = await sharedTapQueue(lectureId).flush(async (op) => {
     const r = await send(op);
     if (!isTapLimit(r)) return r;
     limited.add(op);

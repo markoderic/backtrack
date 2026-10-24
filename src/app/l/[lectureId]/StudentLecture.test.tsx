@@ -101,7 +101,7 @@ vi.mock("@/lib/useHere", () => ({
 }));
 
 import { forgetTeacherNoteMax } from "@/lib/noteLimit";
-import { StudentLecture } from "./StudentLecture";
+import { NOTEBOOK_PIN_MS, StudentLecture } from "./StudentLecture";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const STUDENT = "44444444-4444-4444-4444-000000000001";
@@ -1354,13 +1354,20 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
   it("puts the stored kind right once the taps and marks are read: a yellow mark on a lost slide becomes lost, a red one elsewhere save", async () => {
     ownRows.mockResolvedValue({ data: [{ id: "t1", slide_number: 7, kind: "lost", note: null, hl_x: null, hl_y: null, hl_w: null, hl_h: null }], error: null, status: 200 });
     myMarks.mockResolvedValue({ data: [markRow({ kind: "save" }), markRow({ id: "m2", slide_number: 5, kind: "lost" })], error: null, status: 200 });
-    show(7);
-    await waitFor(() => expect(markUpdate).toHaveBeenCalledTimes(2), { timeout: 3000 });
-    const asked = markUpdateFilters.mock.calls.filter((c) => c[1] === "eq" && c[2] === "slide_number").map((c) => [c[0], c[3]]);
-    expect(asked).toEqual(expect.arrayContaining([[{ kind: "lost" }, 7], [{ kind: "save" }, 5]]));
-    // Asked once, not again and again.
-    await act(async () => new Promise((r) => setTimeout(r, 1200)));
-    expect(markUpdate).toHaveBeenCalledTimes(2);
+    // Fake timers (they still run on their own), so the 1 s reconcile does not race a busy machine.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      show(7);
+      for (let i = 0; i < 6 && markUpdate.mock.calls.length < 2; i++) await act(async () => vi.advanceTimersByTimeAsync(500));
+      expect(markUpdate).toHaveBeenCalledTimes(2);
+      const asked = markUpdateFilters.mock.calls.filter((c) => c[1] === "eq" && c[2] === "slide_number").map((c) => [c[0], c[3]]);
+      expect(asked).toEqual(expect.arrayContaining([[{ kind: "lost" }, 7], [{ kind: "save" }, 5]]));
+      // Asked once, not again and again.
+      for (let i = 0; i < 4; i++) await act(async () => vi.advanceTimersByTimeAsync(500));
+      expect(markUpdate).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("asks for a kind change once even when the database refuses it slowly (K1 re-review N1)", async () => {
@@ -1494,7 +1501,7 @@ describe("StudentLecture notebook (batch K2: typed on the page, one private note
     fireEvent.change(notebook(), { target: { value: "accrual = earned, not paid" } });
     expect(notebookSave).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem(NB_KEY) ?? "{}")).toEqual({ "7": "accrual = earned, not paid" });
-    await waitFor(() => expect(notebookSave).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    await waitFor(() => expect(notebookSave).toHaveBeenCalledTimes(1), { timeout: 4000 });
     expect(saves()[0]).toEqual({ p_lecture_id: LECTURE, p_slide_number: 7, p_body: "accrual = earned, not paid" });
     await waitFor(() => expect(within(notes()).getByRole("status")).toHaveTextContent("Saved"));
     expect(localStorage.getItem(NB_KEY)).toBeNull();
@@ -1511,6 +1518,43 @@ describe("StudentLecture notebook (batch K2: typed on the page, one private note
     fireEvent.change(notebook(), { target: { value: "second" } });
     fireEvent.click(back());
     await waitFor(() => expect(saves().at(-1)).toEqual(expect.objectContaining({ p_slide_number: 7, p_body: "second" })));
+  });
+
+  it("typing on while the teacher moves on keeps the notes on their slide (Slide 7), never splitting them (K2 review I2)", async () => {
+    show(7);
+    await settle();
+    await act(async () => channelStatus("SUBSCRIBED"));
+    const field = notebook(7);
+    field.focus();
+    fireEvent.change(field, { target: { value: "accrual means the" } });
+    teacherMoves(8);
+    // Still slide 7's notes, with its number shown quietly.
+    expect(screen.getByRole("textbox", { name: "Your notes, slide 7" })).toBe(field);
+    expect(field).toHaveValue("accrual means the");
+    expect(document.querySelector("[data-notebook-slide]")).toHaveTextContent("Slide 7");
+    fireEvent.change(field, { target: { value: "accrual means the revenue is earned" } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(saves().at(-1)).toEqual(expect.objectContaining({ p_slide_number: 7, p_body: "accrual means the revenue is earned" })));
+    expect(saves().some((c) => c.p_slide_number === 8)).toBe(false);
+    // Let go: the field follows the slide on screen again.
+    expect(notebook(8)).toHaveValue("");
+    expect(document.querySelector("[data-notebook-slide]")).toHaveTextContent("");
+  });
+
+  it("after a pause in typing the notes follow the slide on screen again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      show(7);
+      await settle();
+      await act(async () => channelStatus("SUBSCRIBED"));
+      fireEvent.change(notebook(7), { target: { value: "seven" } });
+      teacherMoves(8);
+      expect(notebook(7)).toHaveValue("seven");
+      await act(async () => vi.advanceTimersByTimeAsync(NOTEBOOK_PIN_MS));
+      expect(notebook(8)).toHaveValue("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("offline: keeps the text on the device, says so, and sends it when the browser is back online", async () => {

@@ -31,6 +31,11 @@ const LOADING_TEXT_MS = 300;
 /** The My spots count is red this long after an I'm lost. */
 const COUNT_RED_MS = 2000;
 const WIDE = 16 / 9;
+/**
+ * The notebook stays on the slide it is being typed on this long after the last key, while it has the
+ * focus, even when the teacher moves on (so a sentence never splits across two slides).
+ */
+export const NOTEBOOK_PIN_MS = 3000;
 /** The marks' stored kind is put right this long after the marks and the taps were last changed. */
 const RECONCILE_MS = 1000;
 
@@ -101,6 +106,16 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const notebook = useNotebook(lectureId);
   // Where LostButton puts the note to the teacher: the top of the notebook area.
   const [noteSlot, setNoteSlot] = useState<HTMLElement | null>(null);
+  // The slide the notebook is being typed on (null: it follows the slide on screen). Kept while the
+  // field has the focus and was typed in within NOTEBOOK_PIN_MS; let go on blur or after the pause.
+  const [notebookPin, setNotebookPin] = useState<number | null>(null);
+  const pinTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (pinTimer.current) clearTimeout(pinTimer.current);
+    },
+    [],
+  );
   // Before 0020 a mark is the one highlight on the slide's spot (lost_taps.hl_*), through the panel.
   const legacy = marks.mode === "legacy";
   // One dot per slide: red if any row there is an I'm lost, open if they are all saves, a yellow dot
@@ -238,6 +253,26 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   useEffect(() => {
     void flushNotebookRef.current();
   }, [viewing]);
+
+  // The notebook field's slide: the one it is being typed on, else the one on screen.
+  const notebookSlide = notebookPin ?? viewing;
+  const typeNotebook = (text: string) => {
+    const slide = notebookPin ?? viewing;
+    if (notebookPin === null) setNotebookPin(slide);
+    notebook.set(slide, cutNote(text, NOTEBOOK_MAX));
+    if (pinTimer.current) clearTimeout(pinTimer.current);
+    pinTimer.current = setTimeout(() => {
+      pinTimer.current = null;
+      setNotebookPin(null);
+      void flushNotebookRef.current();
+    }, NOTEBOOK_PIN_MS);
+  };
+  const leaveNotebook = () => {
+    if (pinTimer.current) clearTimeout(pinTimer.current);
+    pinTimer.current = null;
+    setNotebookPin(null);
+    void notebook.flush();
+  };
 
   // The slide changes at once; the loading text only shows when the image is slow.
   const imageKey = url ?? `slide-${viewing}`;
@@ -400,14 +435,20 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           {/* The note to the teacher, on a slide where the student is lost (LostButton puts it here). */}
           <div ref={setNoteSlot} data-teacher-slot="" className="shrink-0 empty:hidden [&:not(:empty)]:pb-3" />
           <NotebookField
-            aria-label={`Your notes, slide ${viewing}`}
+            aria-label={`Your notes, slide ${notebookSlide}`}
             placeholder="Your notes"
-            value={notebook.textOf(viewing)}
-            onValue={(text) => notebook.set(viewing, cutNote(text, NOTEBOOK_MAX))}
-            onBlur={() => void notebook.flush()}
+            value={notebook.textOf(notebookSlide)}
+            onValue={typeNotebook}
+            onBlur={leaveNotebook}
             className="min-h-12 flex-1"
           />
-          <SavedState state={notebook.stateOf(viewing)} className="h-4 shrink-0 pt-1 text-right" />
+          <div className="flex h-5 shrink-0 items-end justify-between gap-3 pt-1">
+            {/* Typing on while the teacher moved on: the notes stay with their slide for now. */}
+            <span data-notebook-slide="" className="type-caption text-secondary">
+              {notebookSlide !== viewing ? `Slide ${notebookSlide}` : ""}
+            </span>
+            <SavedState state={notebook.stateOf(notebookSlide)} className="text-right" />
+          </div>
         </div>
         {behind && (
           // On a laptop, at the bottom of the sidebar above My spots: it comes and goes without moving

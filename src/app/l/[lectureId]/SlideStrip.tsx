@@ -75,6 +75,8 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
   // The dot whose tooltip shows, and its center from the strip's left edge.
   const [tip, setTip] = useState<{ n: number; x: number } | null>(null);
 
+  // The slide on screen and the live slide as last scrolled for.
+  const shown = useRef({ viewing, count });
   // The strip gets narrower or wider (the window, or the slide size handle): the same again.
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -90,8 +92,12 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
     const list = listRef.current;
     const here = list?.querySelector<HTMLElement>("[aria-current]");
     if (!list || !here) return;
-    // The first look (the page opening) jumps; later changes scroll smoothly.
-    const smooth = !firstScroll.current && !reducedMotion();
+    // The first look (the page opening) jumps; later slide changes scroll smoothly. A change of the strip's
+    // width alone (the window, or the slide size handle while it is dragged) jumps too: a smooth scroll
+    // started from the middle of another one could stop short and leave the dot half cut off.
+    const widthOnly = shown.current.viewing === viewing && shown.current.count === count;
+    shown.current = { viewing, count };
+    const smooth = !firstScroll.current && !widthOnly && !reducedMotion();
     firstScroll.current = false;
     const max = list.scrollWidth - list.clientWidth;
     if (max <= 0) return;

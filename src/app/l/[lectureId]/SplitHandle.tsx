@@ -184,7 +184,7 @@ export function SplitHandle() {
       <span
         aria-hidden
         data-grip=""
-        className="rounded-full bg-strip transition-colors duration-(--dur-fast) ease-out group-hover:bg-secondary group-focus-visible:bg-ink group-data-dragging:bg-ink"
+        className="rounded-full bg-secondary transition-colors duration-(--dur-fast) ease-out group-hover:bg-ink group-focus-visible:bg-ink group-data-dragging:bg-ink"
       />
     </div>
   );

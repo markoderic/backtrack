@@ -52,7 +52,9 @@ const rpc = vi.fn((name: string, args?: unknown) =>
 );
 const selectAfter = vi.fn();
 const eqId = vi.fn(() => ({ select: selectAfter }));
-const update = vi.fn(() => ({ in: eqId }));
+// The note to the teacher goes through the tap queue: update(patch).eq("id", id) (makeSend).
+const noteEq = vi.fn(async (...args: unknown[]) => (void args, { error: null, status: 204 }));
+const update = vi.fn((...args: unknown[]) => (void args, { in: eqId, eq: noteEq }));
 // Writes on slide_marks (0020): update(...).eq(...)[.eq().neq()], delete().eq(...), upsert(...). Each records its call.
 const markWrites: unknown[][] = [];
 function markStep(record: unknown[]) {
@@ -488,6 +490,7 @@ describe("SpotsView: opening a spot", () => {
     fireEvent.change(field, { target: { value: "ask Dr. Lee" } });
     fireEvent.blur(field);
     await waitFor(() => expect(update).toHaveBeenCalledWith({ note: "ask Dr. Lee" }));
+    expect(noteEq).toHaveBeenCalledWith("id", "a");
     await waitFor(() => expect(document.querySelector("[data-teacher-note] [data-saved-state]")).toHaveTextContent("Saved"));
     fireEvent.click(screen.getByRole("button", { name: "Back to My spots" }));
     const items = await screen.findAllByRole("listitem");

@@ -29,13 +29,26 @@ export const NotebookField = forwardRef<HTMLTextAreaElement, Props>(function Not
 ) {
   const inner = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => inner.current as HTMLTextAreaElement);
-  // Grows with its text, a line (24 px) at a time.
+  // Grows with its text, a line (24 px) at a time: when the text changes, and when the field gets
+  // narrower or wider (a "Saved" beside it, the sidebar resized), so its last line is never hidden.
   useEffect(() => {
     const field = inner.current;
     if (!grow || !field) return;
-    field.style.height = "";
-    const lines = Math.min(Math.max(Math.ceil(field.scrollHeight / 24), Number(rows)), maxRows);
-    field.style.height = `${lines * 24}px`;
+    const fit = () => {
+      field.style.height = "";
+      const lines = Math.min(Math.max(Math.ceil(field.scrollHeight / 24), Number(rows)), maxRows);
+      field.style.height = `${lines * 24}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let width = field.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (field.clientWidth === width) return;
+      width = field.clientWidth;
+      fit();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
   }, [value, grow, rows, maxRows]);
   return (
     <textarea

@@ -144,4 +144,34 @@ describe("useLiveMarks", () => {
     await settle();
     expect(load).toHaveBeenCalledTimes(3);
   });
+
+  it("one mark queue for the page: a mark My spots deletes while the live screen's run is out is never sent (K2 review I4)", async () => {
+    const sent: MarkOp[] = [];
+    const finishes: ((r: MarkSendResult) => void)[] = [];
+    const send = vi.fn<(op: MarkOp) => Promise<MarkSendResult>>((op) => {
+      sent.push(op);
+      return new Promise<MarkSendResult>((r) => finishes.push(r));
+    });
+    const load = vi.fn<Load>(async () => ({ status: "ok", data: [] }));
+    const live = renderHook(() => useLiveMarks(LECTURE, { send, load }));
+    await settle();
+    let a = "";
+    let b = "";
+    act(() => {
+      a = live.result.current.add(7, R, "save")!;
+      b = live.result.current.add(7, { ...R, x: 0.5 }, "save")!;
+    });
+    await settle();
+    expect(sent.map((o) => (o.op === "add" ? o.mark.id : o.op))).toEqual([a]);
+    // My spots, while a's add is out: it deletes b (never sent, so the delete just takes its add out).
+    const spots = renderHook(() => useLiveMarks(LECTURE, { send, load }));
+    await settle();
+    act(() => spots.result.current.remove(b));
+    await act(async () => finishes.shift()!("ok"));
+    await settle();
+    await settle();
+    expect(sent.map((o) => (o.op === "add" ? `add:${o.mark.id}` : o.op))).toEqual([`add:${a}`]);
+    expect(localStorage.getItem(`backtrack:marks:${LECTURE}`)).toBeNull();
+    expect(live.result.current.marks.map((m) => m.id)).toEqual([a]);
+  });
 });
