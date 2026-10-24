@@ -163,6 +163,23 @@ describe("PastBody", () => {
     });
   });
 
+  it("the course crumb carries the section (\"ACC 221 A\"), and before 0018 it reads the course without it", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: { ...lecture, courses: { ...lecture.courses, section: "Section A" } }, error: null });
+    const first = render(await PastBody({ params }));
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^ACC 221 A$/);
+    first.unmount();
+    selects.length = 0;
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses_1.section does not exist" } })
+      .mockResolvedValueOnce({ data: lecture, error: null });
+    render(await PastBody({ params }));
+    expect(selects.filter(([t]) => t === "lectures").map(([, c]) => /courses!inner\(([^)]*)\)/.exec(String(c))?.[1])).toEqual([
+      "teacher_id, name, section",
+      "teacher_id, name",
+    ]);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^ACC 221$/);
+  });
+
   it("heads the page with the top bar, when it ran and Export this lecture, a white button", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
     render(await PastBody({ params }));

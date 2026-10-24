@@ -57,6 +57,14 @@ describe("CourseGrid: Archive from a card's ⋯", () => {
     expect(h.refresh).toHaveBeenCalled();
   });
 
+  it("the note names the section as the card does (\"Archived ACC 221 A.\")", async () => {
+    const withSection: GridCourse = { ...acc, details: { color: null, section: "Section A", meetDays: [], startMinute: null, endMinute: null } };
+    render(<CourseGrid courses={[ims, withSection]} options />);
+    archive("ACC 221 A");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Archived ACC 221 A."));
+    expect(screen.getByRole("button", { name: "Undo, unarchive ACC 221 A" })).toHaveFocus();
+  });
+
   it("Undo brings the card back (even once the server list has dropped it) with the keyboard on its ⋯", async () => {
     const { rerender } = render(<CourseGrid courses={[ims, acc]} options />);
     archive("IMS 452");

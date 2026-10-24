@@ -33,6 +33,11 @@ const RETRY_FIRST_MS = 1000;
  * while that student is lost on the slide, and Realtime sends no mark event when that changes.
  */
 export const MARKS_RELOAD_MS = 300;
+/**
+ * While lost tap events keep coming less than MARKS_RELOAD_MS apart, the marks are still read at
+ * least this often (from the first event of the burst), so red marks never wait for the room to go quiet.
+ */
+export const MARKS_RELOAD_MAX_MS = 2000;
 const RETRY_MAX_MS = 10000;
 const PAGE = 1000;
 
@@ -320,6 +325,11 @@ export function LectureData({
     let marksTimer: ReturnType<typeof setTimeout> | undefined;
     let marksBusy = false;
     let marksAgain = false;
+    // When the first tap event of the current burst came (for MARKS_RELOAD_MAX_MS).
+    let burstStart: number | null = null;
+    // Each marks read is numbered; only the answer of the newest one is used, so an older read that
+    // lands last (a refetch next to a reload) never puts back what a newer read no longer has.
+    let marksGen = 0;
     // The joined count: a join event adds one at once and a recount follows, so it can't
     // stay one too high when an event is for a student a read already counted.
     const joinedCount = createJoinedCounter(() => readJoined(supabase, lectureId), setJoined);
@@ -337,11 +347,13 @@ export function LectureData({
      * from the taps' own highlight. Any other failure keeps what is on screen.
      */
     async function readMarks(): Promise<boolean> {
+      const gen = ++marksGen;
       const touched = new Set<string>();
       marksInflight.add(touched);
       try {
         const res = await loadLostMarks(supabase, lectureId);
-        if (cancelled) return true;
+        // Cancelled, or a newer read was asked for meanwhile: that one's answer counts.
+        if (cancelled || gen !== marksGen) return true;
         if (res.status === "missing") {
           setMarksFrom("taps");
           return true;
@@ -369,8 +381,13 @@ export function LectureData({
     // Reads the red marks again shortly after a lost tap changed (one read for a burst of taps, and
     // never two at once: a change during a read asks for one more after it).
     const reloadMarksSoon = () => {
+      const now = Date.now();
+      burstStart ??= now;
       clearTimeout(marksTimer);
+      // 300 ms after the last event, but never later than 2 s after the first one of the burst.
+      const wait = Math.max(0, Math.min(MARKS_RELOAD_MS, burstStart + MARKS_RELOAD_MAX_MS - now));
       marksTimer = setTimeout(async () => {
+        burstStart = null;
         if (marksBusy) {
           marksAgain = true;
           return;
@@ -384,7 +401,7 @@ export function LectureData({
         } finally {
           marksBusy = false;
         }
-      }, MARKS_RELOAD_MS);
+      }, wait);
     };
 
     // The three reads run side by side and each shows what it brings as soon as it is back:

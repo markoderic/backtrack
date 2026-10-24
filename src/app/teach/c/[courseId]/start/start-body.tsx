@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { readTeacherName } from "../../../teacher";
-import { TeacherPage, splitCourseName } from "../../../ui";
+import { TeacherPage, courseTitleText, splitCourseName } from "../../../ui";
 import { StartForm } from "./start-form";
 
 export async function StartBody({ params }: { params: Promise<{ courseId: string }> }) {
@@ -14,11 +14,12 @@ export async function StartBody({ params }: { params: Promise<{ courseId: string
   if (!user) redirect("/teach");
 
   // Row level security only returns the course to the teacher who owns it.
-  const { data: course, error } = await supabase
-    .from("courses")
-    .select("id, name")
-    .eq("id", courseId)
-    .maybeSingle();
+  const read = (columns: string) => supabase.from("courses").select(columns).eq("id", courseId).maybeSingle();
+  // The section is in the breadcrumb ("ACC 221 A"); before migration 0018 the column is not there.
+  let res = await read("id, name, section");
+  if (res.error?.code === "42703") res = await read("id, name");
+  const { error } = res;
+  const course = res.data as { id: string; name: string; section?: string | null } | null;
   // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing course.
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!course) notFound();
@@ -29,7 +30,7 @@ export async function StartBody({ params }: { params: Promise<{ courseId: string
   ]);
   if (countError) throw new Error(countError.message);
 
-  const { code } = splitCourseName(course.name);
+  const code = courseTitleText(splitCourseName(course.name).code, course.section);
   return (
     <TeacherPage
       crumbs={[

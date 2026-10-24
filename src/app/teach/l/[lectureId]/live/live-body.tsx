@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { LectureData } from "./LectureData";
 import { readTeacherName } from "../../../teacher";
-import { TeacherTopBar, splitCourseName } from "../../../ui";
+import { TeacherTopBar, courseTitleText, splitCourseName } from "../../../ui";
 
 export type LiveSearchParams = Promise<{ end?: string | string[] }>;
 
@@ -24,12 +24,21 @@ export async function LiveBody({
 
   // Students who joined a lecture can read it too, so ownership is asked for
   // explicitly: only a lecture of one of this teacher's own courses comes back.
-  const { data: lecture, error } = await supabase
-    .from("lectures")
-    .select("id, course_id, name, code, status, current_slide, slide_count, courses!inner(teacher_id, name)")
-    .eq("id", lectureId)
-    .eq("courses.teacher_id", user.id)
-    .maybeSingle();
+  const read = (withSection: boolean) =>
+    supabase
+      .from("lectures")
+      .select(
+        withSection
+          ? "id, course_id, name, code, status, current_slide, slide_count, courses!inner(teacher_id, name, section)"
+          : "id, course_id, name, code, status, current_slide, slide_count, courses!inner(teacher_id, name)",
+      )
+      .eq("id", lectureId)
+      .eq("courses.teacher_id", user.id)
+      .maybeSingle();
+  // The course's section is in the breadcrumb ("ACC 221 A"); before migration 0018 it is not there.
+  let res = await read(true);
+  if (res.error?.code === "42703") res = await read(false);
+  const { data: lecture, error } = res;
   // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing lecture.
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!lecture) notFound();
@@ -51,9 +60,10 @@ export async function LiveBody({
     first_line: firstLines.get(i + 1) ?? "",
   }));
 
-  const courseRel = (lecture as { courses?: { name?: string } | { name?: string }[] }).courses;
-  const courseName = (Array.isArray(courseRel) ? courseRel[0]?.name : courseRel?.name) ?? "";
-  const { code: courseCode } = splitCourseName(courseName);
+  type CourseRel = { name?: string; section?: string | null };
+  const courseRel = (lecture as { courses?: CourseRel | CourseRel[] }).courses;
+  const course = Array.isArray(courseRel) ? courseRel[0] : courseRel;
+  const courseCode = courseTitleText(splitCourseName(course?.name ?? "").code, course?.section);
 
   return (
     <div className="flex min-h-screen flex-col">

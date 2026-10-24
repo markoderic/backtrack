@@ -17,10 +17,22 @@ type Abortable<T> = PromiseLike<T> & { abortSignal?: (signal: AbortSignal) => Pr
 export async function timed<T>(query: Abortable<T>, ms: number = REQUEST_TIMEOUT_MS): Promise<T> {
   if (typeof query.abortSignal !== "function") return await query;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    return await query.abortSignal(controller.signal);
-  } finally {
-    clearTimeout(timer);
-  }
+  // supabase-js may wait on the login (a token refresh) before the fetch even starts, where the
+  // signal can not reach: the same limit answers for that wait too (review M6).
+  return withLimit(query.abortSignal(controller.signal), ms, () => {
+    controller.abort();
+    return FAILED_FETCH as T;
+  });
+}
+
+/** What supabase-js gives for a fetch that failed: every caller here reads it as offline. */
+const FAILED_FETCH = { data: null, error: { message: "The request took too long.", code: "" }, status: 0 };
+
+/** The promise's answer, or after `ms` what `late` gives (the promise is then left to end on its own). */
+export function withLimit<T>(work: PromiseLike<T>, ms: number, late: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(late()), ms);
+  });
+  return Promise.race([Promise.resolve(work), limit]).finally(() => clearTimeout(timer));
 }

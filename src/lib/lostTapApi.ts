@@ -1,7 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isRect, type Rect } from "./rect";
 import type { QueueOp, SendResult } from "./tapQueue";
-import { timed } from "./requestTimeout";
+import { REQUEST_TIMEOUT_MS, timed, withLimit } from "./requestTimeout";
+
+/** The login from the device; a refresh that hangs counts as offline after 15 s (review M6). */
+const sessionWithLimit = (supabase: SupabaseClient) =>
+  withLimit(
+    supabase.auth.getSession(),
+    REQUEST_TIMEOUT_MS,
+    () =>
+      ({ data: { session: null }, error: { message: "The login took too long.", code: "", status: 0 } }) as unknown as Awaited<
+        ReturnType<SupabaseClient["auth"]["getSession"]>
+      >,
+  );
 
 /** One of the student's own rows, as the live screen needs it: which slide, what kind, its note and mark. */
 export type OwnTap = { id: string; slide: number; kind: "lost" | "save"; note?: string; rect?: Rect };
@@ -70,7 +81,7 @@ export function makeSend(supabase: SupabaseClient, lectureId: string): (op: Queu
       const {
         data: { session },
         error: sessionError,
-      } = await supabase.auth.getSession();
+      } = await sessionWithLimit(supabase);
       if (sessionError) {
         if (classifyError(sessionError) === "offline") return "offline";
         throw new Error(sessionError.message);
@@ -114,7 +125,7 @@ export async function loadOwnTaps(supabase: SupabaseClient, lectureId: string): 
     const {
       data: { session },
       error: sessionError,
-    } = await supabase.auth.getSession();
+    } = await sessionWithLimit(supabase);
     if (sessionError) {
       if (classifyError(sessionError) === "offline") return null;
       throw new Error(sessionError.message);

@@ -7,7 +7,7 @@ import { RenameForm } from "./RenameForm";
 import { DeleteLecture } from "../../DeleteLecture";
 import { readTeacherName } from "../../teacher";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
-import { TeacherTopBar, splitCourseName } from "../../ui";
+import { TeacherTopBar, courseTitleText, splitCourseName } from "../../ui";
 
 // Lectures happen at Miami (Ohio), and lecture_date is already the Eastern date.
 const clock = new Intl.DateTimeFormat("en-US", {
@@ -43,14 +43,21 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
 
   // Students who joined a lecture can read it too, so ownership is asked for
   // explicitly: only a lecture of one of this teacher's own courses comes back.
-  const { data: lecture, error } = await supabase
-    .from("lectures")
-    .select(
-      "id, course_id, name, status, lecture_date, slide_count, started_at, ended_at, courses!inner(teacher_id, name)",
-    )
-    .eq("id", lectureId)
-    .eq("courses.teacher_id", user.id)
-    .maybeSingle();
+  const read = (withSection: boolean) =>
+    supabase
+      .from("lectures")
+      .select(
+        withSection
+          ? "id, course_id, name, status, lecture_date, slide_count, started_at, ended_at, courses!inner(teacher_id, name, section)"
+          : "id, course_id, name, status, lecture_date, slide_count, started_at, ended_at, courses!inner(teacher_id, name)",
+      )
+      .eq("id", lectureId)
+      .eq("courses.teacher_id", user.id)
+      .maybeSingle();
+  // The course's section is in the breadcrumb ("ACC 221 A"); before migration 0018 it is not there.
+  let res = await read(true);
+  if (res.error?.code === "42703") res = await read(false);
+  const { data: lecture, error } = res;
   // 22P02 is a malformed uuid in the url. Any other error is a real failure, not a missing lecture.
   if (error && error.code !== "22P02") throw new Error(error.message);
   if (!lecture) notFound();
@@ -72,9 +79,10 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
   }));
 
   const teacherName = await readTeacherName(supabase, user.id);
-  const courseRel = (lecture as { courses?: { name?: string } | { name?: string }[] }).courses;
-  const courseName = (Array.isArray(courseRel) ? courseRel[0]?.name : courseRel?.name) ?? "";
-  const { code } = splitCourseName(courseName);
+  type CourseRel = { name?: string; section?: string | null };
+  const courseRel = (lecture as { courses?: CourseRel | CourseRel[] }).courses;
+  const course = Array.isArray(courseRel) ? courseRel[0] : courseRel;
+  const code = courseTitleText(splitCourseName(course?.name ?? "").code, course?.section);
   // Joined, lost taps and the rest are in the data view's summary row right under this.
   const when = lectureWhen(lecture.lecture_date, lecture.started_at, lecture.ended_at);
 

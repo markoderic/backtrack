@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { REQUEST_TIMEOUT_MS, timed } from "./requestTimeout";
 import { loadNotebook, saveNotebookNote } from "./notebookApi";
 import { addMark, deleteMark, loadLostMarks, loadMyMarks, setSlideMarksKind } from "./marksApi";
-import { makeSend } from "./lostTapApi";
+import { loadOwnTaps, makeSend } from "./lostTapApi";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const LECTURE = "11111111-1111-1111-1111-111111111111";
 const MARK = "77777777-7777-7777-7777-000000000001";
@@ -104,5 +105,27 @@ describe("a database request that hangs counts as offline after 15 s (K2 re-revi
     const send = makeSend(client, LECTURE)({ op: "update", id: MARK, patch: { undone: true } });
     expect((await settleAfter(send, REQUEST_TIMEOUT_MS - 1)).done).toBe(false);
     expect(await settleAfter(send, 1)).toEqual({ done: true, value: "offline" });
+  });
+});
+
+describe("a wait before the fetch starts (a login refresh that hangs) also gives up after 15 s (review M6)", () => {
+  it("timed: a builder that never reaches fetch answers as a failed fetch", async () => {
+    const stuck = { then: () => undefined, abortSignal: () => ({ then: () => undefined }) } as unknown as PromiseLike<unknown>;
+    const run = timed(stuck);
+    expect((await settleAfter(run, REQUEST_TIMEOUT_MS - 1)).done).toBe(false);
+    const got = await settleAfter(run, 1);
+    expect(got).toMatchObject({ done: true, value: { data: null, status: 0, error: { code: "" } } });
+  });
+
+  it("a tap send and the own taps read, while getSession hangs", async () => {
+    const client = { auth: { getSession: () => new Promise(() => {}) } } as unknown as SupabaseClient;
+    const insert = makeSend(client, LECTURE)({
+      op: "insert",
+      tap: { id: MARK, tappedOnSlide: 2, tappedAt: "2026-10-24T10:00:00Z" },
+    } as Parameters<ReturnType<typeof makeSend>>[0]);
+    const own = loadOwnTaps(client, LECTURE);
+    const both = Promise.all([insert, own]);
+    expect((await settleAfter(both, REQUEST_TIMEOUT_MS - 1)).done).toBe(false);
+    expect(await settleAfter(both, 1)).toEqual({ done: true, value: ["offline", null] });
   });
 });

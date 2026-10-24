@@ -8,7 +8,7 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { CourseDetails } from "@/lib/courseDetails";
 import { CourseCard } from "./CourseCard";
 import { STATUS_MS } from "./settings/NameForm";
-import { splitCourseName } from "./ui";
+import { courseTitleText, splitCourseName } from "./ui";
 
 export type GridCourse = {
   id: string;
@@ -89,7 +89,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
   }
 
   async function archive(course: GridCourse): Promise<boolean> {
-    const { code } = splitCourseName(course.name);
+    const code = courseTitleText(splitCourseName(course.name).code, course.details?.section);
     setFailed(null);
     const ok = await setArchivedOnServer(course.id, true);
     if (!ok) {
@@ -105,7 +105,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
   }
 
   async function undo(course: GridCourse) {
-    const { code } = splitCourseName(course.name);
+    const code = courseTitleText(splitCourseName(course.name).code, course.details?.section);
     setFailed(null);
     const ok = await setArchivedOnServer(course.id, false);
     if (!ok) {
@@ -134,7 +134,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
           <button
             ref={undoButton}
             type="button"
-            aria-label={`Undo, unarchive ${splitCourseName(note.undo.name).code}`}
+            aria-label={`Undo, unarchive ${courseTitleText(splitCourseName(note.undo.name).code, note.undo.details?.section)}`}
             onClick={() => void undo(note.undo!)}
             className={buttonSecondaryClass}
           >

@@ -1872,6 +1872,53 @@ describe("LectureData red marks (batch L)", () => {
     expect(h.marksQuery).toHaveBeenCalledTimes(3);
   });
 
+  it("a steady stream of tap events still reads the marks at least every ~2 s, and once after it (review M2 probe)", async () => {
+    vi.useFakeTimers();
+    try {
+      marksAre([mark("m1")]);
+      renderLive();
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(h.handlers["lost_taps:INSERT"]).toBeDefined();
+      const before = h.marksQuery.mock.calls.length;
+      const readsAt: number[] = [];
+      // 20 lost tap events 200 ms apart (3.8 s): each one restarts the 300 ms wait.
+      for (let i = 0; i < 20; i++) {
+        insert(row(`n${i}`, { slide_number: 3, anon_id: `s${20 + i}` }));
+        await act(async () => vi.advanceTimersByTimeAsync(200));
+        readsAt.push(h.marksQuery.mock.calls.length - before);
+      }
+      // A read during the stream by about 2 s after the first event (none at all before this fix).
+      expect(readsAt[10]).toBeGreaterThanOrEqual(1);
+      await act(async () => vi.advanceTimersByTimeAsync(5000));
+      const total = h.marksQuery.mock.calls.length - before;
+      // About every 2 s while it lasts, and one more after the last event.
+      expect(total).toBeGreaterThanOrEqual(2);
+      expect(readsAt[18]).toBeLessThan(total);
+      expect(total).toBeLessThanOrEqual(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an older marks read that lands after a newer one is dropped: a mark that just became visible stays (review M3 probe)", async () => {
+    marksAre([mark("m1")]);
+    renderLive();
+    await waitFor(() => expect(figure("sum-marks")).toBe("1"));
+    // A refetch (reconnect) reads the marks from before s7 was lost; its answer is slow.
+    let release!: (v: unknown) => void;
+    h.marksQuery.mockReturnValueOnce(new Promise((r) => (release = r)));
+    await act(async () => h.status?.("SUBSCRIBED"));
+    // s7 taps I'm lost on slide 3, where they had drawn m7: the reload after the tap sees it.
+    marksAre([mark("m1"), mark("m7", { anon_id: "s7", slide_number: 3, ...box(0.4) })]);
+    insert(row("n7", { slide_number: 3, anon_id: "s7" }));
+    await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+    // The old read lands last: it is not used.
+    await act(async () => release({ data: [mark("m1")], error: null, status: 200 }));
+    expect(figure("sum-marks")).toBe("2");
+    expect(boxesOn(3)).toHaveLength(1);
+  });
+
   it("follows the marks' own Realtime events: a new one, a move, one turned yellow (save) and a delete by id", async () => {
     marksAre([mark("m1")]);
     renderLive();
@@ -1886,6 +1933,8 @@ describe("LectureData red marks (batch L)", () => {
       ["10%", "20%"],
       ["60%", "10%"],
     ]);
+    // In production row level security keeps this event from the teacher (the student is lost there and
+    // the mark is no longer 'lost'); it guards the teacher joining their own lecture as a student.
     markEvent("UPDATE", { new: mark("m2", { anon_id: "s2", kind: "save" }) });
     expect(figure("sum-marks")).toBe("1");
     markEvent("DELETE", { old: { id: "m1" } });

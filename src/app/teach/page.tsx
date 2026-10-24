@@ -11,7 +11,7 @@ import { NowNext, type ScheduledCourse } from "./NowNext";
 import { RefreshOnReturn } from "./RefreshOnReturn";
 import { SignInView } from "./sign-in-view";
 import { CoursesSkeleton } from "./skeletons";
-import { TeacherPage, splitCourseName } from "./ui";
+import { TeacherPage, courseTitleText, splitCourseName } from "./ui";
 
 type LectureMeta = { course_id: string; lecture_date: string };
 
@@ -130,7 +130,8 @@ export async function TeachBody({ searchParams }: { searchParams: Promise<{ erro
       // The newest live lecture of each course (the list is newest first).
       const liveByCourse = new Map<string, string>();
       for (const l of liveLectures) if (!liveByCourse.has(l.course_id)) liveByCourse.set(l.course_id, l.id);
-      const courseCode = new Map(list.map((c) => [c.id, splitCourseName(c.name).code]));
+      // "BIO 121 C": the section is part of the course's title (batch L), here as on its card.
+      const courseCode = new Map(list.map((c) => [c.id, courseTitleText(splitCourseName(c.name).code, c.details?.section)]));
       const scheduled = list.filter(
         (c): c is ScheduledCourse => c.details !== null && hasSchedule(c.details),
       );

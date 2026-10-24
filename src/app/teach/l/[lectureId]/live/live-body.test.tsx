@@ -88,7 +88,7 @@ describe("LiveBody", () => {
   it("asks only for a lecture of the signed in teacher's own courses, so a joined student gets a 404", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
     await expect(LiveBody({ params, searchParams: noSearch })).rejects.toThrow("NOT_FOUND");
-    expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id, name)")]);
+    expect(selects[0]).toEqual(["lectures", expect.stringContaining("courses!inner(teacher_id, name, section)")]);
     expect(eqCalls).toContainEqual(["lectures", "id", "l1"]);
     expect(eqCalls).toContainEqual(["lectures", "courses.teacher_id", "u1"]);
     expect(slidesQuery).not.toHaveBeenCalled();
@@ -138,7 +138,21 @@ describe("LiveBody", () => {
     expect(crumbs).toHaveTextContent("Courses/ACC 221/Lecture 1, Oct 26");
     expect(within(crumbs).getByRole("link", { name: "ACC 221" })).toHaveAttribute("href", "/teach/c/c1");
     expect(screen.getByText("Linda Carter")).toBeInTheDocument();
-    expect(selects).toContainEqual(["lectures", expect.stringContaining("courses!inner(teacher_id, name)")]);
+    expect(selects).toContainEqual(["lectures", expect.stringContaining("courses!inner(teacher_id, name, section)")]);
+  });
+
+  it("the course crumb carries the section (\"ACC 221 A\"), and before 0018 it reads the course without it", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: { ...lecture, courses: { ...lecture.courses, section: "Section A" } }, error: null });
+    const first = render(await LiveBody({ params, searchParams: noSearch }));
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "ACC 221 A" })).toHaveAttribute("href", "/teach/c/c1");
+    first.unmount();
+    selects.length = 0;
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses_1.section does not exist" } })
+      .mockResolvedValueOnce({ data: lecture, error: null });
+    render(await LiveBody({ params, searchParams: noSearch }));
+    expect(selects.filter(([t]) => t === "lectures").map(([, c]) => /courses!inner\(([^)]*)\)/.exec(String(c))?.[1])).toEqual(["teacher_id, name, section", "teacher_id, name"]);
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "ACC 221" })).toBeInTheDocument();
   });
 
   it("still shows the data when the teacher's name can not be read", async () => {

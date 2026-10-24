@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const maybeSingle = vi.fn();
+const courseSelects: string[] = [];
 const lectureCount = vi.fn();
 const getUser = vi.fn();
 vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => ({
     auth: { getUser },
     from: (table: string) => ({
-      select: () => ({
-        eq: () => (table === "lectures" ? lectureCount() : { maybeSingle }),
-      }),
+      select: (columns: string) => {
+        if (table === "courses") courseSelects.push(columns);
+        return { eq: () => (table === "lectures" ? lectureCount() : { maybeSingle }) };
+      },
     }),
   }),
 }));
@@ -60,6 +62,21 @@ describe("StartBody", () => {
     maybeSingle.mockResolvedValue({ data: { id: "c1", name: "IMS 452" }, error: null });
     lectureCount.mockResolvedValue({ count: null, error: { message: "count broke" } });
     await expect(StartBody({ params })).rejects.toThrow("count broke");
+  });
+
+  it("the course crumb carries the section (\"IMS 452 B\"), and before 0018 it reads the course without it", async () => {
+    courseSelects.length = 0;
+    const { render, screen } = await import("@testing-library/react");
+    maybeSingle.mockResolvedValueOnce({ data: { id: "c1", name: "IMS 452", section: "Section B" }, error: null });
+    const first = render(await StartBody({ params }));
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^IMS 452 B$/);
+    first.unmount();
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.section does not exist" } })
+      .mockResolvedValueOnce({ data: { id: "c1", name: "IMS 452" }, error: null });
+    render(await StartBody({ params }));
+    expect(courseSelects).toEqual(["id, name, section", "id, name, section", "id, name"]);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^IMS 452$/);
   });
 
   it("passes the number of lectures already in the course to the form", async () => {

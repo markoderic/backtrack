@@ -97,6 +97,13 @@ describe("TeachBody", () => {
     expect(html).not.toContain('href="/teach/c/c1/start"');
   });
 
+  it("Live now names the course with its section, as the card does (\"IMS 452 B\")", async () => {
+    courses.mockResolvedValue({ data: [{ id: "c1", name: "IMS 452", color: null, section: "Section B", meet_days: null, start_minute: null, end_minute: null }], error: null });
+    live.mockResolvedValue({ data: [{ id: "l2", name: "Lecture 2, Oct 26", course_id: "c1", courses: { teacher_id: "u1" } }], error: null });
+    const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
+    expect(html).toMatch(/Live now<span[^>]*>· IMS 452 B<\/span>/);
+  });
+
   it("throws when the live lectures query fails", async () => {
     live.mockResolvedValue({ data: null, error: { message: "live broke" } });
     await expect(TeachBody({ searchParams: search })).rejects.toThrow("live broke");
