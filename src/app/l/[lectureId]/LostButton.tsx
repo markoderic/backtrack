@@ -7,16 +7,17 @@ import {
   useRef,
   useState,
   type FocusEvent,
-  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { ImLostButton, ignoreHeldEnter } from "@/components/ImLostButton";
+import { NotebookField, isSendKey } from "@/components/NotebookField";
 import { newId } from "@/lib/newId";
-import { LEGACY_NOTE_MAX, noteCounterFrom } from "@/lib/noteLimit";
+import { LEGACY_NOTE_MAX, cutNote, noteCounterFrom, noteLength } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
 import { TapQueue, isTapLimit, type PendingTap, type QueueOp, type SendResult } from "@/lib/tapQueue";
 import { markRejected } from "@/lib/tapSync";
@@ -36,6 +37,10 @@ export const UNTOGGLE_GUARD_MS = 600;
 const FRESH_MS = 5000;
 /** The window's focus reads the rows again at most this often. */
 const FOCUS_READ_MS = 2000;
+/** The note to the teacher saves by itself this long after the typing pauses (and at once on blur or Enter). */
+export const NOTE_SAVE_MS = 800;
+/** "Saved" stays this long after the note to the teacher saved. */
+const NOTE_SAVED_MS = 2000;
 const LECTURE_ENDED = "This one didn't save because the lecture had ended.";
 const CHANGE_FAILED = "That change didn't save.";
 /** A tap the server kept turning away (login gone, or too many requests), dropped after a few tries. */
@@ -108,10 +113,15 @@ type Props = {
   /** Shown under the buttons while there is nothing else to say (the page puts Reconnecting… here). */
   idle?: ReactNode;
   /**
-   * The longest note: 2000 once the database has migration 0020, else 140 (lost_taps.note's check
-   * in 0007). The page asks the database (useTeacherNoteMax).
+   * The longest note to the teacher: 2000 once the database has migration 0020, else 140
+   * (lost_taps.note's check in 0007). The page asks the database (useTeacherNoteMax).
    */
   noteMax?: number;
+  /**
+   * Where the note to the teacher goes on the page (the top of the notebook area). Without it, the
+   * line sits at the end of this panel.
+   */
+  noteSlot?: HTMLElement | null;
 };
 
 /** A spot with a queued change applied (a note, a mark, or Clear mark). */
@@ -173,17 +183,20 @@ function latest(taps: ReadonlyMap<string, Spot>, slide: number, kind: Kind): Spo
   return found;
 }
 
-/** The spot a slide's tools and note work on: its I'm lost row, or else its save. */
+/** The spot a slide's tools work on: its I'm lost row, or else its save. */
 function spotOn(taps: ReadonlyMap<string, Spot>, slide: number): Spot | null {
   return latest(taps, slide, "lost") ?? latest(taps, slide, "save");
 }
 
-/** A note being typed: for which slide, and the text so far. */
-type Draft = { slide: number; text: string };
+/**
+ * The note to the teacher being typed: for which slide, the text so far, and whether it saves by
+ * itself after a pause (typed here; a note given back after a refused tap waits for the next edit).
+ */
+type Draft = { slide: number; text: string; auto: boolean };
 
-/** The draft says something the slide's spot does not have yet (or the slide has no spot and the draft has words). */
+/** The draft says something the slide's I'm lost does not have yet (or the slide is not lost and the draft has words). */
 function isDirty(taps: ReadonlyMap<string, Spot>, draft: Draft): boolean {
-  const spot = spotOn(taps, draft.slide);
+  const spot = latest(taps, draft.slide, "lost");
   const text = draft.text.trim();
   return spot ? text !== (spot.note ?? "") : text !== "";
 }
@@ -198,14 +211,16 @@ const isRepeatClick = (e: MouseEvent) => e.detail > 1;
 type FocusTarget = "lost" | "panel";
 
 /**
- * The I'm lost panel: the red I'm lost button, then Save this (or, once the slide on screen
- * has a spot, Mark the spot and, for 10 seconds, Undo), then a note box that is always there.
- * One tap per slide: after I'm lost the button shows "Lost on slide 7" and takes no second
- * tap. Another slide shows that slide's own state.
+ * The I'm lost panel: the red I'm lost button, then Save this and the Mark tool, then a line that
+ * says what just happened with Undo for 10 seconds. One tap per slide: after I'm lost the button
+ * shows "Lost on slide 7"; pressing it again takes it back. Another slide shows that slide's own state.
  *
- * The note box: typing and Enter (or the check button) saves the note on the slide's spot. On a
- * slide with no spot yet it records I'm lost on that slide with the note, in one go. A note being
- * typed stays when the slide changes, and saves on the slide it was started on. Esc drops it.
+ * The note to the teacher: on a slide where the student is lost, a small "Note for the teacher" line
+ * (typed straight on the page, like the notebook). It saves by itself a moment after the typing
+ * pauses, and at once on Enter or when the field loses the focus: an update of the slide's I'm lost.
+ * A note that ends up on a slide with no I'm lost (the tap was taken away meanwhile) records I'm lost
+ * with it, in one go (a note to the teacher is an I'm lost). While the field has the focus it stays
+ * with its slide when the slide changes, and saves there.
  *
  * A press is written to a queue (kept in localStorage) and shown at once, before any
  * animation; the queue is sent in the background and sent again when the connection
@@ -229,12 +244,15 @@ export function LostButton({
   onRejected,
   idle,
   noteMax = LEGACY_NOTE_MAX,
+  noteSlot = null,
 }: Props) {
   const [taps, setTaps] = useState<ReadonlyMap<string, Spot>>(new Map());
   // The rows as last shown, for the flush (a refusal gives back a note saved on a dropped tap).
   const tapsRef = useRef(taps);
-  // The note being typed. It stays when the slide changes, so a note typed while the teacher moves on is not lost.
+  // The note to the teacher being typed. While its field has the focus it stays with its slide when the
+  // slide changes, so a note typed while the teacher moves on is not lost.
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [noteFocused, setNoteFocused] = useState(false);
   // Taps made on this screen, and taps taken back, less than 10 s ago: these offer Undo (by entry key).
   const [undos, setUndos] = useState<ReadonlyMap<string, UndoEntry>>(new Map());
   const undoTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -264,19 +282,18 @@ export function LostButton({
   // What the status line says last; each one gets a new key so it is read even if the text repeats.
   const [said, setSaid] = useState<{ n: number; text: string } | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
-  // A short line under the box after a note is saved, so a sighted student sees it went (3 s).
-  const [noted, setNoted] = useState<{ n: number; text: string } | null>(null);
+  // A quiet "Saved" by the note to the teacher after it saved (2 s).
+  const [noteSaved, setNoteSaved] = useState(0);
   useEffect(() => {
-    if (!noted) return;
-    const timer = setTimeout(() => setNoted(null), 3000);
+    if (noteSaved === 0) return;
+    const timer = setTimeout(() => setNoteSaved(0), NOTE_SAVED_MS);
     return () => clearTimeout(timer);
-  }, [noted]);
+  }, [noteSaved]);
   const counterId = useId();
   const [fatal, setFatal] = useState<Error | null>(null);
 
   const lostRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Where focus goes after an action that takes the focused control away (set by the action).
   const focusNext = useRef<FocusTarget | null>(null);
   // The control in the spot's tools that has focus. If it goes without an action saying where
@@ -370,7 +387,8 @@ export function LostButton({
       const text = op.tap.note || tapsRef.current.get(op.tap.id)?.note;
       if (!text) continue;
       const slide = op.tap.tappedOnSlide;
-      setDraft((d) => d ?? { slide, text });
+      // Not saved by itself again (the database just said no): it waits for the student's next edit.
+      setDraft((d) => d ?? { slide, text, auto: false });
       return;
     }
   }, []);
@@ -379,7 +397,11 @@ export function LostButton({
     if (mounted.current) setFatal(e instanceof Error ? e : new Error(String(e)));
   }, []);
 
+  // The latest commitNote (it reads this render's rows and draft), for timers, cleanups and the flush.
+  const commitRef = useRef<(focused?: boolean) => boolean>(() => false);
   const flush = useCallback(async (ending = false) => {
+    // The lecture is ending: a note to the teacher still being typed goes with the rest.
+    if (ending) commitRef.current();
     // Known before the flush starts, so it is noted first: the page leaves after at most
     // 3 seconds, maybe before a slow leaving flush comes back.
     if (ending && refusedTap.current) markRejected(lectureId);
@@ -576,12 +598,12 @@ export function LostButton({
     onSpotsRef.current([...taps.values()], loaded.current);
   }, [taps]);
 
-  // Another slide on screen: a note box left as it was (nothing typed) follows the new slide. Undo
-  // stays for its 10 seconds and then names its slide.
+  // Another slide on screen: a note to the teacher with nothing new in it, and not being typed in,
+  // follows the new slide. Undo stays for its 10 seconds and then names its slide.
   const [shownSlide, setShownSlide] = useState(viewing);
   if (shownSlide !== viewing) {
     setShownSlide(viewing);
-    if (draft && !isDirty(taps, draft)) setDraft(null);
+    if (draft && !noteFocused && !isDirty(taps, draft)) setDraft(null);
   }
 
   const lostSpot = latest(taps, viewing, "lost");
@@ -638,7 +660,13 @@ export function LostButton({
    * Undo can bring it back with another update.
    */
   function takeBack(kind: Kind) {
-    const rows = [...taps.values()].filter((t) => t.slide === viewing && t.kind === kind);
+    // A note to the teacher still being typed on this slide goes on the tap first (so Undo brings it back).
+    const typed = kind === "lost" && draft?.slide === viewing && isDirty(taps, draft) ? draft.text.trim() : null;
+    if (typed !== null) commitNote();
+    if (kind === "lost" && draft?.slide === viewing) setDraft(null);
+    const rows = [...taps.values()]
+      .filter((t) => t.slide === viewing && t.kind === kind)
+      .map((t) => (typed !== null && t.kind === "lost" ? patched(t, { note: typed }) : t));
     if (rows.length === 0) return;
     for (const t of rows) queue().update(t.id, { undone: true });
     const gone = dropTaps(rows.map((t) => t.id));
@@ -690,7 +718,11 @@ export function LostButton({
         if (!queue().cancel(id)) queue().update(id, { undone: true });
       }
       const gone = dropTaps(ids);
-      if (entry.kind === "lost") lostGone([entry.slide], gone);
+      if (entry.kind === "lost") {
+        lostGone([entry.slide], gone);
+        // A note to the teacher on it goes too: kept, it would make the slide lost again.
+        setDraft((d) => (d?.slide === entry.slide ? null : d));
+      }
     } else {
       // Taken back a moment ago: the same rows come back (an update each), with their note and mark.
       for (const spot of entry.spots) {
@@ -715,41 +747,81 @@ export function LostButton({
     });
   }
 
-  // The note box works on the slide its draft was started on, else on the slide on screen.
+  // The note to the teacher works on the slide its draft is for, else on the slide on screen.
   const noteSlide = draft?.slide ?? viewing;
-  const noteSpot = spotOn(taps, noteSlide);
+  const noteSpot = latest(taps, noteSlide, "lost");
   const noteText = draft ? draft.text : (noteSpot?.note ?? "");
-  const canSaveNote = draft !== null && isDirty(taps, draft);
+  // Shown on a slide where the student is lost, and while a note is being typed (wherever its slide).
+  const showNote = draft !== null || !!lostSpot;
 
-  function saveNote(e?: FormEvent) {
-    e?.preventDefault();
-    if (!draft || !isDirty(taps, draft)) {
-      setDraft(null);
-      return;
+  /**
+   * Saves the note to the teacher being typed now: an update of the slide's I'm lost, or, if the slide
+   * has none (any more), an I'm lost with the note. Returns whether anything was queued.
+   */
+  function commitNote(focused = noteFocused): boolean {
+    if (!draft) return false;
+    const done = draft;
+    if (!isDirty(taps, done)) {
+      if (!focused && done.slide !== viewing) setDraft(null);
+      else if (done.auto) setDraft({ ...done, auto: false });
+      return false;
     }
-    const text = draft.text.trim();
-    const spot = spotOn(taps, draft.slide);
+    const text = done.text.trim();
+    const spot = latest(taps, done.slide, "lost");
     if (spot) {
       change(spot, { note: text });
       say(text ? "Note saved." : "Note removed.");
     } else {
-      // No tap on that slide yet: the note is an I'm lost with the note, in one go.
-      record("lost", draft.slide, text);
+      // Not lost there (any more): the note is an I'm lost with the note, in one go.
+      record("lost", done.slide, text);
     }
-    const where = draft.slide !== viewing ? ` on slide ${draft.slide}` : "";
-    setNoted((n) => ({ n: (n?.n ?? 0) + 1, text: text ? `Note saved${where}` : "Note removed" }));
-    setDraft(null);
+    setNoteSaved((n) => n + 1);
+    // The text stays as typed (spaces and all) while the field is in use; it is clean now.
+    setDraft((d) => (d === done ? (focused ? { ...done, auto: false } : null) : d));
+    return true;
+  }
+  useEffect(() => {
+    commitRef.current = commitNote;
+  });
+
+  // Saves by itself once the typing pauses.
+  useEffect(() => {
+    if (!draft?.auto) return;
+    const timer = setTimeout(() => commitRef.current(), NOTE_SAVE_MS);
+    return () => clearTimeout(timer);
+  }, [draft]);
+
+  // The panel goes (Next hides the page, or the lecture screen closes): a note being typed is saved first.
+  useEffect(
+    () => () => {
+      if (commitRef.current()) void flushRef.current();
+    },
+    [],
+  );
+
+  function onNoteValue(value: string) {
+    setDraft({ slide: noteSlide, text: cutNote(value, noteMax), auto: true });
   }
 
-  // Enter saves (Shift+Enter is a new line), Esc drops the changes.
+  // Enter saves now (Shift+Enter is a new line).
   function onNoteKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (isSendKey(e)) {
       e.preventDefault();
-      saveNote();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setDraft(null);
+      commitNote();
     }
+  }
+
+  function onNoteFocus() {
+    setNoteFocused(true);
+    // The field keeps its slide while it has the focus, even if the teacher moves on.
+    if (!draft) setDraft({ slide: viewing, text: noteText, auto: false });
+  }
+
+  function onNoteBlur() {
+    setNoteFocused(false);
+    if (commitNote(false)) return;
+    // Nothing new: the line goes back to the slide on screen.
+    setDraft(null);
   }
 
   // The Mark tool, always there: on, the slide takes drags (each one a mark); off again with a second press.
@@ -780,14 +852,6 @@ export function LostButton({
     });
   });
 
-  // The box grows with its text, from 2 lines up to 4 (then it scrolls).
-  useEffect(() => {
-    const field = textareaRef.current;
-    if (!field) return;
-    field.style.height = "";
-    if (field.scrollHeight > field.clientHeight) field.style.height = `${field.scrollHeight + 2}px`;
-  }, [noteText]);
-
   useEffect(() => {
     const want = focusNext.current;
     focusNext.current = null;
@@ -805,7 +869,7 @@ export function LostButton({
 
   if (fatal) throw fatal;
 
-  const counter = draft && draft.text.length >= noteCounterFrom(noteMax) ? noteMax - draft.text.length : null;
+  const counter = draft && noteLength(draft.text) >= noteCounterFrom(noteMax) ? noteMax - noteLength(draft.text) : null;
   const otherSlide = draft && draft.slide !== viewing ? draft.slide : null;
   // What the Undo line says, and its button: "Undo" for the slide on screen, "Undo slide 7" for another.
   const undoHere = undoEntry?.slide === viewing;
@@ -824,6 +888,43 @@ export function LostButton({
       if (!e.currentTarget.contains(e.relatedTarget as Node | null)) toolFocus.current = null;
     },
   };
+
+  // The note to the teacher: a red dot and a line typed straight on the page.
+  const noteLine = (
+    <div data-teacher-note="" className="flex min-w-0 animate-fade-in items-start gap-2" {...trackFocus}>
+      <span aria-hidden className="mt-2 size-2 shrink-0 rounded-full bg-lost" />
+      <NotebookField
+        grow
+        rows={1}
+        maxRows={4}
+        aria-label={otherSlide !== null ? `Note for the teacher, slide ${otherSlide}` : "Note for the teacher"}
+        aria-describedby={counter !== null ? counterId : undefined}
+        placeholder="Note for the teacher"
+        enterKeyHint="done"
+        value={noteText}
+        onValue={onNoteValue}
+        onKeyDown={onNoteKeyDown}
+        onFocus={onNoteFocus}
+        onBlur={onNoteBlur}
+        className="flex-1"
+      />
+      <span className="flex min-h-6 shrink-0 items-center gap-2 type-caption text-secondary">
+        {otherSlide !== null && <span data-note-slide="">Slide {otherSlide}</span>}
+        {counter !== null ? (
+          <span id={counterId} data-counter="">
+            {counter} left
+          </span>
+        ) : (
+          noteSaved > 0 && (
+            // Seen, not read out twice: the status line already says it.
+            <span key={noteSaved} aria-hidden data-note-saved="" className="animate-fade-in">
+              Saved
+            </span>
+          )
+        )}
+      </span>
+    </div>
+  );
 
   return (
     <section
@@ -862,58 +963,15 @@ export function LostButton({
             Mark
           </button>
         </div>
-        {/* The note box, always there. On a slide with no spot yet, saving a note records I'm lost with it. */}
-        <form data-note-box="" onSubmit={saveNote} className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            aria-label={otherSlide !== null ? `Your note on slide ${otherSlide}` : "Your note"}
-            aria-describedby={counter !== null ? counterId : undefined}
-            placeholder="Add a note"
-            rows={2}
-            maxLength={noteMax}
-            enterKeyHint="done"
-            value={noteText}
-            onChange={(e) => setDraft({ slide: noteSlide, text: e.target.value.slice(0, noteMax) })}
-            onKeyDown={onNoteKeyDown}
-            className={
-              "block h-[66px] max-h-[114px] min-h-[66px] min-w-0 flex-1 resize-none rounded-md border border-hairline bg-surface px-3 py-2 " +
-              "type-body text-ink outline-hidden placeholder:text-secondary transition-colors duration-(--dur-fast) ease-out " +
-              "hover:border-strip focus:border-ink focus:shadow-[inset_0_0_0_0.5px_var(--color-ink)]"
-            }
-          />
-          <button
-            type="submit"
-            aria-label="Save note"
-            disabled={!canSaveNote}
-            className="press focus-ring flex size-11 shrink-0 items-center justify-center rounded-md bg-ink text-surface hover:bg-ink-hover disabled:cursor-default disabled:bg-strip disabled:hover:bg-strip"
-          >
-            <Icon name="check" size={20} />
-          </button>
-        </form>
       </div>
-      {/* One 40 px line under the box, always reserved: a message, the note's slide and length, the save, or
-          Reconnecting…, with Undo at its end for 10 s after a tap or after taking one back (on any slide). */}
+      {/* One 40 px line under the buttons, always reserved: a message, what was saved, or Reconnecting…, with
+          Undo at its end for 10 s after a tap or after taking one back (on any slide). */}
       <div data-panel-line="" className="flex min-h-10 items-center gap-3" {...trackFocus}>
         <div className="min-w-0 flex-1">
           {message ? (
             <p role="alert" className="flex animate-fade-in items-start gap-2 type-small text-ink">
               <Icon name="alert" size={18} className="mt-px shrink-0" />
               {message}
-            </p>
-          ) : otherSlide !== null || counter !== null ? (
-            <p className="flex gap-3 type-caption text-secondary">
-              {otherSlide !== null && <span>Note for slide {otherSlide}</span>}
-              {counter !== null && (
-                <span id={counterId} data-counter="" className="ml-auto">
-                  {counter} left
-                </span>
-              )}
-            </p>
-          ) : noted ? (
-            // Seen, not read out twice: the status line below already says it.
-            <p key={noted.n} aria-hidden data-noted="" className="flex animate-fade-in items-center gap-2 type-small text-secondary">
-              <Icon name="check" size={16} />
-              {noted.text}
             </p>
           ) : idle ? (
             idle
@@ -944,6 +1002,8 @@ export function LostButton({
       <p role="status" aria-atomic="false" className="sr-only">
         {said && <span key={said.n}>{said.text}</span>}
       </p>
+      {showNote && !noteSlot && noteLine}
+      {showNote && noteSlot && createPortal(noteLine, noteSlot)}
     </section>
   );
 }

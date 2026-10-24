@@ -25,10 +25,13 @@ describe("InfoButton", () => {
       "Turn on Mark and drag over any part of the slide. Yellow marks are just for you. On a slide where you're lost they're red, and your teacher sees the box but never its note.",
     );
     expect(panel).toHaveTextContent("Tap a mark to add a note or delete it. Tap I'm lost or Saved for you again to take it back.");
+    expect(panel).toHaveTextContent(
+      "Type notes right on the page. They save by themselves and only you see them. On a slide where you're lost, the note for the teacher is the one your teacher reads. Drag the bar by your notes to make the slide smaller or bigger.",
+    );
     expect(panel).toHaveTextContent("Nobody sees your name, not even your teacher. Your spots stay in this browser.");
     // The old Mark the spot (only after I'm lost) is gone.
     expect(panel).not.toHaveTextContent("Mark the spot");
-    expect(panel.querySelectorAll("p")).toHaveLength(5);
+    expect(panel.querySelectorAll("p")).toHaveLength(6);
   });
 
   it("closes when the button is pressed again", () => {

@@ -51,3 +51,14 @@ export function useTeacherNoteMax(): number {
 
 /** The quiet "N left" counter shows from this many characters on (120 of 140, 1980 of 2000). */
 export const noteCounterFrom = (max: number) => max - 20;
+
+/** A note's length as the database counts it (Postgres length(): whole characters, an emoji is one). */
+export const noteLength = (text: string) => Array.from(text).length;
+
+/**
+ * A note cut to `max` whole characters (never half an emoji, so the database never gets a broken
+ * character; past the limit it would refuse the whole save).
+ */
+export function cutNote(text: string, max: number): string {
+  return noteLength(text) <= max ? text : Array.from(text).slice(0, max).join("");
+}

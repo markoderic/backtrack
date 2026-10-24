@@ -333,10 +333,13 @@
 /*
  * Student live lecture (/l/[lectureId]): one markup, two layouts.
  * Wide: the slide on the left, as big as the height allows (its navigation right under it),
- * and a sidebar on the right (about 20%, at least 260 px): lecture, the I'm lost panel, and
- * at the bottom Jump to live (while behind) and My spots.
- * Narrow: top bar, the slide edge to edge in a 16 px gutter, the I'm lost panel, then the
- * slide strip, so nothing important is below the fold on a 390 x 844 phone.
+ * the size handle, and a sidebar on the right (about 20%, at least 260 px): My lectures, the
+ * lecture, the I'm lost panel, the notebook (it takes the room that is left), and at the bottom
+ * Jump to live (while behind) and My spots. Dragging the handle left widens the sidebar: the slide
+ * gets smaller and the notebook wider (--side-w, set by the handle; the default is the old width).
+ * Narrow: top bar, the slide edge to edge in a 16 px gutter, the I'm lost panel, the slide strip,
+ * the size handle and the notebook, which takes the room left at the bottom. Dragging the handle up
+ * makes the slide smaller (--slide-scale, 1 by default) and the notebook taller.
  * The slide's width comes from the room left (--slide-room) times its shape (--slide-ratio).
  */
 [data-lecture] {
@@ -348,19 +351,29 @@
   width: min(100cqw, max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778));
   justify-self: center;
 }
+[data-lecture-notes] {
+  grid-area: notes;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 @media (max-width: 699.98px), (max-aspect-ratio: 9999/10000) {
   [data-lecture] {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "top" "slide" "panel" "nav";
-    align-content: start;
+    grid-template-rows: auto auto auto auto auto minmax(72px, 1fr);
+    grid-template-areas: "top" "slide" "panel" "nav" "handle" "notes";
     row-gap: 12px;
-    padding: 0 16px 24px;
+    padding: 0 16px 16px;
     overflow-y: auto;
     container-type: size;
-    /* Top bar, the I'm lost panel (I'm lost 48, Save this / Mark 44, the note box 66, the line under it
-       with Undo 40, gaps 36: 234), the strip and the gaps between them stay on screen under the slide. */
+    /* Top bar, the I'm lost panel (I'm lost 48, Save this / Mark 44, the line with Undo 40, gaps 24) and
+       the strip stay on screen under the slide, with room left for the notebook under them (the old note
+       box's room): the default slide is the size it always was. */
     --slide-room: calc(100cqh - 394px);
+  }
+  [data-lecture-slide] {
+    width: calc(min(100cqw, max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778)) * var(--slide-scale, 1));
   }
   [data-lecture-side],
   [data-lecture-stage] {
@@ -377,14 +390,26 @@
   [data-lecture-panel] { grid-area: panel; }
   [data-lecture-nav] { grid-area: nav; }
   [data-lecture-jump="side"] { display: none; }
+  /* A 20 px strip over the gap above the notebook (a 44 px touch area), with a short grip. */
+  [data-split-handle] {
+    grid-area: handle;
+    height: 20px;
+    margin: -10px 0 -14px;
+    cursor: row-resize;
+  }
+  [data-split-handle]::before {
+    content: "";
+    position: absolute;
+    inset: -12px 0;
+  }
+  [data-split-handle] [data-grip] { width: 40px; height: 4px; }
 }
 @media (min-width: 700px) and (min-aspect-ratio: 1/1) {
   [data-lecture] {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(260px, 20vw, 380px);
+    grid-template-columns: minmax(0, 1fr) 24px var(--side-w, clamp(260px, 20vw, 380px));
     grid-template-rows: minmax(0, 1fr);
-    grid-template-areas: "stage side";
-    column-gap: 24px;
+    grid-template-areas: "stage handle side";
     padding: 16px;
     /* A short window (a phone held sideways) scrolls the whole screen to reach the sidebar's end. */
     overflow-y: auto;
@@ -410,19 +435,35 @@
     grid-area: side;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    /* Jump to live sits above My spots, so it comes and goes without moving I'm lost. */
-    grid-template-rows: auto auto 1fr auto auto;
-    grid-template-areas: "brand info" "panel panel" ". ." "jump jump" "spots spots";
+    /* Jump to live sits above My spots, so it comes and goes without moving I'm lost. The notebook
+       takes the room between the panel and them. */
+    grid-template-rows: auto auto auto minmax(96px, 1fr) auto auto;
+    grid-template-areas: "back back" "brand info" "panel panel" "notes notes" "jump jump" "spots spots";
     align-content: start;
     row-gap: 16px;
+    min-height: 0;
   }
   [data-lecture-top] { display: contents; }
+  [data-lecture-back] { grid-area: back; justify-self: start; }
   [data-lecture-brand] { grid-area: brand; align-self: center; }
   [data-lecture-info] { grid-area: info; }
   [data-lecture-spots] { grid-area: spots; }
   [data-lecture-jump="side"] { grid-area: jump; }
   [data-lecture-panel] { grid-area: panel; }
   [data-lecture-jump="pill"] { display: none; }
+  /* The full height of the screen, in the gap between the slide and the sidebar, with a short grip in the middle. */
+  [data-split-handle] {
+    grid-area: handle;
+    cursor: col-resize;
+  }
+  [data-split-handle] [data-grip] { width: 4px; height: 40px; }
+}
+
+/* Faint ruled lines under notebook text, one every 24 px (the line height), that scroll with it. */
+@utility bg-ruled {
+  background-image: linear-gradient(to bottom, transparent 23px, var(--color-hairline) 23px);
+  background-size: 100% 24px;
+  background-attachment: local;
 }
 
 /*

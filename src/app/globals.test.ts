@@ -27,8 +27,22 @@ describe("globals.css entrance animations", () => {
     }
   });
 
-  it("the narrow student screen keeps room under the slide for the whole I'm lost panel with its note box and the Undo line", () => {
+  it("the narrow student screen keeps the slide's default size (the same room under it as before, now the notebook's)", () => {
     expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 394px\)/);
+  });
+
+  it("the slide size handle: --slide-scale on a phone (1 by default), --side-w on a laptop (the old sidebar width by default)", () => {
+    expect(css).toMatch(/\* var\(--slide-scale, 1\)\)/);
+    expect(css).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 24px var\(--side-w, clamp\(260px, 20vw, 380px\)\)/);
+    expect(css).toMatch(/grid-template-areas:\s*"top" "slide" "panel" "nav" "handle" "notes"/);
+    expect(css).toMatch(/grid-template-areas:\s*"back back" "brand info" "panel panel" "notes notes" "jump jump" "spots spots"/);
+  });
+
+  it("notebook text sits on faint ruled lines, one per 24 px line, that scroll with it", () => {
+    const block = css.match(/@utility bg-ruled\s*{([\s\S]*?)\n}/)?.[1] ?? "";
+    expect(block).toContain("var(--color-hairline)");
+    expect(block).toMatch(/background-size:\s*100% 24px/);
+    expect(block).toMatch(/background-attachment:\s*local/);
   });
 
   it("has no keyframes block that nothing uses", () => {

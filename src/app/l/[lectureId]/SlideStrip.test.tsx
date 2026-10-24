@@ -16,6 +16,14 @@ describe("SlideStrip", () => {
     }
   });
 
+  it("draws an ink dot for a slide with only a notebook note, named for it (batch K2)", () => {
+    strip({ spots: kinds([[4, "note"]]) });
+    const dot = item(4).querySelector("[data-spot]") as HTMLElement;
+    expect(dot).toHaveAttribute("data-spot", "note");
+    expect(dot.className).toContain("bg-ink");
+    expect(item(4)).toHaveAccessibleName("Slide 4, you wrote a note");
+  });
+
   it("draws a red dot for I'm lost and an open dot for a save", () => {
     strip({ spots: kinds([[3, "lost"], [7, "save"]]) });
     const lost = item(3).querySelector("[data-spot]") as HTMLElement;
@@ -174,6 +182,26 @@ describe("SlideStrip", () => {
       const shown = [g.left(), g.left() + 220];
       expect(25 * DOT).toBeGreaterThanOrEqual(shown[0]);
       expect(30 * DOT).toBeLessThanOrEqual(shown[1]);
+    });
+
+    it("keeps them in view when the strip gets narrower (the slide size handle, or the window)", () => {
+      let observed: (() => void) | null = null;
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(cb: () => void) {
+            observed = cb;
+          }
+          observe() {}
+          disconnect() {}
+        },
+      );
+      strip({ live: 30, viewing: 30 });
+      const g = geometry(screen.getByRole("list"), 30);
+      g.scrollTo.mockClear();
+      act(() => observed?.());
+      expect(g.scrollTo).toHaveBeenLastCalledWith({ left: 30 * DOT - 220, behavior: "smooth" });
+      vi.unstubAllGlobals();
     });
 
     it("when both can't fit, centers the dot on screen", () => {

@@ -7,19 +7,23 @@ import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
+import { NotebookField, SavedState } from "@/components/NotebookField";
 import { loadOwnTaps, makeSend } from "@/lib/lostTapApi";
-import { useTeacherNoteMax } from "@/lib/noteLimit";
+import { NOTEBOOK_MAX } from "@/lib/notebookApi";
+import { cutNote, useTeacherNoteMax } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useLiveMarks } from "@/lib/useLiveMarks";
+import { useNotebook } from "@/lib/useNotebook";
 import { useTrackHere } from "@/lib/useHere";
 import { useSlideImages } from "@/lib/useSlideImages";
 import { HighlightLayer, type ShownMark } from "./HighlightLayer";
 import { LostButton, type LegacyMarks, type Spot } from "./LostButton";
 import { MarkPopover } from "./MarkPopover";
 import { SlideStrip, type SpotKind } from "./SlideStrip";
+import { SplitHandle } from "./SplitHandle";
 
 const END_FLUSH_MS = 3000;
 /** "Loading slide 7" shows only if the image takes longer than this. The next slide is preloaded, so it is rare. */
@@ -41,9 +45,13 @@ type Props = {
 /**
  * The student's live lecture screen. One markup, two layouts (globals.css, "student live
  * lecture"): on a laptop or a landscape tablet the slide fills the left (about 80%) with
- * its navigation right under it, and a sidebar on the right holds the lecture, Jump to
- * live, the I'm lost panel and My spots; on a phone or a narrow window it stacks the top
- * bar, the slide, the I'm lost panel and the slide strip.
+ * its navigation right under it, and a sidebar on the right holds My lectures, the lecture,
+ * the I'm lost panel, the notebook, Jump to live and My spots; on a phone or a narrow window it
+ * stacks the top bar, the slide, the I'm lost panel, the slide strip and the notebook. A handle
+ * between the slide and the notebook makes the slide smaller or bigger (remembered on the device).
+ *
+ * The notebook: the student types straight on the page, one private note per slide (the slide on
+ * screen), saved by itself. On a slide where they are lost, a small note to the teacher sits above it.
  *
  * No student component reads or shows the slide count: the screen only knows the slide
  * the teacher is on and the ones before it (the strip runs 1 to live). No keyboard
@@ -89,16 +97,23 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
   // The student's marks (slide_marks, migration 0020): several per slide, each with a private note.
   const marks = useLiveMarks(lectureId, { reconnects });
+  // The student's private notebook (notebook_notes, migration 0020): one note per slide.
+  const notebook = useNotebook(lectureId);
+  // Where LostButton puts the note to the teacher: the top of the notebook area.
+  const [noteSlot, setNoteSlot] = useState<HTMLElement | null>(null);
   // Before 0020 a mark is the one highlight on the slide's spot (lost_taps.hl_*), through the panel.
   const legacy = marks.mode === "legacy";
-  // One dot per slide: red if any row there is an I'm lost, open if they are all saves, and a yellow
-  // dot for a slide that only has marks (a slide with marks is a spot too: it counts in My spots).
+  // One dot per slide: red if any row there is an I'm lost, open if they are all saves, a yellow dot
+  // for a slide that only has marks, and an ink dot for one with only a notebook note (a slide with
+  // marks or a note is a spot too: it counts in My spots).
+  const notebookSlides = notebook.slides;
   const spotKinds = useMemo(() => {
     const kinds = new Map<number, SpotKind>();
     for (const s of spots) if (kinds.get(s.slide) !== "lost") kinds.set(s.slide, s.kind);
     if (!legacy) for (const m of marks.marks) if (!kinds.has(m.slide)) kinds.set(m.slide, "mark");
+    for (const slide of notebookSlides) if (!kinds.has(slide)) kinds.set(slide, "note");
     return kinds;
-  }, [spots, legacy, marks.marks]);
+  }, [spots, legacy, marks.marks, notebookSlides]);
   const legacyRef = useRef<LegacyMarks | null>(null);
   const onMarkReady = useCallback((api: LegacyMarks) => {
     legacyRef.current = api;
@@ -159,6 +174,10 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   useEffect(() => {
     flushMarksRef.current = marks.flush;
   }, [marks.flush]);
+  const flushNotebookRef = useRef(notebook.flush);
+  useEffect(() => {
+    flushNotebookRef.current = notebook.flush;
+  }, [notebook.flush]);
   // The Mark tool: the panel turns it on and off, the slide takes the drags.
   const [marking, setMarking] = useState(false);
   // The mark whose popover is open, and whether it was opened with the keyboard.
@@ -188,7 +207,11 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       routerRef.current.replace(`/spots/${lectureId}`);
     };
     const bound = setTimeout(leave, END_FLUSH_MS);
-    void Promise.all([flushRef.current?.(true) ?? Promise.resolve(), flushMarksRef.current().catch(() => {})]).then(leave);
+    void Promise.all([
+      flushRef.current?.(true) ?? Promise.resolve(),
+      flushMarksRef.current().catch(() => {}),
+      flushNotebookRef.current().catch(() => {}),
+    ]).then(leave);
     return () => {
       left = true;
       clearTimeout(bound);
@@ -210,6 +233,11 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     // A mark's message belonged to the slide just left.
     if (marks.problem) marks.clearProblem();
   }
+
+  // Another slide: the notebook text of the slide just left goes now (the field follows the slide on screen).
+  useEffect(() => {
+    void flushNotebookRef.current();
+  }, [viewing]);
 
   // The slide changes at once; the loading text only shows when the image is slow.
   const imageKey = url ?? `slide-${viewing}`;
@@ -297,6 +325,15 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     <div data-lecture="" className="text-ink" style={{ "--slide-ratio": ratio } as CSSProperties}>
       <div data-lecture-side="">
         <div data-lecture-top="">
+          {/* The way to all the student's lectures (My spots of each). Just the arrow on a phone. */}
+          <Link
+            href="/spots"
+            data-lecture-back=""
+            className="press focus-ring touch-target relative flex h-9 shrink-0 items-center gap-1 rounded-md type-small-strong text-ink hover:bg-surface narrow:-ml-2 narrow:w-9 narrow:justify-center wide:-ml-1.5 wide:pl-1 wide:pr-2"
+          >
+            <Icon name="back" size={20} />
+            <span className="narrow:sr-only">My lectures</span>
+          </Link>
           <div data-lecture-brand="" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
             <LogoMark size={22} />
             {/* Both truncate; the lecture name gives way first (a shrink factor under 1 would let the course overflow). */}
@@ -355,8 +392,23 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           // if it did, leave the same way as when Realtime says so.
           onRejected={recheck}
           noteMax={noteMax}
+          noteSlot={noteSlot}
           idle={reconnecting ? <p className="animate-fade-in type-small text-secondary">Reconnecting…</p> : null}
         />
+        {/* The notebook: typed straight on the page, one private note per slide, saved by itself. */}
+        <div data-lecture-notes="">
+          {/* The note to the teacher, on a slide where the student is lost (LostButton puts it here). */}
+          <div ref={setNoteSlot} data-teacher-slot="" className="shrink-0 empty:hidden [&:not(:empty)]:pb-3" />
+          <NotebookField
+            aria-label={`Your notes, slide ${viewing}`}
+            placeholder="Your notes"
+            value={notebook.textOf(viewing)}
+            onValue={(text) => notebook.set(viewing, cutNote(text, NOTEBOOK_MAX))}
+            onBlur={() => void notebook.flush()}
+            className="min-h-12 flex-1"
+          />
+          <SavedState state={notebook.stateOf(viewing)} className="h-4 shrink-0 pt-1 text-right" />
+        </div>
         {behind && (
           // On a laptop, at the bottom of the sidebar above My spots: it comes and goes without moving
           // I'm lost, so a double click on it can never land on I'm lost.
@@ -370,6 +422,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           </button>
         )}
       </div>
+      {/* Between the slide and the notebook: drag (or arrow keys) to make the slide smaller or bigger. */}
+      <SplitHandle />
       {/* Always there, so a screen reader hears when the connection drops (the panel shows it). */}
       <p role="status" className="sr-only">
         {reconnecting ? "Reconnecting." : ""}

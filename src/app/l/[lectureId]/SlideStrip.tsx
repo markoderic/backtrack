@@ -2,15 +2,15 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type PointerEvent } from "react";
 
-/** lost: an I'm lost; save: Save this; mark: only marks (yellow highlights) on the slide. */
-export type SpotKind = "lost" | "save" | "mark";
+/** lost: an I'm lost; save: Save this; mark: only marks (yellow highlights) on the slide; note: only a notebook note. */
+export type SpotKind = "lost" | "save" | "mark" | "note";
 
 type Props = {
   /** The slide the teacher is on. The strip never goes past it. */
   live: number;
   /** The slide the student is looking at. */
   viewing: number;
-  /** Slides where this student has a spot, and what kind. Lost wins over save, save over marks only. */
+  /** Slides where this student has a spot, and what kind. Lost wins over save, save over marks, marks over a note. */
   spots: ReadonlyMap<number, SpotKind>;
   onPick: (n: number) => void;
 };
@@ -23,6 +23,7 @@ export function dotLabel(n: number, isLive: boolean, isViewing: boolean, kind: S
   if (kind === "lost") parts.push("you got lost here");
   else if (kind === "save") parts.push("you saved this");
   else if (kind === "mark") parts.push("you marked this");
+  else if (kind === "note") parts.push("you wrote a note");
   return parts.join(", ");
 }
 
@@ -58,7 +59,8 @@ export function stripTarget(o: { scrollLeft: number; view: number; max: number; 
  * The slide strip: one dot per slide from 1 to the slide the teacher is on (it only grows
  * as the teacher moves; there is no total). Every dot is a real button with a 44 px touch
  * target that shows its slide. A red dot is an I'm lost spot, an open dot a spot saved for
- * yourself, a yellow dot in an ink ring a slide with only your marks (each drops in when it is new), a ring marks the slide being viewed, and a short
+ * yourself, a yellow dot in an ink ring a slide with only your marks, an ink dot a slide with only
+ * your notebook note (each drops in when it is new), a ring marks the slide being viewed, and a short
  * ink bar under the dot marks the live slide (the teacher's playhead). Hovering or focusing
  * a dot shows a small tooltip with its name ("Slide 9, you got lost here"). A long lecture
  * scrolls sideways, smoothly, keeping the dot on screen and the live dot in view.
@@ -72,6 +74,16 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
   const firstScroll = useRef(true);
   // The dot whose tooltip shows, and its center from the strip's left edge.
   const [tip, setTip] = useState<{ n: number; x: number } | null>(null);
+
+  // The strip gets narrower or wider (the window, or the slide size handle): the same again.
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(list.clientWidth));
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
 
   // Keeps the dot on screen and the live dot in view when either changes (it starts at the live end).
   useEffect(() => {
@@ -100,7 +112,7 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
     if (Math.abs(target - list.scrollLeft) < 1) return;
     if (typeof list.scrollTo === "function") list.scrollTo({ left: target, behavior: smooth ? "smooth" : "auto" });
     else list.scrollLeft = target;
-  }, [viewing, count]);
+  }, [viewing, count, width]);
 
   // The tooltip stays inside the window: centered on its dot where it can be.
   useLayoutEffect(() => {
@@ -182,7 +194,13 @@ export function SlideStrip({ live, viewing, spots, onPick }: Props) {
                     aria-hidden
                     data-spot={kind}
                     className={`relative size-2.5 animate-dot-drop rounded-full ${
-                      kind === "lost" ? "bg-lost" : kind === "mark" ? "border-[1.5px] border-ink bg-mark" : "border-[1.5px] border-ink bg-bg"
+                      kind === "lost"
+                        ? "bg-lost"
+                        : kind === "mark"
+                          ? "border-[1.5px] border-ink bg-mark"
+                          : kind === "note"
+                            ? "bg-ink"
+                            : "border-[1.5px] border-ink bg-bg"
                     }`}
                   />
                 ) : (

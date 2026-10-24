@@ -36,6 +36,10 @@ const markUpsert = vi.fn();
 const markUpdate = vi.fn();
 const markUpdateFilters = vi.fn();
 const markDelete = vi.fn();
+// The student's notebook (migration 0020): from("notebook_notes").select(...).eq(...).order(...), and
+// rpc("save_notebook_note").
+const notebookRows = vi.fn();
+const notebookSave = vi.fn();
 const markWrite = vi.fn(async (): Promise<{ error: { code: string; message: string } | null; status: number }> => ({ error: null, status: 204 }));
 // update(...).eq(...)[.eq(...).neq(...)], delete().eq(...): each step records its filter and can be awaited.
 function filtered(record: (...a: unknown[]) => void) {
@@ -54,6 +58,8 @@ const from = vi.fn((table: string) =>
         update: (row: unknown) => (markUpdate(row), filtered((...a) => markUpdateFilters(row, ...a))),
         delete: () => filtered((...a) => markDelete(...a)),
       }
+    : table === "notebook_notes"
+    ? { select: () => ({ eq: () => ({ order: notebookRows }) }) }
     : table === "lost_taps"
     ? {
         select: () => ({
@@ -148,7 +154,14 @@ beforeEach(() => {
   // Before 0020 there is no my_slide_marks function either.
   myMarks.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 });
   markUpsert.mockResolvedValue({ error: null, status: 201 });
-  rpc.mockImplementation((name: string, args: unknown) => (name === "my_slide_marks" ? myMarks(args) : undefined));
+  rpc.mockImplementation((name: string, args: unknown) =>
+    name === "my_slide_marks" ? myMarks(args) : name === "save_notebook_note" ? notebookSave(args) : undefined,
+  );
+  notebookRows.mockReset();
+  notebookSave.mockReset();
+  // Before 0020 there is no notebook either.
+  notebookRows.mockResolvedValue({ data: null, error: { code: "PGRST205", message: "Could not find the table" }, status: 404 });
+  notebookSave.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 });
   localStorage.clear();
   sessionStorage.clear();
   forgetTeacherNoteMax();
@@ -200,26 +213,35 @@ describe("StudentLecture", () => {
     expect(within(top()).getAllByRole("button")).toHaveLength(1);
   });
 
-  it("the note takes 140 characters while the database has no 0020", async () => {
+  // The note to the teacher, on a lost slide.
+  const teacherNote = () => screen.getByRole("textbox", { name: /^Note for the teacher/ }) as HTMLTextAreaElement;
+
+  it("the note to the teacher takes 140 characters while the database has no 0020", async () => {
     show();
     await settle();
     expect(probe).toHaveBeenCalledWith(0);
-    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveAttribute("maxLength", "140");
+    fireEvent.click(lost());
+    fireEvent.change(teacherNote(), { target: { value: "f".repeat(900) } });
+    expect(teacherNote().value).toHaveLength(140);
   });
 
-  it("the note takes 2000 characters once the database has 0020", async () => {
+  it("the note to the teacher takes 2000 characters once the database has 0020", async () => {
     probe.mockResolvedValue({ data: [], error: null, status: 200 });
     show();
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your note" })).toHaveAttribute("maxLength", "2000"));
-    fireEvent.change(screen.getByRole("textbox", { name: "Your note" }), { target: { value: "f".repeat(900) } });
-    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveValue("f".repeat(900));
+    await settle();
+    await settle();
+    fireEvent.click(lost());
+    fireEvent.change(teacherNote(), { target: { value: "f".repeat(2500) } });
+    await waitFor(() => expect(teacherNote().value).toHaveLength(2000));
   });
 
-  it("the note stays at 140 when the look at the database fails (offline)", async () => {
+  it("the note to the teacher stays at 140 when the look at the database fails (offline)", async () => {
     probe.mockRejectedValue(new TypeError("Failed to fetch"));
     show();
     await settle();
-    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveAttribute("maxLength", "140");
+    fireEvent.click(lost());
+    fireEvent.change(teacherNote(), { target: { value: "f".repeat(900) } });
+    expect(teacherNote().value).toHaveLength(140);
   });
 
   it("shows the live slide as large as it can, at its own shape", () => {
@@ -417,19 +439,24 @@ describe("StudentLecture", () => {
     });
   });
 
-  it("has a note box under I'm lost and Save this the whole time; a note on a slide with no tap sends one I'm lost with the note", async () => {
+  it("has no note box in the panel any more; on a lost slide the note to the teacher sits at the top of the notebook and saves on the tap", async () => {
     show(7);
     await settle();
-    const box = screen.getByRole("textbox", { name: "Your note" });
-    expect(panel()).toContainElement(box);
-    expect(box).toHaveAttribute("placeholder", "Add a note");
-    fireEvent.change(box, { target: { value: "lost on the accrual" } });
-    fireEvent.keyDown(box, { key: "Enter" });
-    expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBeInTheDocument();
+    expect(within(panel()).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save note/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^Note for the teacher/ })).not.toBeInTheDocument();
+    fireEvent.click(lost());
+    const notes = document.querySelector("[data-lecture-notes]") as HTMLElement;
+    const slot = notes.querySelector("[data-teacher-slot]") as HTMLElement;
+    expect(slot).toContainElement(teacherNote());
+    // Above the notebook itself.
+    expect(teacherNote().compareDocumentPosition(screen.getByRole("textbox", { name: "Your notes, slide 7" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
-    expect(upsert.mock.calls[0][0]).toMatchObject({ kind: "lost", tapped_on_slide: 7, note: "lost on the accrual" });
-    expect(update).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "Your note" })).toHaveValue("lost on the accrual");
+    teacherNote().focus();
+    fireEvent.change(teacherNote(), { target: { value: "lost on the accrual" } });
+    fireEvent.keyDown(teacherNote(), { key: "Enter" });
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ note: "lost on the accrual" }));
+    expect(teacherNote()).toHaveValue("lost on the accrual");
   });
 
   it("Undo goes away 10 seconds after a tap; the tap stays and its dot stays", async () => {
@@ -528,13 +555,13 @@ describe("StudentLecture", () => {
     expect(markUpsert).not.toHaveBeenCalled();
     expect(markUpdate).not.toHaveBeenCalled();
     expect(markDelete).not.toHaveBeenCalled();
-    // The only call is the read of the student's own marks.
+    // The only call is the read of the student's own marks (and the notebook is only read).
     for (const call of rpc.mock.calls) expect(call[0]).toBe("my_slide_marks");
     expect(screen.queryByRole("button", { name: /Lost on slide/ })).not.toBeInTheDocument();
     // Only the reads of the lecture row happened.
     await waitFor(() => expect(single).toHaveBeenCalled());
     // Reads only: the lecture row, the student's own rows, and the look for 0020 (the note limit).
-    for (const call of from.mock.calls as unknown as string[][]) expect(["lectures", "lost_taps", "slide_marks"]).toContain(call[0]);
+    for (const call of from.mock.calls as unknown as string[][]) expect(["lectures", "lost_taps", "slide_marks", "notebook_notes"]).toContain(call[0]);
   });
 
   it("says Loading slide 7 only when the image takes over 300 ms", async () => {
@@ -1429,5 +1456,174 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     drag();
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Too many marks on this slide."));
     expect(marksShown()).toHaveLength(0);
+  });
+});
+
+describe("StudentLecture notebook (batch K2: typed on the page, one private note per slide)", () => {
+  const notes = () => document.querySelector("[data-lecture-notes]") as HTMLElement;
+  const notebook = (n = 7) => screen.getByRole("textbox", { name: `Your notes, slide ${n}` }) as HTMLTextAreaElement;
+  const NB_KEY = `backtrack:notebook:${LECTURE}`;
+  const saves = () => notebookSave.mock.calls.map((c) => c[0] as { p_slide_number: number; p_body: string });
+
+  beforeEach(() => {
+    probe.mockResolvedValue({ data: [], error: null, status: 200 });
+    myMarks.mockResolvedValue({ data: [], error: null, status: 200 });
+    notebookRows.mockResolvedValue({ data: [{ slide_number: 6, body: "six", updated_at: "2026-10-26T14:00:00Z" }], error: null, status: 200 });
+    notebookSave.mockResolvedValue({ data: "2026-10-26T14:01:00Z", error: null, status: 200 });
+  });
+
+  it("is a field straight on the page (no box, no button), outside the panel, that follows the slide on screen", async () => {
+    show(7);
+    await settle();
+    const field = notebook();
+    expect(notes()).toContainElement(field);
+    expect(panel()).not.toContainElement(field);
+    expect(field.className).toContain("bg-ruled");
+    expect(field.className).toContain("border-0");
+    expect(field).toHaveAttribute("placeholder", "Your notes");
+    expect(within(notes()).queryByRole("button")).not.toBeInTheDocument();
+    fireEvent.click(back());
+    await waitFor(() => expect(notebook(6)).toHaveValue("six"));
+    fireEvent.click(forward());
+    expect(notebook(7)).toHaveValue("");
+  });
+
+  it("saves by itself after a pause (save_notebook_note), then says Saved quietly", async () => {
+    show(7);
+    await settle();
+    fireEvent.change(notebook(), { target: { value: "accrual = earned, not paid" } });
+    expect(notebookSave).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(NB_KEY) ?? "{}")).toEqual({ "7": "accrual = earned, not paid" });
+    await waitFor(() => expect(notebookSave).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    expect(saves()[0]).toEqual({ p_lecture_id: LECTURE, p_slide_number: 7, p_body: "accrual = earned, not paid" });
+    await waitFor(() => expect(within(notes()).getByRole("status")).toHaveTextContent("Saved"));
+    expect(localStorage.getItem(NB_KEY)).toBeNull();
+    // Saved means saved: nothing that explains it.
+    expect(within(notes()).getByRole("status").textContent).toBe("Saved");
+  });
+
+  it("saves at once when the field loses the focus and when the slide changes", async () => {
+    show(7);
+    await settle();
+    fireEvent.change(notebook(), { target: { value: "first" } });
+    fireEvent.blur(notebook());
+    await waitFor(() => expect(saves()).toEqual([expect.objectContaining({ p_slide_number: 7, p_body: "first" })]));
+    fireEvent.change(notebook(), { target: { value: "second" } });
+    fireEvent.click(back());
+    await waitFor(() => expect(saves().at(-1)).toEqual(expect.objectContaining({ p_slide_number: 7, p_body: "second" })));
+  });
+
+  it("offline: keeps the text on the device, says so, and sends it when the browser is back online", async () => {
+    notebookSave.mockRejectedValue(new TypeError("Failed to fetch"));
+    show(7);
+    await settle();
+    fireEvent.change(notebook(), { target: { value: "on the train" } });
+    fireEvent.blur(notebook());
+    await waitFor(() => expect(within(notes()).getByRole("status")).toHaveTextContent("Saved on this device"));
+    expect(JSON.parse(localStorage.getItem(NB_KEY) ?? "{}")).toEqual({ "7": "on the train" });
+    notebookSave.mockResolvedValue({ data: "x", error: null, status: 200 });
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    await waitFor(() => expect(within(notes()).getByRole("status")).toHaveTextContent(/^Saved$/));
+    expect(localStorage.getItem(NB_KEY)).toBeNull();
+  });
+
+  it("the page hidden: the text is on the device before the save goes out", async () => {
+    let finish: (v: unknown) => void = () => {};
+    notebookSave.mockImplementation(() => new Promise((r) => (finish = r)));
+    show(7);
+    await settle();
+    fireEvent.change(notebook(), { target: { value: "typed then hidden" } });
+    localStorage.removeItem(NB_KEY);
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(JSON.parse(localStorage.getItem(NB_KEY) ?? "{}")).toEqual({ "7": "typed then hidden" });
+    expect(notebookSave).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ data: "x", error: null, status: 200 }));
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  it("text left on the device by the last visit shows at once and is sent", async () => {
+    localStorage.setItem(NB_KEY, JSON.stringify({ "7": "from last time" }));
+    show(7);
+    await settle();
+    expect(notebook()).toHaveValue("from last time");
+    await waitFor(() => expect(saves()).toEqual([expect.objectContaining({ p_slide_number: 7, p_body: "from last time" })]));
+  });
+
+  it("before 0020 the notebook stays on this device: one look at the database, then no more sends", async () => {
+    notebookRows.mockResolvedValue({ data: null, error: { code: "PGRST205", message: "Could not find the table" }, status: 404 });
+    show(7);
+    await settle();
+    fireEvent.change(notebook(), { target: { value: "device only" } });
+    fireEvent.blur(notebook());
+    await waitFor(() => expect(within(notes()).getByRole("status")).toHaveTextContent("Saved on this device"));
+    expect(notebookSave).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(NB_KEY) ?? "{}")).toEqual({ "7": "device only" });
+  });
+
+  it("a slide with only a notebook note is a spot: an ink dot in the strip, and it counts in My spots", async () => {
+    show(7);
+    await waitFor(() => expect(within(strip()).getByRole("button", { name: "Slide 6, you wrote a note" })).toBeInTheDocument());
+    const dot = within(strip()).getByRole("button", { name: "Slide 6, you wrote a note" });
+    expect(dot.querySelector("[data-spot]")).toHaveAttribute("data-spot", "note");
+    const count = () => screen.getByRole("link", { name: /My spots/ }).lastElementChild as HTMLElement;
+    expect(count()).toHaveTextContent("1");
+    fireEvent.change(notebook(), { target: { value: "seven too" } });
+    expect(count()).toHaveTextContent("2");
+    // Emptied, it is not a spot any more.
+    fireEvent.change(notebook(), { target: { value: "  " } });
+    expect(count()).toHaveTextContent("1");
+  });
+
+  it("reads the notebook again when the page is shown again (a note changed in My spots)", async () => {
+    notebookRows.mockResolvedValue({ data: [{ slide_number: 7, body: "seven", updated_at: "x" }], error: null, status: 200 });
+    const page = (mode: "visible" | "hidden") => (
+      <Activity mode={mode}>
+        <StudentLecture lectureId={LECTURE} lectureName="Lecture 3, Oct 26" courseName="IMS 452" initialSlide={7} />
+      </Activity>
+    );
+    const view = render(page("visible"));
+    await waitFor(() => expect(notebook(7)).toHaveValue("seven"));
+    view.rerender(page("hidden"));
+    await act(async () => new Promise((r) => setTimeout(r, 10)));
+    notebookRows.mockResolvedValue({ data: [{ slide_number: 7, body: "seven, edited in My spots", updated_at: "x" }], error: null, status: 200 });
+    view.rerender(page("visible"));
+    await waitFor(() => expect(notebook(7)).toHaveValue("seven, edited in My spots"));
+  });
+
+  it("sends the notebook before leaving when the lecture ends", async () => {
+    show(7);
+    await settle();
+    await act(async () => channelStatus("SUBSCRIBED"));
+    fireEvent.change(notebook(), { target: { value: "last words" } });
+    act(() => channelUpdate({ new: { current_slide: 7, status: "ended" } }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/spots/${LECTURE}`));
+    expect(saves()).toEqual([expect.objectContaining({ p_body: "last words" })]);
+  });
+});
+
+describe("StudentLecture way back to My lectures, and the slide size handle", () => {
+  it("has My lectures in the top bar (to all the lectures), next to My spots (this lecture)", () => {
+    show(7);
+    const link = screen.getByRole("link", { name: "My lectures" });
+    expect(link).toHaveAttribute("href", "/spots");
+    expect(top()).toContainElement(link);
+    expect(screen.getByRole("link", { name: /My spots/ })).toHaveAttribute("href", `/spots/${LECTURE}`);
+  });
+
+  it("has the handle between the slide and the notebook: a focusable separator at 100% by default", () => {
+    show(7);
+    const handle = screen.getByRole("separator", { name: "Slide size" });
+    expect(handle).toHaveAttribute("tabindex", "0");
+    expect(handle).toHaveAttribute("aria-valuenow", "100");
+    const lecture = document.querySelector("[data-lecture]") as HTMLElement;
+    expect(lecture.style.getPropertyValue("--slide-scale")).toBe("");
+    fireEvent.keyDown(handle, { key: "ArrowUp" });
+    expect(handle).toHaveAttribute("aria-valuenow", "95");
+    expect(lecture.style.getPropertyValue("--slide-scale")).toBe("0.95");
   });
 });

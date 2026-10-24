@@ -3,8 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import type { Rect } from "@/lib/rect";
 import type { QueueOp, SendResult } from "@/lib/tapQueue";
-import { LEGACY_NOTE_MAX } from "@/lib/noteLimit";
-import { LostButton, UNDO_MS, UNTOGGLE_GUARD_MS, type LegacyMarks, type Spot } from "./LostButton";
+import { LostButton, NOTE_SAVE_MS, UNDO_MS, UNTOGGLE_GUARD_MS, type LegacyMarks, type Spot } from "./LostButton";
 
 class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -63,10 +62,12 @@ const press = () => fireEvent.click(screen.getByRole("button", { name: "I'm lost
 const checked = (n = 7) => screen.getByRole("button", { name: `Lost on slide ${n}` });
 const undo = () => fireEvent.click(screen.getByRole("button", { name: "Undo" }));
 const settle = () => act(async () => {});
-const noteField = () => screen.getByRole("textbox", { name: /Your note/ }) as HTMLTextAreaElement;
+// The note to the teacher: a line typed on the page, only on a slide where the student is lost.
+const noteField = () => screen.getByRole("textbox", { name: /^Note for the teacher/ }) as HTMLTextAreaElement;
+const noNoteField = () => screen.queryByRole("textbox", { name: /^Note for the teacher/ });
 const typeNote = (text: string) => fireEvent.change(noteField(), { target: { value: text } });
-const saveButton = () => screen.getByRole("button", { name: "Save note" });
-const saveNote = () => fireEvent.click(saveButton());
+// Enter saves the note now (it also saves by itself after a pause, and on blur).
+const saveNote = () => fireEvent.keyDown(noteField(), { key: "Enter" });
 const undoButton = () => screen.queryByRole("button", { name: "Undo" });
 const markTool = () => screen.getByRole("button", { name: "Mark" });
 const saveToggle = () => screen.getByRole("button", { name: /^(Save this|Saved for you)$/ });
@@ -83,20 +84,18 @@ afterEach(() => {
 });
 
 describe("LostButton", () => {
-  it("is the I'm lost button, Save this, the Mark tool and the note box, and nothing else until one is pressed", async () => {
+  it("is the I'm lost button, Save this and the Mark tool, and nothing else until one is pressed (no note box, no Save note)", async () => {
     setup();
     await settle();
     expect(screen.getAllByRole("button").map((b) => b.textContent || b.getAttribute("aria-label"))).toEqual([
       "I'm lost",
       "Save this",
       "Mark",
-      "Save note",
     ]);
     // The Mark tool is there without Save this or I'm lost (a toggle, off).
     expect(markTool()).toHaveAttribute("aria-pressed", "false");
     expect(saveToggle()).toHaveAttribute("aria-pressed", "false");
-    expect(noteField()).toHaveAttribute("placeholder", "Add a note");
-    expect(saveButton()).toBeDisabled();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(undoButton()).not.toBeInTheDocument();
   });
 
@@ -109,7 +108,7 @@ describe("LostButton", () => {
     expect(checked()).toHaveAttribute("aria-pressed", "true");
     expect(undoButton()).toBeInTheDocument();
     expect(markTool()).toBeInTheDocument();
-    // The note box stays where it was.
+    // The note to the teacher comes with it.
     expect(noteField()).toBeInTheDocument();
     // Save this is not offered on a slide that is already lost (it is in My spots already).
     expect(screen.getByRole("button", { name: "Save this" })).toBeDisabled();
@@ -431,294 +430,257 @@ describe("LostButton", () => {
     });
   });
 
-  describe("note", () => {
-    it("is a box that is always there, under I'm lost and Save this: 2 lines, 140 characters, Add a note, with Save note", async () => {
+  describe("note to the teacher", () => {
+    it("is only on a slide where the student is lost: a small line typed on the page, no box and no Save button", async () => {
       setup();
       await settle();
+      expect(noNoteField()).not.toBeInTheDocument();
+      // Not on a saved-for-you slide either (that is the notebook's job).
+      fireEvent.click(screen.getByRole("button", { name: "Save this" }), { detail: 1 });
+      expect(noNoteField()).not.toBeInTheDocument();
+      fireEvent.click(undoButton()!, { detail: 1 });
+      press();
       const field = noteField();
       expect(field.tagName).toBe("TEXTAREA");
-      expect(field).toHaveAttribute("rows", "2");
-      expect(field).toHaveAttribute("maxLength", String(LEGACY_NOTE_MAX));
-      expect(field).toHaveAttribute("placeholder", "Add a note");
-      // Under I'm lost and Save this in the panel.
-      const save = screen.getByRole("button", { name: "Save this" });
-      expect(save.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      // Notes are in Geist (type-body), not the italic serif.
-      expect(field.className).toContain("type-body");
-      expect(field.className).not.toContain("type-note");
-      // Still there after a tap, and after Undo.
-      press();
-      expect(noteField()).toBeInTheDocument();
+      expect(field).toHaveAttribute("placeholder", "Note for the teacher");
+      // The notebook look: Newsreader italic on ruled lines, no border box.
+      expect(field.className).toContain("type-note");
+      expect(field.className).toContain("bg-ruled");
+      expect(field.className).toContain("border-0");
+      expect(screen.queryByRole("button", { name: /Save note/ })).not.toBeInTheDocument();
+      // At the end of the panel: under the buttons and the line with Undo, so nothing above it moves.
+      expect(line().compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       undo();
-      expect(noteField()).toBeInTheDocument();
+      expect(noNoteField()).not.toBeInTheDocument();
     });
 
-    it("takes a note up to noteMax (2000 once the database has 0020) and sends all of it", async () => {
-      const { send } = setup({ noteMax: 2000 });
+    it("goes into the page's slot (the top of the notebook) when the page gives one", async () => {
+      const slot = document.createElement("div");
+      document.body.appendChild(slot);
+      setup({ noteSlot: slot });
       await settle();
-      expect(noteField()).toHaveAttribute("maxLength", "2000");
-      const long = "d".repeat(700);
-      typeNote(long);
-      expect(noteField()).toHaveValue(long);
-      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
-      typeNote("d".repeat(1985));
-      expect(screen.getByText("15 left")).toBeInTheDocument();
-      typeNote("d".repeat(2500));
-      expect(noteField().value).toHaveLength(2000);
-      typeNote(long);
-      saveNote();
-      await settle();
-      const [insert] = ops(send);
-      if (insert.op !== "insert") throw new Error("expected an insert");
-      expect(insert.tap.note).toBe(long);
+      press();
+      expect(slot.querySelector("textarea")).toBe(noteField());
+      slot.remove();
     });
 
-    it("cuts a note at 140 without noteMax (the database before 0020)", async () => {
-      setup();
-      await settle();
-      typeNote("e".repeat(700));
-      expect(noteField().value).toHaveLength(140);
-    });
-
-    it("shows a quiet counter only near the limit", async () => {
-      setup();
-      await settle();
-      typeNote("a".repeat(119));
-      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
-      typeNote("a".repeat(130));
-      expect(screen.getByText("10 left")).toBeInTheDocument();
-    });
-
-    it("after a tap, Save note queues a note update for that tap, keeps the note in the box, and says Note saved.", async () => {
+    it("saves by itself a moment after the typing pauses: an update of the tap, the text kept as typed, and a quiet Saved", async () => {
+      vi.useFakeTimers();
       const { send, onSpots } = setup();
       await settle();
       press();
       await settle();
-      typeNote("  why is this a credit  ");
-      saveNote();
-      await settle();
+      noteField().focus();
+      fireEvent.focus(noteField());
+      typeNote("why is this a credit ");
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS - 100));
+      expect(ops(send).filter((o) => o.op === "update")).toEqual([]);
+      typeNote("why is this a credit  ");
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS));
       const [insert, update] = ops(send);
       if (insert.op !== "insert") throw new Error("expected an insert");
       expect(update).toEqual({ op: "update", id: insert.tap.id, patch: { note: "why is this a credit" } });
       expect(ops(send).filter((o) => o.op === "insert")).toHaveLength(1);
-      expect(noteField()).toHaveValue("why is this a credit");
-      expect(saveButton()).toBeDisabled();
-      expect(status()).toHaveTextContent("Note saved.");
+      // The field keeps what was typed (a trailing space too), so typing on is not disturbed.
+      expect(noteField()).toHaveValue("why is this a credit  ");
+      expect(document.querySelector("[data-note-saved]")).toHaveTextContent("Saved");
       expect(onSpots.mock.lastCall?.[0][0]).toMatchObject({ slide: 7, note: "why is this a credit" });
+      await act(async () => vi.advanceTimersByTime(2000));
+      expect(document.querySelector("[data-note-saved]")).toBeNull();
+      // Nothing new: no second save.
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS * 3));
+      expect(ops(send).filter((o) => o.op === "update")).toHaveLength(1);
     });
 
-    it("on a slide with no tap yet, a note records I'm lost on that slide with the note, in one insert, and Undo takes it back", async () => {
-      const onTap = vi.fn();
-      const { send, lastSpots } = setup({ onTap });
-      await settle();
-      typeNote("lost on the timing part");
-      fireEvent.keyDown(noteField(), { key: "Enter" });
-      await settle();
-      expect(ops(send)).toEqual([
-        { op: "insert", tap: expect.objectContaining({ tappedOnSlide: 7, note: "lost on the timing part" }) },
-      ]);
-      const [op] = ops(send);
-      if (op.op !== "insert") throw new Error("expected an insert");
-      // An I'm lost (no kind), not a save.
-      expect(op.tap.kind).toBeUndefined();
-      expect(onTap).toHaveBeenCalledWith("lost");
-      expect(checked()).toBeInTheDocument();
-      expect(lastSpots()).toEqual([7]);
-      expect(noteField()).toHaveValue("lost on the timing part");
-      expect(status()).toHaveTextContent("Saved slide 7. Note saved.");
-      undo();
-      await settle();
-      expect(ops(send)[1]).toEqual({ op: "update", id: op.tap.id, patch: { undone: true } });
-      expect(lastSpots()).toEqual([]);
-      expect(screen.getByRole("button", { name: "I'm lost" })).not.toHaveAttribute("aria-disabled");
-    });
-
-    it("on a saved-for-you slide, the note goes on the save (no I'm lost)", async () => {
-      const { send } = setup();
-      await settle();
-      fireEvent.click(screen.getByRole("button", { name: "Save this" }));
-      await settle();
-      typeNote("keep for the exam");
-      saveNote();
-      await settle();
-      const [insert, update] = ops(send);
-      if (insert.op !== "insert") throw new Error("expected an insert");
-      expect(insert.tap.kind).toBe("save");
-      expect(update).toEqual({ op: "update", id: insert.tap.id, patch: { note: "keep for the exam" } });
-      expect(screen.getByRole("button", { name: "I'm lost" })).not.toHaveAttribute("aria-disabled");
-    });
-
-    it("Enter saves, Shift+Enter does not, Esc drops the changes", async () => {
+    it("Enter saves at once (Shift+Enter is a new line), and so does leaving the field", async () => {
       const { send } = setup();
       await settle();
       press();
       await settle();
       typeNote("first");
       fireEvent.keyDown(noteField(), { key: "Enter", shiftKey: true });
+      await settle();
       expect(ops(send).filter((o) => o.op === "update")).toEqual([]);
-      fireEvent.keyDown(noteField(), { key: "Escape" });
-      expect(noteField()).toHaveValue("");
-      expect(saveButton()).toBeDisabled();
-      typeNote("second");
       fireEvent.keyDown(noteField(), { key: "Enter" });
       await settle();
-      expect(ops(send).filter((o) => o.op === "update")).toEqual([expect.objectContaining({ patch: { note: "second" } })]);
+      expect(ops(send).filter((o) => o.op === "update")).toEqual([expect.objectContaining({ patch: { note: "first" } })]);
+      typeNote("second");
+      fireEvent.blur(noteField());
+      await settle();
+      expect(ops(send).filter((o) => o.op === "update").map((o) => (o.op === "update" ? o.patch : null))).toEqual([
+        { note: "first" },
+        { note: "second" },
+      ]);
     });
 
-    it("shows a saved note in the box, and saving a changed one sends the new text", async () => {
+    it("takes up to noteMax (2000 once the database has 0020), counted and cut by whole characters, never half an emoji", async () => {
+      const { send } = setup({ noteMax: 2000 });
+      await settle();
+      press();
+      await settle();
+      const long = "d".repeat(700);
+      typeNote(long);
+      expect(noteField()).toHaveValue(long);
+      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
+      // No maxLength (it counts halves of an emoji); the page cuts by whole characters.
+      expect(noteField()).not.toHaveAttribute("maxLength");
+      typeNote("😀".repeat(1985));
+      expect(screen.getByText("15 left")).toBeInTheDocument();
+      expect(noteField()).toHaveAccessibleDescription("15 left");
+      typeNote("d".repeat(1999) + "😀😀😀");
+      expect(Array.from(noteField().value)).toHaveLength(2000);
+      expect(noteField().value.endsWith("d😀")).toBe(true);
+      saveNote();
+      await settle();
+      const update = ops(send).find((o) => o.op === "update");
+      if (!update || update.op !== "update") throw new Error("expected an update");
+      expect(update.patch.note).toBe("d".repeat(1999) + "😀");
+    });
+
+    it("cuts at 140 without noteMax (the database before 0020)", async () => {
+      setup();
+      await settle();
+      press();
+      typeNote("e".repeat(700));
+      expect(noteField().value).toHaveLength(140);
+      typeNote("a".repeat(119));
+      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
+      typeNote("a".repeat(130));
+      expect(screen.getByText("10 left")).toBeInTheDocument();
+    });
+
+    it("shows the saved note, and a changed one is sent; emptied, it is taken off; unchanged, nothing is sent", async () => {
       const { send } = setup({ loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const, note: "old" }]) });
       await settle();
       expect(noteField()).toHaveValue("old");
+      typeNote("old");
+      saveNote();
+      await settle();
+      expect(send).not.toHaveBeenCalled();
       typeNote("new");
       saveNote();
       await settle();
       expect(ops(send)).toEqual([{ op: "update", id: "a", patch: { note: "new" } }]);
-      expect(noteField()).toHaveValue("new");
-    });
-
-    it("emptying a saved note and saving takes it off", async () => {
-      const { send } = setup({ loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const, note: "old" }]) });
-      await settle();
       typeNote("  ");
       saveNote();
       await settle();
-      expect(ops(send)).toEqual([{ op: "update", id: "a", patch: { note: "" } }]);
+      expect(ops(send)[1]).toEqual({ op: "update", id: "a", patch: { note: "" } });
       expect(status()).toHaveTextContent("Note removed.");
-      expect(noteField()).toHaveValue("");
     });
 
-    it("saving an unchanged or blank note sends nothing (Save note stays off)", async () => {
-      const { send } = setup({ loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const, note: "same" }]) });
-      await settle();
-      typeNote("same");
-      expect(saveButton()).toBeDisabled();
-      fireEvent.keyDown(noteField(), { key: "Enter" });
-      await settle();
-      expect(send).not.toHaveBeenCalled();
-      // A blank box on a slide with no spot records nothing either.
-      const other = setup({ viewing: 3 });
-      await settle();
-      fireEvent.change(within(other.container).getByRole("textbox"), { target: { value: "   " } });
-      fireEvent.keyDown(within(other.container).getByRole("textbox"), { key: "Enter" });
-      await settle();
-      expect(other.send).not.toHaveBeenCalled();
-    });
-
-    it("keeps a note being typed when the slide changes, and saves it on the slide it was for", async () => {
+    it("keeps its slide while it has the focus when the slide changes, saves there, then goes with the focus", async () => {
       const { send, show } = setup();
       await settle();
       press();
       await settle();
+      noteField().focus();
+      fireEvent.focus(noteField());
       typeNote("half a tho");
       show({ viewing: 8 });
       expect(noteField()).toHaveValue("half a tho");
-      expect(noteField()).toHaveAccessibleName("Your note on slide 7");
-      expect(screen.getByText("Note for slide 7")).toBeInTheDocument();
+      expect(noteField()).toHaveAccessibleName("Note for the teacher, slide 7");
+      expect(document.querySelector("[data-note-slide]")).toHaveTextContent("Slide 7");
       // The button is for slide 8 now.
-      expect(screen.getByRole("button", { name: "I'm lost" })).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("button", { name: "I'm lost" })).toBeInTheDocument();
       typeNote("half a thought");
-      saveNote();
+      fireEvent.blur(noteField());
       await settle();
       const [insert, update] = ops(send);
       if (insert.op !== "insert") throw new Error("expected an insert");
       expect(insert.tap.tappedOnSlide).toBe(7);
       expect(update).toEqual({ op: "update", id: insert.tap.id, patch: { note: "half a thought" } });
-      // Back to slide 8's own box.
-      expect(noteField()).toHaveValue("");
-      expect(noteField()).toHaveAccessibleName("Your note");
+      // Slide 8 is not lost: no line there.
+      expect(noNoteField()).not.toBeInTheDocument();
     });
 
-    it("a note started on a slide with no tap, sent after the teacher moved on, records I'm lost on the slide it was started on", async () => {
-      const { send, show } = setup();
+    it("a note that ends up on a slide with no I'm lost (the tap did not save) is given back, and once edited records I'm lost with it, in one insert", async () => {
+      vi.useFakeTimers();
+      let results: SendResult[] = ["rejected"];
+      const send = vi.fn<Send>(async () => results.shift() ?? "ok");
+      const { lastSpots } = setup({ send });
       await settle();
-      typeNote("what was that formula");
-      show({ viewing: 8 });
-      fireEvent.keyDown(noteField(), { key: "Enter" });
-      await settle();
-      const [op] = ops(send);
-      if (op.op !== "insert") throw new Error("expected an insert");
-      expect(op.tap).toMatchObject({ tappedOnSlide: 7, note: "what was that formula" });
-      expect(ops(send)).toHaveLength(1);
-      // Slide 8 is untouched.
-      expect(screen.getByRole("button", { name: "I'm lost" })).not.toHaveAttribute("aria-disabled");
+      press();
+      typeNote("lost on the timing part");
+      saveNote();
+      await act(async () => vi.advanceTimersByTime(0));
+      // The tap and the note on it were refused: the note is back in its line, the slide is not lost.
+      expect(lastSpots()).toEqual([]);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(noteField()).toHaveValue("lost on the timing part");
+      // Given back, it does not save by itself (the database just said no): no loop.
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS * 4));
+      expect(send).toHaveBeenCalledTimes(1);
+      results = [];
+      typeNote("lost on the timing part!");
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS));
+      const inserts = ops(send).filter((o) => o.op === "insert");
+      expect(inserts).toHaveLength(2);
+      const last = inserts[1];
+      if (last.op !== "insert") throw new Error("expected an insert");
+      // An I'm lost (no kind) with the note, in one go.
+      expect(last.tap.kind).toBeUndefined();
+      expect(last.tap).toMatchObject({ tappedOnSlide: 7, note: "lost on the timing part!" });
+      expect(checked()).toBeInTheDocument();
     });
 
-    it("a box left as it was follows the new slide", async () => {
-      const { show } = setup({ loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const, note: "seven" }]) });
+    it("taking I'm lost back while a note is typed saves the note on the tap first, and Undo brings both back", async () => {
+      vi.useFakeTimers();
+      const { send } = setup({ loadOwn: vi.fn(async () => [{ id: "a", slide: 7, kind: "lost" as const }]) });
       await settle();
-      typeNote("seven");
-      show({ viewing: 8 });
-      expect(noteField()).toHaveValue("");
-      expect(noteField()).toHaveAccessibleName("Your note");
+      typeNote("ask about this");
+      fireEvent.click(checked(), { detail: 1 });
+      await act(async () => vi.advanceTimersByTime(0));
+      expect(ops(send)).toEqual([
+        { op: "update", id: "a", patch: { note: "ask about this" } },
+        { op: "update", id: "a", patch: { undone: true } },
+      ]);
+      expect(noNoteField()).not.toBeInTheDocument();
+      // The draft does not come back and make the slide lost again.
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS * 3));
+      expect(ops(send).filter((o) => o.op === "insert")).toEqual([]);
+      undo();
+      await act(async () => vi.advanceTimersByTime(0));
+      expect(noteField()).toHaveValue("ask about this");
     });
 
-    it("Undo after a note on an unsent tap sends neither", async () => {
+    it("Undo of I'm lost with a note being typed sends neither, and the note does not come back as a new I'm lost", async () => {
+      vi.useFakeTimers();
       const send = vi.fn<Send>(async () => "offline");
       setup({ send });
       await settle();
       press();
-      await settle();
       typeNote("hello");
-      saveNote();
-      await settle();
       undo();
-      await settle();
+      await act(async () => vi.advanceTimersByTime(NOTE_SAVE_MS * 3));
       expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
+      expect(noNoteField()).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "I'm lost" })).toBeInTheDocument();
     });
 
-    it("gives back a note saved on a new tap whose insert is then refused (the dropped update carried it)", async () => {
-      let finish: (r: SendResult) => void = () => {};
-      const send = vi.fn<Send>((op) => (op.op === "insert" ? new Promise<SendResult>((r) => (finish = r)) : Promise.resolve("ok")));
-      setup({ send });
+    it("a note being typed when the panel goes (Next hides the page) is saved first", async () => {
+      const { send, unmount } = setup();
       await settle();
       press();
       await settle();
-      typeNote("saved after the tap");
-      saveNote();
-      expect(noteField()).toHaveValue("saved after the tap");
-      await act(async () => finish("limited"));
-      await settle();
-      expect(screen.getByRole("alert")).toBeInTheDocument();
-      expect(noteField()).toHaveValue("saved after the tap");
-      expect(saveButton()).toBeEnabled();
-    });
-
-    it("shows a short Note saved line under the box (Note saved on slide 7 when it went to another slide), gone after 3 s", async () => {
-      vi.useFakeTimers();
-      const { show } = setup();
-      await settle();
-      typeNote("on seven");
-      show({ viewing: 8 });
-      fireEvent.keyDown(noteField(), { key: "Enter" });
-      expect(document.querySelector("[data-noted]")).toHaveTextContent("Note saved on slide 7");
-      await act(async () => vi.advanceTimersByTime(3000));
-      expect(document.querySelector("[data-noted]")).toBeNull();
-      typeNote("on eight");
-      fireEvent.keyDown(noteField(), { key: "Enter" });
-      expect(document.querySelector("[data-noted]")).toHaveTextContent(/^Note saved$/);
-    });
-
-    it("ties the counter to the box for a screen reader while it shows", async () => {
-      setup();
-      await settle();
-      typeNote("a".repeat(119));
-      expect(noteField()).not.toHaveAttribute("aria-describedby");
-      typeNote("a".repeat(130));
-      expect(noteField()).toHaveAccessibleDescription("10 left");
+      typeNote("before I go");
+      unmount();
+      const queued = JSON.parse(localStorage.getItem(KEY) ?? "[]") as QueueOp[];
+      const sent = [...ops(send), ...queued];
+      expect(sent.some((o) => o.op === "update" && o.patch.note === "before I go")).toBe(true);
     });
 
     for (const result of ["rejected", "limited"] as const) {
-      it(`puts the note back in the box when the ${result} tap it was sent with does not save`, async () => {
+      it(`gives the note back in its line when the ${result} tap it was sent with does not save`, async () => {
         const send = vi.fn<Send>(async () => result);
         const { lastSpots } = setup({ send });
         await settle();
+        press();
         typeNote("my note");
         saveNote();
         await settle();
         expect(lastSpots()).toEqual([]);
         expect(screen.getByRole("alert")).toBeInTheDocument();
         expect(noteField()).toHaveValue("my note");
-        expect(saveButton()).toBeEnabled();
         // One insert only, never retried.
         expect(send).toHaveBeenCalledTimes(1);
       });
@@ -1696,6 +1658,7 @@ describe("LostButton", () => {
         press();
         await settle();
         noteField().focus();
+        fireEvent.focus(noteField());
         typeNote("hel");
         await act(async () => finish(result));
         expect(noteField()).toHaveValue("hel");
