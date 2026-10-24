@@ -60,9 +60,15 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: "Save" }))
 const day = (name: string) => screen.getByRole("button", { name });
 
 describe("CourseDetailsEditor", () => {
-  it("shows the section and when the class meets, and Edit details", () => {
+  it("shows when the class meets (the section is in the page's title since batch L), and Edit details", () => {
     show();
-    expect(screen.getByTestId("course-details")).toHaveTextContent("Section B · Mon Wed Fri · 10:05–11:00 AM");
+    expect(screen.getByTestId("course-details")).toHaveTextContent(/^Mon Wed Fri · 10:05–11:00 AMEdit details$/);
+    expect(screen.getByRole("button", { name: "Edit details" })).toBeInTheDocument();
+  });
+
+  it("with only a section set, the button still says Edit details", () => {
+    show({ ...empty, section: "B" });
+    expect(screen.getByTestId("course-details").querySelector("p")).toBeNull();
     expect(screen.getByRole("button", { name: "Edit details" })).toBeInTheDocument();
   });
 
@@ -310,7 +316,7 @@ describe("CourseDetailsEditor", () => {
       { color: "plum", section: "001", meet_days: [2, 4], start_minute: 795, end_minute: 875 },
     ]);
     expect(h.eqs).toEqual([["id", "c1"]]);
-    expect(screen.getByTestId("course-details")).toHaveTextContent("001 · Tue Thu · 1:15–2:35 PM");
+    expect(screen.getByTestId("course-details")).toHaveTextContent(/^Tue Thu · 1:15–2:35 PMEdit details$/);
     expect(screen.getByRole("status")).toHaveTextContent("Saved.");
     await waitFor(() => expect(screen.getByRole("button", { name: "Edit details" })).toHaveFocus());
   });

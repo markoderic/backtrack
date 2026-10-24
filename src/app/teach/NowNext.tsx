@@ -12,7 +12,7 @@ import {
   whenLabel,
   type CourseDetails,
 } from "@/lib/courseDetails";
-import { splitCourseName } from "./ui";
+import { CourseTitle, courseTitleSpoken, splitCourseName } from "./ui";
 
 export type ScheduledCourse = { id: string; name: string; details: CourseDetails };
 
@@ -87,17 +87,20 @@ export function NowNext({
         <div className="flex min-w-0 flex-1 basis-60 flex-col gap-1">
           <p className="type-small-strong text-secondary">Now</p>
           <p className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+            {/* The section is part of the title: same size and weight (Marko, hand test 3). */}
             <Link href={`/teach/c/${current.course.id}`} className="press focus-ring rounded-sm type-display text-ink">
-              {code}
+              <CourseTitle code={code} section={d.section} />
             </Link>
-            {d.section && <span className="type-body-strong text-secondary">{d.section}</span>}
           </p>
           {title && <p className="truncate type-lecture text-secondary">{title}</p>}
           <p className="type-small text-ink">
             {formatDays(d.meetDays)} · {formatTimeRange(current.start, current.end)}
           </p>
         </div>
-        <ButtonPrimaryLink href={`/teach/c/${current.course.id}/start`} aria-label={`Start lecture in ${code}`}>
+        <ButtonPrimaryLink
+          href={`/teach/c/${current.course.id}/start`}
+          aria-label={`Start lecture in ${courseTitleSpoken(code, d.section)}`}
+        >
           Start lecture
         </ButtonPrimaryLink>
       </section>
@@ -122,8 +125,7 @@ export function NowNext({
         />
         <span className="type-small-strong text-secondary">Next</span>
         <Link href={`/teach/c/${next.course.id}`} className="press focus-ring rounded-sm type-body-strong text-ink">
-          {code}
-          {d.section ? `, ${d.section}` : ""}
+          <CourseTitle code={code} section={d.section} />
         </Link>
         <span className="type-body text-secondary">{whenLabel(next)}</span>
       </section>

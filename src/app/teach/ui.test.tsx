@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { TeacherTopBar, fieldClass, fieldNarrowClass, hitAreaClass } from "./ui";
+import { CourseTitle, TeacherTopBar, courseTitleSpoken, courseTitleText, fieldClass, fieldNarrowClass, hitAreaClass, sectionTag } from "./ui";
 
 describe("buttons, not links (Marko, 2:05 PM)", () => {
   it("no teacher screen and not Home has an underlined text action left", () => {
@@ -99,5 +99,36 @@ describe("TeacherTopBar", () => {
   it("has no back link on the top level", () => {
     render(<TeacherTopBar crumbs={[{ label: "Courses" }]} />);
     expect(screen.queryByTestId("back-link")).toBeNull();
+  });
+});
+
+describe("the section as part of the course title (Marko, hand test 3)", () => {
+  it("shortens a typed Section, Sect or Sec to what follows it, and keeps anything else", () => {
+    expect(sectionTag("Section B")).toBe("B");
+    expect(sectionTag("section 001")).toBe("001");
+    expect(sectionTag("Sec. 2")).toBe("2");
+    expect(sectionTag("Sect A")).toBe("A");
+    expect(sectionTag("  B  ")).toBe("B");
+    expect(sectionTag("Secondary")).toBe("Secondary");
+    expect(sectionTag("Section")).toBe("Section");
+    expect(sectionTag("")).toBeNull();
+    expect(sectionTag(null)).toBeNull();
+  });
+
+  it("reads \"IMS 452 B\" in one size and weight, and a screen reader hears \"IMS 452 section B\"", () => {
+    render(
+      <h2 className="type-title">
+        <CourseTitle code="IMS 452" section="Section B" />
+      </h2>,
+    );
+    const heading = screen.getByRole("heading", { name: "IMS 452 section B" });
+    // No class of its own on the section: it takes the heading's size and weight.
+    expect(heading.querySelector("[data-course-section]")).toHaveTextContent("B");
+    expect(heading.querySelector("[data-course-section]")!.getAttribute("class")).toBeNull();
+    expect(heading.querySelector(".sr-only")).toHaveTextContent("section");
+    expect(courseTitleText("IMS 452", "Section B")).toBe("IMS 452 B");
+    expect(courseTitleSpoken("IMS 452", "Section B")).toBe("IMS 452 section B");
+    expect(courseTitleText("IMS 452", null)).toBe("IMS 452");
+    expect(courseTitleSpoken("IMS 452", " ")).toBe("IMS 452");
   });
 });

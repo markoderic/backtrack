@@ -2,11 +2,11 @@ import Link from "next/link";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { colorPaint, scheduleLabel, type CourseDetails } from "@/lib/courseDetails";
 import { CourseMenu } from "./CourseMenu";
-import { splitCourseName, staggerClass, staggerStyle } from "./ui";
+import { CourseTitle, courseTitleSpoken, courseTitleText, splitCourseName, staggerClass, staggerStyle } from "./ui";
 
 /**
  * One course on the dashboard (batch D): a card with the course's color as a bar down its left
- * side, the code and title, the section, when it meets, how many lectures it has had, and Start
+ * side, the code with the section as one title ("IMS 452 B", batch L), the course title, when it meets, how many lectures it has had, and Start
  * lecture (Resume while one of its lectures is live). The whole card opens the course page (the
  * name is the link, stretched over the card); the button sits above that link. The ⋯ menu in the
  * top right corner (batch H) sits above it too: Download CSV, Edit details, Rename, Archive.
@@ -39,6 +39,7 @@ export function CourseCard({
   announce: (text: string) => void;
 }) {
   const { code, title } = splitCourseName(name);
+  const spoken = courseTitleSpoken(code, details?.section);
   const schedule = details ? scheduleLabel(details) : null;
   const color = details?.color ?? null;
   const paint = colorPaint(color);
@@ -62,18 +63,16 @@ export function CourseCard({
         <div className="flex min-w-0 flex-1 flex-col gap-1 py-5 pr-5 pl-4">
           {/* Room on the right for the ⋯ button. */}
           <div className="flex min-w-0 items-baseline gap-3 pr-10">
+            {/* The section is part of the title: same size and weight (Marko, hand test 3). */}
             <h2 className="min-w-0 flex-1 truncate type-title text-ink">
               <Link
                 href={`/teach/c/${id}`}
                 data-card-link
                 className="rounded-sm outline-none after:absolute after:inset-0 after:content-['']"
               >
-                {code}
+                <CourseTitle code={code} section={details?.section} />
               </Link>
             </h2>
-            {details?.section && (
-              <span className="max-w-[45%] shrink-0 truncate type-small-strong text-secondary">{details.section}</span>
-            )}
           </div>
           {title && <p className="truncate type-lecture text-secondary">{title}</p>}
           <div className="flex flex-col gap-0.5 pt-2">
@@ -89,7 +88,7 @@ export function CourseCard({
                 </span>
                 <Link
                   href={`/teach/l/${liveLectureId}/present`}
-                  aria-label={`Resume ${code}`}
+                  aria-label={`Resume ${spoken}`}
                   className={`${buttonSecondaryClass} relative z-10`}
                 >
                   Resume
@@ -98,7 +97,7 @@ export function CourseCard({
             ) : (
               <Link
                 href={`/teach/c/${id}/start`}
-                aria-label={`Start lecture in ${code}`}
+                aria-label={`Start lecture in ${spoken}`}
                 className={`${buttonSecondaryClass} relative z-10`}
               >
                 Start lecture
@@ -111,7 +110,7 @@ export function CourseCard({
           <CourseMenu
             courseId={id}
             name={name}
-            code={code}
+            code={courseTitleText(code, details?.section)}
             details={details}
             options={options}
             onArchive={onArchive}

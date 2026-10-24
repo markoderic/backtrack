@@ -165,3 +165,41 @@ export function splitCourseName(name: string): { code: string; title: string | n
   const m = /^\s*([A-Za-z]{2,5}\s?\d{3}[A-Za-z]?)\s+(\S.*?)\s*$/.exec(name);
   return m ? { code: m[1], title: m[2] } : { code: name.trim(), title: null };
 }
+
+/**
+ * The course's section as the end of its title (Marko, hand test 3: "That section thing should
+ * just be an extension of the title"): "IMS 452 B". A section typed as "Section B" or "Sec. B"
+ * shows as "B"; "001" stays "001". Null when there is none.
+ */
+export function sectionTag(section: string | null | undefined): string | null {
+  const s = section?.trim();
+  if (!s) return null;
+  const bare = s.replace(/^(section|sect|sec)\b\.?\s*/i, "").trim();
+  return bare || s;
+}
+
+/** The title as text, where a string is needed (the breadcrumb, a dialog title): "IMS 452 B". */
+export function courseTitleText(code: string, section?: string | null): string {
+  const tag = sectionTag(section);
+  return tag ? `${code} ${tag}` : code;
+}
+
+/** The title as a screen reader says it, for an aria-label: "IMS 452 section B". */
+export function courseTitleSpoken(code: string, section?: string | null): string {
+  const tag = sectionTag(section);
+  return tag ? `${code} section ${tag}` : code;
+}
+
+/**
+ * The title inside a heading or a link: the code and the section in one size and weight
+ * ("IMS 452 B"), and a screen reader hears "IMS 452 section B".
+ */
+export function CourseTitle({ code, section }: { code: string; section?: string | null }) {
+  const tag = sectionTag(section);
+  if (!tag) return <>{code}</>;
+  return (
+    <>
+      {code} <span className="sr-only">section</span> <span data-course-section="">{tag}</span>
+    </>
+  );
+}

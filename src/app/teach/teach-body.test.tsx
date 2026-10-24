@@ -206,9 +206,13 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     const [first, second] = cards(html);
     expect(first).toContain('data-course-color="teal"');
     expect(first).toContain("bg-course-teal");
-    expect(first).toContain(">IMS 452<");
+    // The section is part of the title (Marko, hand test 3): "IMS 452 B" in the title's size and weight, the
+    // typed "Section B" shortened to "B"; a screen reader hears "IMS 452 section B".
+    expect(first).toMatch(/<h2 class="[^"]*type-title[^"]*"><a [^>]*data-card-link[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/a><\/h2>/);
+    expect(first).not.toContain("Section B");
+    expect(first).not.toContain("type-small-strong text-secondary");
+    expect(first).toContain('aria-label="Start lecture in IMS 452 section B"');
     expect(first).toContain("Senior Design");
-    expect(first).toContain("Section B");
     expect(first).toContain("Mon Wed Fri · 10:05–11:00 AM");
     expect(first).toContain("1 lecture, last on Oct 21");
     expect(first).toContain('href="/teach/c/c1"');
@@ -249,8 +253,9 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     const block = html.match(/<section[^>]*data-testid="now-next"[\s\S]*?<\/section>/)?.[0] ?? "";
     expect(block).toContain('data-state="now"');
     expect(block).toContain(">Now<");
-    expect(block).toContain("IMS 452");
-    expect(block).toContain("Section B");
+    expect(block).toMatch(/<a class="[^"]*type-display[^"]*" href="\/teach\/c\/c1">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/a>/);
+    expect(block).not.toContain("Section B");
+    expect(block).toContain('aria-label="Start lecture in IMS 452 section B"');
     expect(block).toContain("Mon Wed Fri · 10:05–11:00 AM");
     expect(block).toMatch(/href="\/teach\/c\/c1\/start"[^>]*>Start lecture</);
     expect(html.indexOf('data-testid="now-next"')).toBeLessThan(html.indexOf(">Courses</h1>"));
@@ -296,7 +301,7 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     ]);
     expect(cards(html)).toHaveLength(1);
     expect(cards(html)[0]).toContain("bg-course-teal");
-    expect(cards(html)[0]).toContain("Section B");
+    expect(cards(html)[0]).toMatch(/<h2 class="[^"]*type-title[^"]*"><a [^>]*data-card-link[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/a><\/h2>/);
   });
 
   it("a course with a picked color (after 0019): the bar is painted with it, inline, on the card and in Now", async () => {
@@ -315,7 +320,7 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     courses.mockResolvedValue({ data: [ims, plain], error: null });
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
     const [first, second] = cards(html);
-    expect(first).toMatch(/<div class="absolute top-2 right-2 z-10"><button[^>]*aria-label="More for IMS 452"[^>]*aria-haspopup="menu"/);
+    expect(first).toMatch(/<div class="absolute top-2 right-2 z-10"><button[^>]*aria-label="More for IMS 452 B"[^>]*aria-haspopup="menu"/);
     expect(second).toContain('aria-label="More for BIO 121"');
   });
 
@@ -349,7 +354,8 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
   it("in each card the course name comes first and the ⋯ last, in reading and Tab order", async () => {
     courses.mockResolvedValue({ data: [ims], error: null });
     const card = cards(renderToStaticMarkup(await TeachBody({ searchParams: search })))[0];
-    expect(card.indexOf("<h2")).toBeLessThan(card.indexOf('aria-label="More for IMS 452"'));
-    expect(card.indexOf("Start lecture")).toBeLessThan(card.indexOf('aria-label="More for IMS 452"'));
+    expect(card.indexOf('aria-label="More for IMS 452 B"')).toBeGreaterThan(-1);
+    expect(card.indexOf("<h2")).toBeLessThan(card.indexOf('aria-label="More for IMS 452 B"'));
+    expect(card.indexOf("Start lecture")).toBeLessThan(card.indexOf('aria-label="More for IMS 452 B"'));
   });
 });

@@ -20,14 +20,21 @@ describe("NowNext", () => {
     vi.setSystemTime(wed("09:49"));
     render(<NowNext courses={[ims]} liveCourseIds={[]} initialNow={wed("09:49")} />);
     expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "next");
-    expect(screen.getByTestId("now-next")).toHaveTextContent("NextIMS 452, 001Today 10:05 AM");
+    // The section is part of the title (hand test 3): "IMS 452 001", one link, one weight.
+    expect(screen.getByTestId("now-next")).toHaveTextContent("NextIMS 452 section 001Today 10:05 AM");
+    expect(screen.getByRole("link", { name: "IMS 452 section 001" })).toHaveClass("type-body-strong");
 
     act(() => {
       vi.setSystemTime(wed("09:50"));
       vi.advanceTimersByTime(TICK_MS);
     });
     expect(screen.getByTestId("now-next")).toHaveAttribute("data-state", "now");
-    expect(screen.getByRole("link", { name: "Start lecture in IMS 452" })).toHaveAttribute("href", "/teach/c/c1/start");
+    expect(screen.getByRole("link", { name: "Start lecture in IMS 452 section 001" })).toHaveAttribute("href", "/teach/c/c1/start");
+    // Now: the code and the section in one link at the display size, no smaller gray section beside it.
+    const title = screen.getByRole("link", { name: "IMS 452 section 001" });
+    expect(title).toHaveClass("type-display");
+    expect(title.querySelector("[data-course-section]")).toHaveTextContent("001");
+    expect(screen.getByRole("region", { name: "Now" }).querySelector(".type-body-strong")).toBeNull();
     expect(screen.getByRole("region", { name: "Now" })).toHaveTextContent("Wed · 10:05–11:00 AM");
   });
 

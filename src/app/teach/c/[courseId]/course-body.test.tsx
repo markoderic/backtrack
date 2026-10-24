@@ -433,7 +433,11 @@ describe("CourseBody: color, section and schedule (batch D)", () => {
     const html = renderToStaticMarkup(await CourseBody({ params }));
     expect(html).toContain('data-course-color="plum"');
     expect(html).toContain("bg-course-plum");
-    expect(html).toContain("Section B · Mon Wed Fri · 10:05–11:00 AM");
+    // The section is part of the title (Marko, hand test 3): same size and weight, "Section B" shown as "B".
+    expect(html).toMatch(/<h1 class="type-display[^"]*">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/h1>/);
+    expect(html).toMatch(/aria-current="page"[^>]*>IMS 452 B</);
+    expect(html).toContain(">Mon Wed Fri · 10:05–11:00 AM<");
+    expect(html).not.toContain("Section B");
     expect(html).toContain("Edit details");
     // On a phone the name block takes the whole row (Start lecture wraps under it), from sm side by side.
     expect(html).toMatch(/<div class="[^"]*\bbasis-full\b[^"]*\bsm:basis-0\b[^"]*"><span aria-hidden="true" data-course-color="plum"/);

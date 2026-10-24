@@ -407,7 +407,7 @@ export function CourseDetailsForm({
 
 /**
  * The course's color, section and meeting time on its page (batch D): one line under the name
- * ("Section B · Mon Wed Fri · 10:05–11:00 AM") and Edit details, which opens the details form in
+ * ("Mon Wed Fri · 10:05–11:00 AM"; the section is in the title since batch L) and Edit details, which opens the details form in
  * place. Only rendered once migration 0018 is in (the page reads the columns first).
  */
 export function CourseDetailsEditor({
@@ -454,7 +454,8 @@ export function CourseDetailsEditor({
     setEditing(false);
   }
 
-  const summary = [saved.section, scheduleLabel(saved)].filter(Boolean).join(" · ");
+  // The section is in the page's title now ("IMS 452 B", batch L): the line says when the course meets.
+  const summary = scheduleLabel(saved) ?? "";
   // Always in the page (outside the line and the form, which swap), so "Saved." is announced.
   const status = (
     <p role="status" className="type-small text-secondary empty:sr-only">
@@ -477,7 +478,7 @@ export function CourseDetailsEditor({
             className={buttonSecondaryClass}
           >
             <Icon name="edit" size={18} />
-            {summary || saved.color ? "Edit details" : "Add color, section and time"}
+            {summary || saved.color || saved.section ? "Edit details" : "Add color, section and time"}
           </button>
         </div>
         {status}

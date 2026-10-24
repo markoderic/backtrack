@@ -7,7 +7,7 @@ import { Icon } from "@/components/Icon";
 import { LiveLectureRow } from "../../LiveLectureRow";
 import { RefreshOnReturn } from "../../RefreshOnReturn";
 import { readTeacherName } from "../../teacher";
-import { TeacherPage, splitCourseName } from "../../ui";
+import { CourseTitle, TeacherPage, courseTitleText, splitCourseName } from "../../ui";
 import { LECTURE_DELETED } from "../../delete-lecture-copy";
 import { PastLectures, type PastLecture } from "./PastLectures";
 import { SlideAccess } from "./SlideAccess";
@@ -211,7 +211,10 @@ export async function CourseBody({
   const paint = details ? colorPaint(details.color) : null;
 
   return (
-    <TeacherPage crumbs={[{ label: "Courses", href: "/teach" }, { label: code }]} teacherName={teacherName}>
+    <TeacherPage
+      crumbs={[{ label: "Courses", href: "/teach" }, { label: courseTitleText(code, details?.section) }]}
+      teacherName={teacherName}
+    >
       <RefreshOnReturn />
       <main className="mx-auto flex w-full max-w-[1104px] animate-page-in flex-col gap-2 px-4 py-12 sm:px-8">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-6">
@@ -226,7 +229,10 @@ export async function CourseBody({
               />
             )}
             <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <h1 className="type-display break-words text-ink">{code}</h1>
+              {/* The section is part of the title: same size and weight (Marko, hand test 3). */}
+              <h1 className="type-display break-words text-ink">
+                <CourseTitle code={code} section={details?.section} />
+              </h1>
               {title && <p className="type-lecture-l text-secondary">{title}</p>}
             </div>
           </div>
@@ -248,7 +254,7 @@ export async function CourseBody({
 
         {details && (
           <div className="pt-4">
-            <CourseDetailsEditor courseId={course.id} code={code} details={details} options={options} />
+            <CourseDetailsEditor courseId={course.id} code={courseTitleText(code, details.section)} details={details} options={options} />
           </div>
         )}
 
