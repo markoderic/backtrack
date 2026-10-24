@@ -243,11 +243,12 @@ describe("what a joined student sees after class, for each choice", () => {
 
   it("custom date: through the whole day, gone two days after it, for old and new lectures alike", async () => {
     await endedDaysAgo(100);
-    await set("student_access = 'custom_date', access_until = current_date");
+    // Today in Eastern time, as the rule reads it (current_date is the session's zone, which can be a day off).
+    await set("student_access = 'custom_date', access_until = public.eastern_date(now())");
     expect(await sees(s1)).toEqual(ALL);
-    await set("access_until = current_date + 30");
+    await set("access_until = public.eastern_date(now()) + 30");
     expect(await sees(s1)).toEqual(ALL);
-    await set("access_until = current_date - 2");
+    await set("access_until = public.eastern_date(now()) - 2");
     expect(await sees(s1)).toEqual(NONE);
     // Unlike End of semester, a date before the lecture is not skipped: it is the end for every lecture.
     await endedDaysAgo(0);

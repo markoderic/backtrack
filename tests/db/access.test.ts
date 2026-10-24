@@ -146,9 +146,10 @@ describe("end of semester", () => {
 
   it("the last day still counts; two days after it the slides and images are gone", async () => {
     await endedDaysAgo(10);
-    await db.query("update public.courses set semester_end = current_date where id = $1", [COURSE]);
+    // Today in Eastern time, as the rule reads it (current_date is the session's zone, which can be a day off).
+    await db.query("update public.courses set semester_end = public.eastern_date(now()) where id = $1", [COURSE]);
     expect(await sees(s1)).toEqual(ALL);
-    await db.query("update public.courses set semester_end = current_date - 2 where id = $1", [COURSE]);
+    await db.query("update public.courses set semester_end = public.eastern_date(now()) - 2 where id = $1", [COURSE]);
     expect(await sees(s1)).toEqual(NONE);
     expect(await fn(s1)).toBe(false);
   });
