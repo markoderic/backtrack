@@ -22,6 +22,7 @@ import {
   markTone,
   multiply,
   peekSample,
+  retryAt,
   sampleImage,
   sampleKey,
   textContrastUnder,
@@ -235,16 +236,59 @@ describe("measuring a slide image", () => {
     expect(sampleKey("https://signed/obj/2.webp?token=a")).not.toBe(sampleKey("https://signed/obj/1.webp?token=a"));
   });
 
-  it("a tainted canvas is remembered as null; a failed load (a network blip) is not, and is tried again", async () => {
+  it("a tainted canvas is remembered as null; a failed load (a network blip) is not, and is tried again once its wait is over", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1_000_000);
     let blip = true;
     const fake = fakeSlideImages((url) => (url.includes("tainted") ? "tainted" : blip ? "broken" : "black"));
+    const loadsOf = (u: string) => fake.loads.filter((l) => l.url === u).length;
     expect(await loadSample("https://signed/3.tainted")).toBeNull();
     expect(peekSample("https://signed/3.tainted")).toBeNull();
     expect(await loadSample("https://signed/4.webp")).toBeNull();
     expect(peekSample("https://signed/4.webp")).toBeUndefined();
+    expect(retryAt("https://signed/4.webp")).toBe(1_000_000 + SAMPLE_RETRY_MS[0]);
     blip = false;
+    // Before the wait is over nothing is downloaded (whoever asks).
+    expect(await loadSample("https://signed/4.webp")).toBeNull();
+    expect(loadsOf("https://signed/4.webp")).toBe(1);
+    vi.setSystemTime(1_000_000 + SAMPLE_RETRY_MS[0]);
     expect((await loadSample("https://signed/4.webp"))!.data[0]).toBe(0);
-    expect(fake.loads.filter((l) => l.url === "https://signed/4.webp")).toHaveLength(2);
+    expect(loadsOf("https://signed/4.webp")).toBe(2);
+    expect(retryAt("https://signed/4.webp")).toBeUndefined();
+  });
+
+  it("the waits are per slide: one slide's failures never stop or delay another (review N2)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let now = 2_000_000;
+    vi.setSystemTime(now);
+    fakeSlideImages(() => "broken");
+    // Slide A fails three times.
+    for (let i = 0; i < 3; i++) {
+      await loadSample("https://signed/a.webp");
+      now = retryAt("https://signed/a.webp")!;
+      vi.setSystemTime(now);
+    }
+    // Slide B's first failure waits the first wait, not A's third.
+    await loadSample("https://signed/b.webp");
+    expect(retryAt("https://signed/b.webp")! - now).toBe(SAMPLE_RETRY_MS[0]);
+  });
+
+  it("an image that keeps failing (as when storage does not allow reading it with CORS) is remembered as unreadable after the last try, and not downloaded again (review N2)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(3_000_000);
+    const fake = fakeSlideImages(() => "broken");
+    const url = "https://signed/c.webp";
+    for (let i = 0; i <= SAMPLE_RETRY_MS.length; i++) {
+      expect(await loadSample(url)).toBeNull();
+      const at = retryAt(url);
+      if (at) vi.setSystemTime(at);
+    }
+    expect(fake.loads).toHaveLength(SAMPLE_RETRY_MS.length + 1);
+    expect(peekSample(url)).toBeNull();
+    expect(retryAt(url)).toBeUndefined();
+    vi.setSystemTime(9_000_000);
+    expect(await loadSample(url + "?token=new")).toBeNull();
+    expect(fake.loads).toHaveLength(SAMPLE_RETRY_MS.length + 1);
   });
 });
 
@@ -275,6 +319,21 @@ describe("useSlideSample", () => {
       await pending;
     });
     await waitFor(() => expect(result.current?.data[0]).toBe(0));
+  });
+
+  it("a slide whose loads keep failing does not hold up the next slide in the same component (review N2)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(5_000_000);
+    const fake = fakeSlideImages((url) => (url.includes("bad") ? "broken" : "black"));
+    const { result, rerender } = renderHook(({ url }) => useSlideSample(url), { initialProps: { url: "https://signed/bad.webp" } });
+    await waitFor(() => expect(result.current).toBeNull());
+    rerender({ url: "https://signed/good.webp" });
+    await waitFor(() => expect(result.current?.data[0]).toBe(0));
+    expect(fake.loads.map((l) => l.url)).toEqual(["https://signed/bad.webp", "https://signed/good.webp"]);
+    // Back on the failing slide before its wait is over: the edge look, no new download.
+    rerender({ url: "https://signed/bad.webp" });
+    await waitFor(() => expect(result.current).toBeNull());
+    expect(fake.loads).toHaveLength(2);
   });
 
   it("a network blip: the edge look meanwhile (null), measured again after a few seconds", async () => {

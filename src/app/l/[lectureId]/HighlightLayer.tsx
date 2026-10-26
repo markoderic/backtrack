@@ -3,7 +3,7 @@
 import { useEffect, useRef, type CSSProperties, type MouseEvent, type RefObject } from "react";
 import type { Rect } from "@/lib/rect";
 import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
-import { markLook, markLookClass, type MarkLook, type MarkTone, type SlideSample } from "@/lib/slideTone";
+import { glowStep, markLook, markLookClass, type MarkLook, type MarkTone, type SlideSample } from "@/lib/slideTone";
 
 export type MarkKind = "lost" | "save";
 
@@ -122,6 +122,15 @@ export function HighlightLayer({
   }, [marking]);
 
   const shownLook = shown ? markLook(sample, shown.rect, shown.kind) : null;
+  const looks = marks.map((m) => markLook(sample, m.rect, m.kind));
+  // Glowing marks by strength step (lib/slideTone glowStep), strongest first.
+  const stepMap = new Map<number, ShownMark[]>();
+  marks.forEach((m, i) => {
+    if (looks[i].tone !== "dark") return;
+    const step = glowStep(looks[i].opacity ?? 1);
+    stepMap.set(step, [...(stepMap.get(step) ?? []), m]);
+  });
+  const glowSteps = [...stepMap].sort((x, y) => y[0] - x[0]);
   const draftLook = draft ? markLook(sample, draft, markingKind) : null;
 
   const onMarkClick = (id: string) => (e: MouseEvent) => {
@@ -145,9 +154,32 @@ export function HighlightLayer({
     >
       {/* The box of the slide itself, so the rects are fractions of the slide and not of the space around it. */}
       <div className="absolute" style={slideBoxStyle(box)}>
+        {/* The glows, drawn under the mark buttons in one isolated screen layer per strength step, the
+            glows lightening each other inside it: two overlapping glows never add up past one (white text
+            under them keeps 4.5:1). The buttons on top stay in mark order (the tab order). */}
+        {glowSteps.map(([step, list]) => (
+          <div
+            key={`glow-${step}`}
+            aria-hidden
+            data-glow-layer=""
+            data-strength={step}
+            className="pointer-events-none absolute inset-0 isolate mix-blend-screen"
+            style={step < 1 ? { opacity: step } : undefined}
+          >
+            {list.map((m) => (
+              <div
+                key={m.id}
+                data-glow-box={m.id}
+                data-kind={m.kind}
+                className={`absolute animate-fade-in rounded-xs mix-blend-lighten ${m.kind === "lost" ? "mark-lost-glow" : "mark-glow"}`}
+                style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h) }}
+              />
+            ))}
+          </div>
+        ))}
         {marks.map((m, i) => {
           const selected = m.id === selectedId;
-          const look = markLook(sample, m.rect, m.kind);
+          const look = looks[i];
           const tone = look.tone;
           return (
             <button
@@ -163,12 +195,13 @@ export function HighlightLayer({
               aria-expanded={selected}
               onClick={onMarkClick(m.id)}
               className={
-                `absolute animate-fade-in rounded-xs ${markClass(m.kind, tone)} ` +
+                // A glowing mark's color is in the glow layer under it; the button itself is see-through.
+                `absolute animate-fade-in rounded-xs ${tone === "dark" ? "bg-transparent" : markClass(m.kind, tone)} ` +
                 // While marking, the drag goes to the layer under the marks.
                 (marking ? "pointer-events-none " : "pointer-events-auto cursor-pointer ") +
                 ringClass(look, m.kind, selected)
               }
-              style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h), ...glowStyle(look) }}
+              style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h) }}
             />
           );
         })}

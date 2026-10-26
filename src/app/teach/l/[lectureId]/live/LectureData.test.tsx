@@ -2108,6 +2108,23 @@ describe("LectureData red marks (batch L)", () => {
       expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("40 highlights");
     });
 
+    it("a box on a dim part does not weaken the boxes on black: one glowing layer per strength step (review N1)", async () => {
+      fakeSlideImages(() => "blackdim");
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      lostOn2(2);
+      marksAre([mark("m0", { anon_id: "s0", ...box(0.05, 0.1, 0.3, 0.1) }), mark("m1", { anon_id: "s1", ...box(0.6, 0.1, 0.3, 0.1) })]);
+      renderLive();
+      await waitFor(() => expect(panel().querySelectorAll('[data-tone="dark"]')).toHaveLength(2));
+      const [black, dim] = Array.from(panel().querySelectorAll<HTMLElement>('[data-tone="dark"]'));
+      // On black: full strength (no layer opacity). On #505050: its own, lower step.
+      expect(black.style.opacity).toBe("");
+      expect(black.querySelectorAll("[data-highlight-box]")).toHaveLength(1);
+      expect(Number(dim.style.opacity)).toBeGreaterThan(0.3);
+      expect(Number(dim.style.opacity)).toBeLessThan(0.6);
+      expect(Number(dim.style.opacity) * 10).toBeCloseTo(Math.round(Number(dim.style.opacity) * 10), 5);
+      expect(boxesOn(2)).toHaveLength(2);
+    });
+
     it("a dark gray slide (#333): the glowing layer is weakened so white text keeps 4.5:1 (review I1)", async () => {
       fakeSlideImages(() => "dim");
       h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });

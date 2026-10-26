@@ -1212,8 +1212,8 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
       myMarks.mockResolvedValue({ data: [markRow(), markRow({ id: "m6", slide_number: 6 })], error: null, status: 200 });
       show(7);
       await waitFor(() => expect(marksShown()[0]).toHaveAttribute("data-tone", "dark"));
-      expect(marksShown()[0].className).toContain("mix-blend-screen");
-      expect(marksShown()[0].className).toContain("mark-glow");
+      expect(document.querySelector("[data-glow-layer]")!.className).toContain("mix-blend-screen");
+      expect(document.querySelector('[data-glow-box="m1"]')!.className).toContain("mark-glow");
       expect(marksShown()[0].className).not.toContain("mix-blend-multiply");
       // The slide on screen is measured once, read with CORS so the canvas can be read.
       expect(fake.loads).toContainEqual({ url: "https://signed/7.webp", crossOrigin: "anonymous" });

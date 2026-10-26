@@ -312,11 +312,32 @@ describe("HighlightLayer marks on any slide color (hand test 4: black slides)", 
     render(<Stage marking={false} marks={[onLeft, { ...onRight, id: "r2" }]} sample={copy(0)} />);
     const [a, b] = markButtons();
     expect(a).toHaveAttribute("data-tone", "dark");
-    expect(a.className).toContain("mix-blend-screen");
-    expect(a.className).toContain("mark-glow");
-    expect(a.className).not.toContain("mix-blend-multiply");
-    expect(b.className).toContain("mark-lost-glow");
-    for (const m of [a, b]) expect(m.className).not.toMatch(/\bborder\b/);
+    // The color is in the glow layer under the buttons (screened over the slide); the buttons are see-through.
+    const layer = document.querySelector<HTMLElement>("[data-glow-layer]")!;
+    expect(layer.className).toContain("isolate mix-blend-screen");
+    expect(layer).toHaveAttribute("aria-hidden", "true");
+    const ga = layer.querySelector('[data-glow-box="l"]')!;
+    const gb = layer.querySelector('[data-glow-box="r2"]')!;
+    expect(ga.className).toContain("mark-glow");
+    expect(gb.className).toContain("mark-lost-glow");
+    expect(a.className).toContain("bg-transparent");
+    for (const m of [a, b, ga, gb]) {
+      expect(m.className).not.toContain("mix-blend-multiply");
+      expect(m.className).not.toMatch(/\bborder\b/);
+    }
+  });
+
+  it("two overlapping glows lighten each other inside one isolated layer, so they never add up past one glow; the buttons stay in mark order (review Minor 5)", () => {
+    const over: ShownMark = { id: "o", rect: { x: 0.1, y: 0.12, w: 0.2, h: 0.1 }, kind: "save" };
+    render(<Stage marking={false} marks={[onLeft, over]} sample={copy(0)} />);
+    const layers = document.querySelectorAll("[data-glow-layer]");
+    expect(layers).toHaveLength(1);
+    const boxes = layers[0].querySelectorAll("[data-glow-box]");
+    expect(boxes).toHaveLength(2);
+    for (const b of boxes) expect(b.className).toContain("mix-blend-lighten");
+    // Tab order: the mark buttons in mark order, after the glow layer.
+    expect(markButtons().map((b) => b.getAttribute("aria-label"))).toEqual(["Mark 1", "Mark 2"]);
+    expect(layers[0].compareDocumentPosition(markButtons()[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("on a white slide the marks stay the highlighter (multiply)", () => {
@@ -343,11 +364,11 @@ describe("HighlightLayer marks on any slide color (hand test 4: black slides)", 
     expect(a.className).not.toContain("mix-blend");
   });
 
-  it("on a dark gray (#333) the glow is weaker (--glow under 1), so white text keeps 4.5:1 (review I1)", () => {
+  it("on a dark gray (#333) the glow is weaker (its layer under 1), so white text keeps 4.5:1 (review I1)", () => {
     render(<Stage marking={false} marks={[onLeft]} sample={copy(51)} />);
     const [a] = markButtons();
     expect(a).toHaveAttribute("data-tone", "dark");
-    const glow = Number(a.style.getPropertyValue("--glow"));
+    const glow = Number(document.querySelector<HTMLElement>("[data-glow-layer]")!.style.opacity);
     expect(glow).toBeGreaterThan(0.35);
     expect(glow).toBeLessThan(1);
   });

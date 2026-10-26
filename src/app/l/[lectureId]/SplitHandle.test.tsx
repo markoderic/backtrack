@@ -131,6 +131,18 @@ describe("SplitHandle on a laptop (hand test 4: only the slide and the notebook 
     expect(lecture.style.getPropertyValue("--side-w")).toBe("");
   });
 
+  it("a lost pointer capture ends the drag: later moves do not resize the slide (review N3)", async () => {
+    const { handle, lecture } = await setup();
+    fireEvent.pointerDown(handle(), { pointerType: "mouse", button: 0, pointerId: 1, clientX: 740, clientY: 450 });
+    fireEvent.pointerMove(handle(), { pointerType: "mouse", pointerId: 1, clientX: 640, clientY: 450 });
+    const during = lecture.style.getPropertyValue("--slide-scale-wide");
+    expect(during).not.toBe("");
+    fireEvent(handle(), new Event("lostpointercapture", { bubbles: true }));
+    expect(stored()?.wideScale).toBeCloseTo(Number(during), 5);
+    fireEvent.pointerMove(handle(), { pointerType: "mouse", pointerId: 1, clientX: 300, clientY: 450 });
+    expect(lecture.style.getPropertyValue("--slide-scale-wide")).toBe(during);
+  });
+
   it("Left makes the slide 5% smaller and Right bigger; Home and End go to the ends; a right click does not drag", async () => {
     const { handle, lecture } = await setup();
     fireEvent.keyDown(handle(), { key: "ArrowLeft" });

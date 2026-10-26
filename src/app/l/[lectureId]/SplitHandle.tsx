@@ -204,6 +204,8 @@ export function SplitHandle() {
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      // Capture lost (or never taken) and the pointer let go elsewhere: the drag ends here too.
+      onLostPointerCapture={endDrag}
       onDoubleClick={() => set(wide ? { ...sizeRef.current, wide: null } : { ...sizeRef.current, narrow: null }, true)}
       className="group relative flex touch-none items-center justify-center rounded-md outline-hidden select-none focus-visible:outline-2 focus-visible:outline-ink"
     >

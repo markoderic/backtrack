@@ -160,6 +160,13 @@ export function textContrastUnder(background: RGB, kind: ToneKind, look: MarkLoo
   return contrast(draw(text), draw(background));
 }
 
+/**
+ * A glow's strength rounded down to a step of 0.1 (1 stays 1). Glows of one step share a layer whose
+ * opacity is the step, so a pile in it is never stronger than its weakest allowed glow, and a dim
+ * part of a slide never weakens the glows on its black parts.
+ */
+export const glowStep = (opacity: number): number => (opacity >= 1 ? 1 : Math.floor(opacity * 10 + 1e-9) / 10);
+
 /** The look's tone alone. */
 export const toneOn = (background: RGB, kind: ToneKind): MarkTone => lookOn(background, kind).tone;
 
@@ -289,6 +296,10 @@ export function sampleKey(url: string): string {
 /** Measured slides, by storage object. null only for a slide that may never be read (SecurityError). */
 const done = new Map<string, SlideSample | null>();
 const waiting = new Map<string, Promise<SlideSample | null>>();
+/** Slides whose load failed: how many times, and when they may be tried again. */
+const retries = new Map<string, { count: number; next: number }>();
+/** After a failed load, a slide is tried again after these waits; after the last it is remembered as unreadable. */
+export const SAMPLE_RETRY_MS = [5_000, 15_000, 30_000, 60_000];
 const KEEP = 120;
 
 /** The measured copy of a slide, if it is already there (undefined while it is not). */
@@ -306,6 +317,9 @@ export function loadSample(url: string): Promise<SlideSample | null> {
   if (done.has(key)) return Promise.resolve(done.get(key) ?? null);
   const pending = waiting.get(key);
   if (pending) return pending;
+  // Failed before: not again until its wait is over (shared by every part of the page).
+  const retry = retries.get(key);
+  if (retry && Date.now() < retry.next) return Promise.resolve(null);
   const p = new Promise<Measured>((resolve) => {
     if (typeof Image === "undefined") {
       resolve({ sample: null, final: true });
@@ -320,8 +334,17 @@ export function loadSample(url: string): Promise<SlideSample | null> {
   }).then(({ sample, final }) => {
     waiting.delete(key);
     if (final) {
-      done.set(key, sample);
-      if (done.size > KEEP) done.delete(done.keys().next().value as string);
+      retries.delete(key);
+      remember(key, sample);
+    } else {
+      // A failed load: a network blip, or (with crossOrigin) storage that does not allow reading the
+      // image. Tried again after SAMPLE_RETRY_MS; after the last try it is remembered as unreadable,
+      // so it is not downloaded again on every visit.
+      const count = (retries.get(key)?.count ?? 0) + 1;
+      if (count > SAMPLE_RETRY_MS.length) {
+        retries.delete(key);
+        remember(key, null);
+      } else retries.set(key, { count, next: Date.now() + SAMPLE_RETRY_MS[count - 1] });
     }
     return sample;
   });
@@ -329,45 +352,62 @@ export function loadSample(url: string): Promise<SlideSample | null> {
   return p;
 }
 
-/** Forgets every measured slide (tests). */
+function remember(key: string, sample: SlideSample | null) {
+  done.set(key, sample);
+  if (done.size > KEEP) done.delete(done.keys().next().value as string);
+}
+
+/** When a slide that failed to load may be tried again (ms since epoch), or undefined. */
+export function retryAt(url: string): number | undefined {
+  return retries.get(sampleKey(url))?.next;
+}
+
+/** Forgets every measured slide and every retry (tests). */
 export function forgetSamples(): void {
   done.clear();
   waiting.clear();
+  retries.clear();
 }
-
-/** After a failed load, the slide is measured again after these waits (then it stays on the edge look). */
-export const SAMPLE_RETRY_MS = [5_000, 15_000, 30_000, 60_000];
 
 /**
  * The measured copy of the slide at `url`: undefined while it is measured (or with no url), null when
  * it can not be measured (the edge look). The same slide signed again keeps its copy. A failed load
- * shows null and is tried again after SAMPLE_RETRY_MS.
+ * shows null and is tried again when its slide's wait is over (the waits are per slide, kept for the
+ * page, so one slide's failures never hold up another).
  */
 export function useSlideSample(url: string | undefined): SlideSample | null | undefined {
   const key = url ? sampleKey(url) : undefined;
   const [got, setGot] = useState<{ key: string; sample: SlideSample | null } | null>(null);
-  const [tries, setTries] = useState(0);
+  // Goes up when a wait is over, to try again.
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!url || !key) return;
     let on = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    if (done.has(key)) {
-      // Measured between this render and this effect: show it now.
+    const later = () => {
+      const at = retryAt(url);
+      if (at !== undefined && !done.has(key)) timer = setTimeout(() => setTick((t) => t + 1), Math.max(0, at - Date.now()));
+    };
+    const at = retryAt(url);
+    if (done.has(key) || (at !== undefined && at > Date.now())) {
+      // Measured between this render and this effect, or waiting to try again: show what there is now.
       void Promise.resolve().then(() => {
-        if (on) setGot({ key, sample: done.get(key) ?? null });
+        if (!on) return;
+        setGot({ key, sample: done.has(key) ? (done.get(key) ?? null) : null });
+        later();
       });
     } else {
       void loadSample(url).then((sample) => {
         if (!on) return;
         setGot({ key, sample });
-        if (!done.has(key) && tries < SAMPLE_RETRY_MS.length) timer = setTimeout(() => setTries((t) => t + 1), SAMPLE_RETRY_MS[tries]);
+        later();
       });
     }
     return () => {
       on = false;
       clearTimeout(timer);
     };
-  }, [url, key, tries]);
+  }, [url, key, tick]);
   if (!key) return undefined;
   if (done.has(key)) return done.get(key);
   if (got?.key === key) return got.sample;

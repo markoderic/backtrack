@@ -2,10 +2,10 @@ import { vi } from "vitest";
 
 /**
  * How a fake slide image looks when a test measures it (lib/slideTone):
- * white, black, mid gray, "dim" (#333), "split" (left half black, right half white), "tainted" (it loads but the
+ * white, black, mid gray, "dim" (#333), "blackdim" (left half black, right half #505050), "split" (left half black, right half white), "tainted" (it loads but the
  * canvas may not be read, like an image from another site without CORS) or "broken" (it fails to load).
  */
-export type FakePaint = "white" | "black" | "gray" | "dim" | "split" | "tainted" | "broken";
+export type FakePaint = "white" | "black" | "gray" | "dim" | "split" | "blackdim" | "tainted" | "broken";
 
 const RGB: Record<"white" | "black" | "gray" | "dim", [number, number, number]> = {
   dim: [51, 51, 51],
@@ -61,7 +61,16 @@ export function fakeSlideImages(paint: (url: string) => FakePaint) {
         const data = new Uint8ClampedArray(w * h * 4);
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            const c = look === "split" ? (x < w / 2 ? RGB.black : RGB.white) : RGB[look as keyof typeof RGB];
+            const c =
+              look === "split"
+                ? x < w / 2
+                  ? RGB.black
+                  : RGB.white
+                : look === "blackdim"
+                  ? x < w / 2
+                    ? RGB.black
+                    : ([80, 80, 80] as [number, number, number])
+                  : RGB[look as keyof typeof RGB];
             const i = (y * w + x) * 4;
             data.set([...c, 255], i);
           }
