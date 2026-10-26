@@ -55,7 +55,7 @@ export function InfoButton({ panelClassName = "right-0" }: { panelClassName?: st
           <p className="type-small">Tap a mark to add a note or delete it. Tap I&apos;m lost or Saved for you again to take it back.</p>
           <p className="type-small">
             Type notes right on the page. They save by themselves and only you see them. On a slide where you&apos;re lost, the
-            note for the teacher is the one your teacher reads. Drag the bar by your notes to make the slide smaller or bigger.
+            note for the teacher is the one your teacher reads. Drag the bar next to the slide to make it smaller or bigger; the notes take the room.
           </p>
           <p className="type-small">Nobody sees your name, not even your teacher. Your spots stay in this browser.</p>
         </div>

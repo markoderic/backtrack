@@ -26,7 +26,7 @@ describe("InfoButton", () => {
     );
     expect(panel).toHaveTextContent("Tap a mark to add a note or delete it. Tap I'm lost or Saved for you again to take it back.");
     expect(panel).toHaveTextContent(
-      "Type notes right on the page. They save by themselves and only you see them. On a slide where you're lost, the note for the teacher is the one your teacher reads. Drag the bar by your notes to make the slide smaller or bigger.",
+      "Type notes right on the page. They save by themselves and only you see them. On a slide where you're lost, the note for the teacher is the one your teacher reads. Drag the bar next to the slide to make it smaller or bigger; the notes take the room.",
     );
     expect(panel).toHaveTextContent("Nobody sees your name, not even your teacher. Your spots stay in this browser.");
     // The old Mark the spot (only after I'm lost) is gone.

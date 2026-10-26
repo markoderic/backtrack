@@ -1,39 +1,40 @@
 /**
  * How big the student made the slide on the live screen, remembered on this device
- * (localStorage, never sent anywhere). One value per layout (globals.css, "student live lecture"):
+ * (localStorage, never sent anywhere). One value per layout (globals.css, "student live lecture"),
+ * each the slide's size as a share of its full size:
  *
- * - wide (laptop, slide beside the sidebar): the sidebar's share of the window width. The sidebar
- *   holds the notebook, so a wider sidebar is a smaller slide and more room for notes.
- * - narrow (phone, stacked): the slide's size as a share of its full size. The notebook below it
- *   takes the room the slide gives up.
+ * - wide (laptop): the full size is the largest slide that leaves room for the I'm lost panel and
+ *   the strip under it and the notebook's default width beside it.
+ * - narrow (phone, stacked): the full size is the slide as it always was.
  *
- * null is the default: the slide exactly as it is without any resizing.
+ * The panel, the strip and the note to the teacher keep one size at every slide size (Marko, hand
+ * test 4); only the slide and the notebook change. null is the default: the full size.
  */
 export type SlideSize = { wide: number | null; narrow: number | null };
 
 export const SLIDE_SIZE_KEY = "backtrack:slide-size";
 
-/** The sidebar's share of the width: 260 px at least (its default can not get smaller), 60% at most. */
-export const SIDE_MAX = 0.6;
-/** The sidebar never leaves the slide less than this (px). */
-export const STAGE_MIN = 240;
-/** The slide on a phone: from 35% of its full size up to its full size. */
-export const NARROW_MIN = 0.35;
-export const NARROW_MAX = 1;
-/** The sidebar's own width before any resizing: clamp(260px, 20vw, 380px) (globals.css). */
-export const SIDE_MIN_PX = 260;
-export const defaultSidePx = (windowWidth: number) => Math.min(Math.max(SIDE_MIN_PX, windowWidth * 0.2), 380);
+/** The smallest slide: 35% of its full size (still usable), up to its full size. */
+export const SCALE_MIN = 0.35;
+export const SCALE_MAX = 1;
+/** Kept for the phone code paths that named them. */
+export const NARROW_MIN = SCALE_MIN;
+export const NARROW_MAX = SCALE_MAX;
 
-const isShare = (v: unknown, lo: number, hi: number): v is number => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+const isScale = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= SCALE_MIN && v <= SCALE_MAX;
 
+/**
+ * Reads the remembered sizes. The laptop size is stored as `wideScale` (batch M); the old `wide` value
+ * (the sidebar's share of the window, before batch M) means something else and is not read.
+ */
 export function readSlideSize(): SlideSize {
   try {
     const raw = window.localStorage.getItem(SLIDE_SIZE_KEY);
     if (!raw) return { wide: null, narrow: null };
     const v = JSON.parse(raw) as Record<string, unknown>;
     return {
-      wide: isShare(v?.wide, 0, 1) ? v.wide : null,
-      narrow: isShare(v?.narrow, NARROW_MIN, NARROW_MAX) ? v.narrow : null,
+      wide: isScale(v?.wideScale) ? v.wideScale : null,
+      narrow: isScale(v?.narrow) ? v.narrow : null,
     };
   } catch {
     // Storage is blocked or the value is broken: the default size.
@@ -44,23 +45,14 @@ export function readSlideSize(): SlideSize {
 export function writeSlideSize(size: SlideSize): void {
   try {
     if (size.wide === null && size.narrow === null) window.localStorage.removeItem(SLIDE_SIZE_KEY);
-    else window.localStorage.setItem(SLIDE_SIZE_KEY, JSON.stringify(size));
+    else window.localStorage.setItem(SLIDE_SIZE_KEY, JSON.stringify({ wideScale: size.wide, narrow: size.narrow }));
   } catch {
     // Storage is blocked or full: the size holds for this visit only.
   }
 }
 
-/** The sidebar width (px) a share gives in a window this wide, within its limits. */
-export function sidePx(share: number | null, windowWidth: number): number {
-  const lo = SIDE_MIN_PX;
-  const hi = Math.max(lo, Math.min(windowWidth * SIDE_MAX, windowWidth - 32 - 24 - STAGE_MIN));
-  const want = share === null ? defaultSidePx(windowWidth) : share * windowWidth;
-  return Math.round(Math.min(Math.max(want, lo), hi));
-}
+export const clampScale = (s: number) => Math.min(Math.max(s, SCALE_MIN), SCALE_MAX);
+export const clampNarrow = clampScale;
 
-/** The sidebar's limits (px) in a window this wide: [smallest, largest]. */
-export function sideRange(windowWidth: number): [number, number] {
-  return [SIDE_MIN_PX, Math.max(SIDE_MIN_PX, Math.min(windowWidth * SIDE_MAX, windowWidth - 32 - 24 - STAGE_MIN))];
-}
-
-export const clampNarrow = (s: number) => Math.min(Math.max(s, NARROW_MIN), NARROW_MAX);
+/** The notebook goes under the slide (laptop) once there is at least this much room under the strip (px). */
+export const NOTES_UNDER_MIN = 96;

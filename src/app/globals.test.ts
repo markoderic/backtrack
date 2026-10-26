@@ -31,11 +31,37 @@ describe("globals.css entrance animations", () => {
     expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 394px\)/);
   });
 
-  it("the slide size handle: --slide-scale on a phone (1 by default), --side-w on a laptop (the old sidebar width by default)", () => {
+  it("the slide size handle scales only the slide: --slide-scale on a phone, --slide-scale-wide on a laptop (1 by default)", () => {
     expect(css).toMatch(/\* var\(--slide-scale, 1\)\)/);
-    expect(css).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 24px var\(--side-w, clamp\(260px, 20vw, 380px\)\)/);
+    expect(css).toMatch(/\* var\(--slide-scale-wide, 1\)\)/);
+    // No sidebar width set by the handle any more (it made the buttons wider, hand test 4).
+    expect(css).not.toContain("--side-w");
     expect(css).toMatch(/grid-template-areas:\s*"top" "slide" "panel" "nav" "handle" "notes"/);
-    expect(css).toMatch(/grid-template-areas:\s*"back back" "brand info" "panel panel" "notes notes" "jump jump" "spots spots"/);
+  });
+
+  it("I'm lost and its buttons, the strip and the note to the teacher have one size at every slide size and window size (hand test 4)", () => {
+    const rule = (sel: string) => css.match(new RegExp(`\\[${sel}\\]\\s*{([^}]*)}`))?.[1] ?? "";
+    expect(rule("data-lecture-panel")).toMatch(/width:\s*360px;\s*max-width:\s*100%/);
+    expect(rule("data-lecture-nav")).toMatch(/width:\s*480px;\s*max-width:\s*100%/);
+    expect(rule("data-teacher-slot")).toMatch(/width:\s*300px;\s*max-width:\s*100%/);
+    // Nothing else sizes them: no other rule gives the panel, the strip or the note a width from the slide or the window.
+    for (const sel of ["data-lecture-panel", "data-lecture-nav", "data-teacher-slot"]) {
+      const widths = [...css.matchAll(new RegExp(`\\[${sel}\\][^{]*{[^}]*[^-]width:[^;]*;`, "g"))];
+      expect(widths, sel).toHaveLength(1);
+    }
+  });
+
+  it("on a laptop the panel and the strip sit right under the slide; a small slide puts the notebook under them, the whole width (no empty band)", () => {
+    expect(css).toMatch(/grid-template-areas:\s*"stage handle back back" "stage handle brand info" "stage handle notes notes" "stage handle jump jump" "stage handle spots spots"/);
+    const notesUnder = css.match(/\[data-lecture\]\[data-notes="under"\]\s*{([^}]*)}/)?.[1] ?? "";
+    expect(notesUnder).toMatch(/grid-template-areas:\s*"stage handle side" "notes notes notes"/);
+    expect(notesUnder).toMatch(/grid-template-rows:\s*auto minmax\(0, 1fr\)/);
+    const wide = css.slice(css.lastIndexOf("@media (min-width: 700px) and (min-aspect-ratio: 1/1) {"));
+    const stage = wide.match(/\n  \[data-lecture-stage\]\s*{([^}]*)}/)?.[1] ?? "";
+    expect(stage).toMatch(/flex-direction:\s*column/);
+    expect(stage).toMatch(/align-self:\s*start/);
+    // The slide's full size leaves the panel and the strip (216 px) under it.
+    expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 216px\)/);
   });
 
   it("notebook text sits on faint ruled lines, one per 24 px line, that scroll with it", () => {

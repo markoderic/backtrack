@@ -420,63 +420,6 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           </div>
           {/* The theme button comes with dark mode (not built yet); until then no empty slot at the edge. */}
         </div>
-        <LostButton
-          key={lectureId}
-          lectureId={lectureId}
-          viewing={viewing}
-          send={send}
-          loadOwn={loadOwn}
-          onSpots={onSpots}
-          onTap={(kind) => {
-            onTap(kind);
-            marks.clearProblem();
-          }}
-          onTakenBack={() => {
-            if (!legacy) void marks.reload();
-          }}
-          reconnects={reconnects}
-          onFlushReady={onFlushReady}
-          marking={marking}
-          onMarkingChange={(on) => {
-            setMarking(on);
-            if (on) setSelected(null);
-          }}
-          onMarkReady={onMarkReady}
-          onLostChange={onLostChange}
-          notice={marks.problem}
-          // A refused tap usually means the lecture ended: read the status now, and
-          // if it did, leave the same way as when Realtime says so.
-          onRejected={recheck}
-          noteMax={noteMax}
-          noteSlot={noteSlot}
-          idle={reconnecting ? <p className="animate-fade-in type-small text-secondary">Reconnecting…</p> : null}
-        />
-        {/* The notebook: typed straight on the page, one private note per slide, saved by itself. */}
-        <div data-lecture-notes="">
-          {/* The note to the teacher, on a slide where the student is lost (LostButton puts it here). */}
-          <div ref={setNoteSlot} data-teacher-slot="" className="shrink-0 empty:hidden [&:not(:empty)]:pb-3" />
-          <NotebookField
-            aria-label={`Your notes, slide ${notebookSlide}`}
-            placeholder="Your notes"
-            value={notebook.textOf(notebookSlide)}
-            onValue={typeNotebook}
-            onBlur={leaveNotebook}
-            onCompositionStart={() => {
-              composing.current = true;
-            }}
-            onCompositionEnd={() => {
-              composing.current = false;
-            }}
-            className="min-h-12 flex-1"
-          />
-          <div className="flex h-5 shrink-0 items-end justify-between gap-3 pt-1">
-            {/* Typing on while the teacher moved on: the notes stay with their slide for now. */}
-            <span data-notebook-slide="" className="type-caption text-secondary">
-              {notebookSlide !== viewing ? `Slide ${notebookSlide}` : ""}
-            </span>
-            <SavedState state={notebook.stateOf(notebookSlide)} className="text-right" />
-          </div>
-        </div>
         {behind && (
           // On a laptop, at the bottom of the sidebar above My spots: it comes and goes without moving
           // I'm lost, so a double click on it can never land on I'm lost.
@@ -490,8 +433,6 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           </button>
         )}
       </div>
-      {/* Between the slide and the notebook: drag (or arrow keys) to make the slide smaller or bigger. */}
-      <SplitHandle />
       {/* Always there, so a screen reader hears when the connection drops (the panel shows it). */}
       <p role="status" className="sr-only">
         {reconnecting ? "Reconnecting." : ""}
@@ -583,6 +524,38 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           )}
         </div>
 
+        {/* Right under the slide, one size at every slide size (globals.css). */}
+        <LostButton
+          key={lectureId}
+          lectureId={lectureId}
+          viewing={viewing}
+          send={send}
+          loadOwn={loadOwn}
+          onSpots={onSpots}
+          onTap={(kind) => {
+            onTap(kind);
+            marks.clearProblem();
+          }}
+          onTakenBack={() => {
+            if (!legacy) void marks.reload();
+          }}
+          reconnects={reconnects}
+          onFlushReady={onFlushReady}
+          marking={marking}
+          onMarkingChange={(on) => {
+            setMarking(on);
+            if (on) setSelected(null);
+          }}
+          onMarkReady={onMarkReady}
+          onLostChange={onLostChange}
+          notice={marks.problem}
+          // A refused tap usually means the lecture ended: read the status now, and
+          // if it did, leave the same way as when Realtime says so.
+          onRejected={recheck}
+          noteMax={noteMax}
+          noteSlot={noteSlot}
+          idle={reconnecting ? <p className="animate-fade-in type-small text-secondary">Reconnecting…</p> : null}
+        />
         <div data-lecture-nav="" data-controls="" className="flex h-11 min-w-0 items-center">
           <button
             type="button"
@@ -613,6 +586,34 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
               !behind && <span className="type-small text-secondary">live</span>
             )}
           </div>
+        </div>
+      </div>
+      {/* At the slide's edge (laptop) or above the notebook (phone): drag (or arrow keys) to make the slide smaller or bigger. */}
+      <SplitHandle />
+      {/* The notebook: typed straight on the page, one private note per slide, saved by itself. */}
+      <div data-lecture-notes="">
+        {/* The note to the teacher, on a slide where the student is lost (LostButton puts it here). */}
+        <div ref={setNoteSlot} data-teacher-slot="" className="shrink-0 empty:hidden [&:not(:empty)]:pb-3" />
+        <NotebookField
+          aria-label={`Your notes, slide ${notebookSlide}`}
+          placeholder="Your notes"
+          value={notebook.textOf(notebookSlide)}
+          onValue={typeNotebook}
+          onBlur={leaveNotebook}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+          }}
+          className="min-h-12 flex-1"
+        />
+        <div className="flex h-5 shrink-0 items-end justify-between gap-3 pt-1">
+          {/* Typing on while the teacher moved on: the notes stay with their slide for now. */}
+          <span data-notebook-slide="" className="type-caption text-secondary">
+            {notebookSlide !== viewing ? `Slide ${notebookSlide}` : ""}
+          </span>
+          <SavedState state={notebook.stateOf(notebookSlide)} className="text-right" />
         </div>
       </div>
     </div>

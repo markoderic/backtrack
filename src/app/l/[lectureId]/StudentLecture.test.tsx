@@ -328,8 +328,9 @@ describe("StudentLecture", () => {
     expect(container.querySelector("[data-lecture-slide]")).toContainElement(pill);
     expect(container.querySelector("[data-lecture-nav]")).not.toContainElement(side);
     expect(container.querySelector("[data-lecture-nav]")).not.toContainElement(pill);
-    // The sidebar's comes after the I'm lost panel (its grid row is above My spots), so I'm lost never moves.
-    expect(panel().compareDocumentPosition(side) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The sidebar's is in the sidebar, apart from the stack (slide, I'm lost, strip), so I'm lost never moves.
+    expect(container.querySelector("[data-lecture-side]")).toContainElement(side);
+    expect(container.querySelector("[data-lecture-stage]")).not.toContainElement(side);
     fireEvent.click(pill);
     expect(shownSrc()).toBe("https://signed/7.webp");
     expect(container.querySelector("[data-lecture-jump]")).toBeNull();
@@ -667,8 +668,24 @@ describe("StudentLecture", () => {
       expect(navRow).toContainElement(strip());
       expect(numberShown("7")[0]).toHaveAttribute("data-slide-number");
       expect(navRow).toContainElement(numberShown("7")[0]);
-      // The navigation sits right under the slide.
-      expect(navRow.previousElementSibling).toHaveAttribute("data-lecture-slide");
+      // The panel sits right under the slide and the strip right under the panel (hand test 4), all in the stack.
+      expect(panel().previousElementSibling).toHaveAttribute("data-lecture-slide");
+      expect(navRow.previousElementSibling).toBe(panel());
+      expect(panel().parentElement).toHaveAttribute("data-lecture-stage");
+    });
+
+    it("the notebook is outside the sidebar and the stack, after the handle, so it can sit beside the slide or under the strip", () => {
+      show();
+      const notes = document.querySelector("[data-lecture-notes]") as HTMLElement;
+      const lecture = document.querySelector("[data-lecture]") as HTMLElement;
+      expect(notes.parentElement).toBe(lecture);
+      expect(document.querySelector("[data-lecture-side]")).not.toContainElement(notes);
+      const handle = screen.getByRole("separator", { name: "Slide size" });
+      expect(handle.parentElement).toBe(lecture);
+      expect(handle.nextElementSibling).toBe(notes);
+      expect(document.querySelector("[data-lecture-stage]")!.compareDocumentPosition(handle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // The note to the teacher is still put at the top of the notebook.
+      expect(notes.firstElementChild).toHaveAttribute("data-teacher-slot");
     });
 
     it("is the Join button's shape (full width, 48 px, radius md), not a circle", () => {
