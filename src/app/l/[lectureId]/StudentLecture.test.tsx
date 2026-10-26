@@ -1,5 +1,6 @@
 import { Activity } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fakeSlideImages } from "../../../../tests/fakeSlides";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 type Handler = (payload: { new: Record<string, unknown> }) => void;
@@ -1171,6 +1172,32 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     await waitFor(() => expect(marksShown()).toHaveLength(1));
     expect(marksShown()[0]).toHaveAttribute("data-mark", "m1");
     expect(myMarks).toHaveBeenCalledWith({ p_lecture_id: LECTURE });
+  });
+
+  it("on a black slide the marks glow instead of multiplying into black (hand test 4); a white slide keeps the highlighter", async () => {
+    const fake = fakeSlideImages((url) => (url.endsWith("/7.webp") ? "black" : "white"));
+    try {
+      myMarks.mockResolvedValue({ data: [markRow(), markRow({ id: "m6", slide_number: 6 })], error: null, status: 200 });
+      show(7);
+      await waitFor(() => expect(marksShown()[0]).toHaveAttribute("data-tone", "dark"));
+      expect(marksShown()[0].className).toContain("mix-blend-screen");
+      expect(marksShown()[0].className).toContain("bg-mark-glow");
+      expect(marksShown()[0].className).not.toContain("mix-blend-multiply");
+      // The slide on screen is measured once, read with CORS so the canvas can be read.
+      expect(fake.loads).toContainEqual({ url: "https://signed/7.webp", crossOrigin: "anonymous" });
+      // A new mark drawn there glows too.
+      fireEvent.click(markTool());
+      drag([500, 250], [800, 400]);
+      await waitFor(() => expect(marksShown()).toHaveLength(2));
+      expect(marksShown()[1]).toHaveAttribute("data-tone", "dark");
+      fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.click(back());
+      await waitFor(() => expect(marksShown()[0]).toHaveAttribute("data-mark", "m6"));
+      await waitFor(() => expect(marksShown()[0]).toHaveAttribute("data-tone", "light"));
+      expect(marksShown()[0].className).toContain("mix-blend-multiply bg-mark");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("a mark on a lost slide is red and saved as lost", async () => {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, type MouseEvent, type RefObject } from "react";
 import type { Rect } from "@/lib/rect";
 import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
+import { markLookClass, markTone, type MarkTone, type SlideSample } from "@/lib/slideTone";
 
 export type MarkKind = "lost" | "save";
 
@@ -12,9 +13,13 @@ export type ShownMark = { id: string; rect: Rect; kind: MarkKind; note?: string 
 /** A fraction as a css percentage, without float noise (0.3 * 100 is 30.000000000000004). */
 const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
 
-/** The highlighter look (globals.css: --color-mark and --color-mark-lost, multiply, no border). */
-export function markClass(kind: MarkKind): string {
-  return `mix-blend-multiply ${kind === "lost" ? "bg-mark-lost" : "bg-mark"}`;
+/**
+ * A mark's look (lib/slideTone): the highlighter on a light part of the slide (multiply, --color-mark or
+ * --color-mark-lost, no border), a glow on a dark part, a fill with a colored inner edge when the slide
+ * could not be measured.
+ */
+export function markClass(kind: MarkKind, tone: MarkTone = "light"): string {
+  return markLookClass(kind, tone);
 }
 
 /** What a screen reader hears for a mark: its number, red marks say lost, and its note if it has one. */
@@ -41,6 +46,11 @@ type Props = {
   onCancel: () => void;
   /** One mark drawn without a popover (My spots, until batch K2 gives it several). */
   shown?: { kind: MarkKind; rect: Rect } | null;
+  /**
+   * The slide measured (lib/slideTone useSlideSample), so each mark takes the look that shows on the
+   * part of the slide under it. undefined while measuring; null when it can not be measured.
+   */
+  sample?: SlideSample | null;
 };
 
 /**
@@ -61,6 +71,7 @@ export function HighlightLayer({
   onMark,
   onCancel,
   shown = null,
+  sample,
 }: Props) {
   const layerRef = useRef<HTMLDivElement>(null);
   const onCancelRef = useRef(onCancel);
@@ -122,6 +133,7 @@ export function HighlightLayer({
       <div className="absolute" style={slideBoxStyle(box)}>
         {marks.map((m, i) => {
           const selected = m.id === selectedId;
+          const tone = markTone(sample, m.rect, m.kind);
           return (
             <button
               key={m.id}
@@ -129,17 +141,19 @@ export function HighlightLayer({
               data-mark={m.id}
               data-highlight-box=""
               data-kind={m.kind}
+              data-tone={tone}
               data-selected={selected ? "" : undefined}
               aria-label={markLabel(m, i + 1)}
               aria-haspopup="dialog"
               aria-expanded={selected}
               onClick={onMarkClick(m.id)}
               className={
-                `absolute animate-fade-in rounded-xs ${markClass(m.kind)} ` +
+                `absolute animate-fade-in rounded-xs ${markClass(m.kind, tone)} ` +
                 // While marking, the drag goes to the layer under the marks.
                 (marking ? "pointer-events-none " : "pointer-events-auto cursor-pointer ") +
-                "outline-offset-1 focus-visible:outline-2 focus-visible:outline-ink " +
-                (selected ? `outline-2 ${m.kind === "lost" ? "outline-lost" : "outline-ink"}` : "")
+                // On a dark part of the slide the focus ring and the selected outline are white, so they show.
+                `outline-offset-1 focus-visible:outline-2 ${tone === "dark" ? "focus-visible:outline-surface" : "focus-visible:outline-ink"} ` +
+                (selected ? `outline-2 ${tone === "dark" ? "outline-surface" : m.kind === "lost" ? "outline-lost" : "outline-ink"}` : "")
               }
               style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h) }}
             />
@@ -150,7 +164,8 @@ export function HighlightLayer({
             aria-hidden
             data-highlight-box=""
             data-kind={shown.kind}
-            className={`pointer-events-none absolute animate-fade-in rounded-xs ${markClass(shown.kind)}`}
+            data-tone={markTone(sample, shown.rect, shown.kind)}
+            className={`pointer-events-none absolute animate-fade-in rounded-xs ${markClass(shown.kind, markTone(sample, shown.rect, shown.kind))}`}
             style={{ left: pct(shown.rect.x), top: pct(shown.rect.y), width: pct(shown.rect.w), height: pct(shown.rect.h) }}
           />
         )}
@@ -159,7 +174,8 @@ export function HighlightLayer({
           <div
             aria-hidden
             data-mark-draft=""
-            className={`pointer-events-none absolute rounded-xs opacity-80 ${markClass(markingKind)}`}
+            data-tone={markTone(sample, draft, markingKind)}
+            className={`pointer-events-none absolute rounded-xs opacity-80 ${markClass(markingKind, markTone(sample, draft, markingKind))}`}
             style={{ left: pct(draft.x), top: pct(draft.y), width: pct(draft.w), height: pct(draft.h) }}
           />
         )}

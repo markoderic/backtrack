@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { buttonPrimarySmallClass, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { HighlightBoxes } from "@/components/HighlightBoxes";
+import { markTone, useSlideSample } from "@/lib/slideTone";
 import { Icon } from "@/components/Icon";
 import { InfoButton } from "@/components/InfoButton";
 import { LogoMark } from "@/components/Logo";
@@ -139,6 +140,9 @@ function marksOf(entry: Entry, table: boolean): Rect[] {
 /** The small slide on a row: the slide's own shape, bigger from 640 and 1024 px, with the slide's marks. */
 function Thumb({ url, entry, table, gone }: { url: string | undefined; entry: Entry; table: boolean; gone?: boolean }) {
   const rects = marksOf(entry, table);
+  const kind = entry.spot?.kind === "lost" ? "lost" : "save";
+  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light one).
+  const sample = useSlideSample(gone ? undefined : url);
   return (
     <div data-thumb="" className="relative w-28 shrink-0 overflow-hidden rounded-sm bg-surface shadow-slide sm:w-56 lg:w-72">
       {gone ? (
@@ -152,7 +156,7 @@ function Thumb({ url, entry, table, gone }: { url: string | undefined; entry: En
         <div className="aspect-video w-full" />
       )}
       {!gone && url && rects.length > 0 && (
-        <HighlightBoxes rects={rects} boxClassName={highlightClass(entry.spot?.kind === "lost" ? "lost" : "save")} />
+        <HighlightBoxes rects={rects} boxClassName={(r) => highlightClass(kind, markTone(sample, r, kind))} />
       )}
     </div>
   );

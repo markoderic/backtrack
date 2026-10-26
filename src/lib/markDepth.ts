@@ -44,3 +44,18 @@ export function boxOpacity(depth: number): number {
   const a = 1 - (1 - LONE_BOX_OPACITY) ** (1 / depth);
   return Math.max(MIN_BOX_OPACITY, Math.round(a * 100) / 100);
 }
+
+/** The faintest a glowing box gets (batch M): on a black slide a faint glow is lost in the dark. */
+export const MIN_GLOW_OPACITY = 0.7;
+
+/**
+ * The opacity of each glowing box (a dark slide, drawn with screen) on a slide whose boxes stack `depth`
+ * deep: the same steps as boxOpacity, from MIN_GLOW_OPACITY for a box in a crowd up to a full glow for a
+ * box alone, so every box stays visible on black. A pile is never brighter than one full glow (the boxes
+ * lighten each other inside their layer), so the text under it stays as readable as under one mark.
+ */
+export function glowOpacity(depth: number): number {
+  const a = boxOpacity(depth);
+  const t = (a - MIN_BOX_OPACITY) / (LONE_BOX_OPACITY - MIN_BOX_OPACITY);
+  return Math.round((MIN_GLOW_OPACITY + (1 - MIN_GLOW_OPACITY) * t) * 100) / 100;
+}

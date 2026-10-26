@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fakeSlideImages } from "../../../../tests/fakeSlides";
 import { render, screen, fireEvent, within, waitFor, act, cleanup } from "@testing-library/react";
 
 type Result = { data: unknown; error: { message: string } | null };
@@ -795,6 +796,25 @@ describe("SpotsView: marks and notebook notes (migration 0020, batch K2)", () =>
     expect(nb.className).toContain("type-note");
     expect(boxes(items[1])[0].className).toContain("bg-mark");
     expect(boxes(items[1])[0].className).not.toContain("bg-mark-lost");
+  });
+
+  it("on a black slide the thumbnail's marks glow (hand test 4: \"black background, I can't see anything\"); on a white one they stay the highlighter", async () => {
+    // Slide 9 (the lost one, red marks) is black; the others white.
+    fakeSlideImages((url) => (url.endsWith("/9.webp") ? "black" : "white"));
+    try {
+      show();
+      await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(5));
+      const items = screen.getAllByRole("listitem");
+      await waitFor(() => expect(boxes(items[4])[0].className).toContain("mix-blend-screen"));
+      for (const b of boxes(items[4])) {
+        expect(b.className).toContain("bg-mark-lost-glow");
+        expect(b.className).not.toContain("mix-blend-multiply");
+      }
+      await waitFor(() => expect(boxes(items[1])[0].className).toContain("mix-blend-multiply bg-mark"));
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
   });
 
   it("reads marks only through my_slide_marks, never select('*') on slide_marks", async () => {

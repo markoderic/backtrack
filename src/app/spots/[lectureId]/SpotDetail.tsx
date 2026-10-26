@@ -13,6 +13,7 @@ import { sharedTapQueue } from "@/lib/sharedQueues";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
 import { HighlightLayer, type ShownMark } from "../../l/[lectureId]/HighlightLayer";
+import { markLookClass, useSlideSample, type MarkTone } from "@/lib/slideTone";
 import { MarkPopover } from "../../l/[lectureId]/MarkPopover";
 import type { Spot } from "../group";
 import { formatClock } from "../time";
@@ -115,11 +116,11 @@ export function whenLine(spot: { kind: SpotKindShown; tappedAt?: string }): stri
 }
 
 /**
- * The look of a mark in My spots, as on the live screen: a highlighter, yellow, or red where the
- * student is lost (--color-mark, --color-mark-lost), multiplied over the slide, no border.
+ * The look of a mark in My spots, as on the live screen: yellow, or red where the student is lost, as a
+ * highlighter on a light part of the slide and a glow on a dark part (lib/slideTone), no border.
  */
-export function highlightClass(kind: "lost" | "save"): string {
-  return `rounded-xs mix-blend-multiply ${kind === "lost" ? "bg-mark-lost" : "bg-mark"}`;
+export function highlightClass(kind: "lost" | "save", tone: MarkTone = "light"): string {
+  return `rounded-xs ${markLookClass(kind, tone)}`;
 }
 
 /** The small dot that says what a slide is, as in the live screen's strip. */
@@ -215,6 +216,8 @@ export function SpotDetail({
   // The slide's own shape, from the image once it loads.
   const [ratio, setRatio] = useState(WIDE);
   const url = expired ? undefined : urlFor(viewing);
+  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light one).
+  const sample = useSlideSample(url);
   // While the lecture is live, the last slide a student may see is the live one.
   const lastSlide = liveSlide ?? slideCount ?? slideNumber;
   const onViewingRef = useRef(onViewingChange);
@@ -524,6 +527,7 @@ export function SpotDetail({
                           markButtonRef.current?.focus();
                         }}
                         shown={!marks && rect ? { kind: lost ? "lost" : "save", rect } : null}
+                        sample={sample}
                       />
                     )}
                   </>

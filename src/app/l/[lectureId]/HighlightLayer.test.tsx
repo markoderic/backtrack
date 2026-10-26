@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { useRef, useState } from "react";
 import type { Rect } from "@/lib/rect";
+import type { SlideSample } from "@/lib/slideTone";
 import type { QueueOp, SendResult } from "@/lib/tapQueue";
 import { HighlightLayer, type MarkKind, type ShownMark } from "./HighlightLayer";
 import { LostButton, type LegacyMarks } from "./LostButton";
@@ -33,9 +34,10 @@ type StageProps = {
   onCancel?: () => void;
   shown?: { kind: MarkKind; rect: Rect } | null;
   natural?: [number, number];
+  sample?: SlideSample | null;
 };
 
-function Stage({ marking = true, markingKind = "lost", marks, selectedId, onSelect, onMark = vi.fn(), onCancel = vi.fn(), shown, natural }: StageProps) {
+function Stage({ marking = true, markingKind = "lost", marks, selectedId, onSelect, onMark = vi.fn(), onCancel = vi.fn(), shown, natural, sample }: StageProps) {
   const ref = useRef<HTMLImageElement>(null);
   return (
     <div style={{ position: "relative" }}>
@@ -61,6 +63,7 @@ function Stage({ marking = true, markingKind = "lost", marks, selectedId, onSele
         onMark={onMark}
         onCancel={onCancel}
         shown={shown}
+        sample={sample}
       />
     </div>
   );
@@ -292,6 +295,67 @@ describe("HighlightLayer", () => {
     for (const key of ["h", "H", "m", "l", "s", "Enter", " "]) fireEvent.keyDown(window, { key });
     expect(onMark).not.toHaveBeenCalled();
     expect(screen.queryByText(/Drag over/)).not.toBeInTheDocument();
+  });
+});
+
+describe("HighlightLayer marks on any slide color (hand test 4: black slides)", () => {
+  /** A 64 x 36 copy of the slide: black on the left half, white on the right (or all one color). */
+  const copy = (left: number, right = left): SlideSample => {
+    const data = new Uint8ClampedArray(64 * 36 * 4);
+    for (let y = 0; y < 36; y++) for (let x = 0; x < 64; x++) data.set(x < 32 ? [left, left, left, 255] : [right, right, right, 255], (y * 64 + x) * 4);
+    return { w: 64, h: 36, data };
+  };
+  const onLeft: ShownMark = { id: "l", rect: { x: 0.05, y: 0.1, w: 0.3, h: 0.1 }, kind: "save" };
+  const onRight: ShownMark = { id: "r", rect: { x: 0.6, y: 0.1, w: 0.3, h: 0.1 }, kind: "lost" };
+
+  it("on a black slide each mark glows (screen, the glow yellow or red), never multiply, never a border", () => {
+    render(<Stage marking={false} marks={[onLeft, { ...onRight, id: "r2" }]} sample={copy(0)} />);
+    const [a, b] = markButtons();
+    expect(a).toHaveAttribute("data-tone", "dark");
+    expect(a.className).toContain("mix-blend-screen");
+    expect(a.className).toContain("bg-mark-glow");
+    expect(a.className).not.toContain("mix-blend-multiply");
+    expect(b.className).toContain("bg-mark-lost-glow");
+    for (const m of [a, b]) expect(m.className).not.toMatch(/\bborder\b/);
+  });
+
+  it("on a white slide the marks stay the highlighter (multiply)", () => {
+    render(<Stage marking={false} marks={[onLeft, onRight]} sample={copy(255)} />);
+    const [a, b] = markButtons();
+    expect(a).toHaveAttribute("data-tone", "light");
+    expect(a.className).toContain("mix-blend-multiply bg-mark");
+    expect(b.className).toContain("mix-blend-multiply bg-mark-lost");
+  });
+
+  it("each mark looks at the slide under it: on the black half a glow, on the white half the highlighter", () => {
+    render(<Stage marking={false} marks={[onLeft, onRight]} sample={copy(0, 255)} />);
+    const [a, b] = markButtons();
+    expect(a).toHaveAttribute("data-tone", "dark");
+    expect(b).toHaveAttribute("data-tone", "light");
+  });
+
+  it("a slide that could not be measured: a light fill with a 2 px colored inner edge, which shows on any color", () => {
+    render(<Stage marking={false} marks={[onLeft, onRight]} sample={null} />);
+    const [a, b] = markButtons();
+    expect(a).toHaveAttribute("data-tone", "edge");
+    expect(a.className).toContain("inset-ring-2 inset-ring-mark-edge");
+    expect(b.className).toContain("inset-ring-2 inset-ring-lost");
+    expect(a.className).not.toContain("mix-blend");
+  });
+
+  it("the box being drawn and the one mark of My spots take the same look; a selected mark on black has a white outline", () => {
+    mockLayerSize();
+    const { rerender } = render(<Stage markingKind="save" sample={copy(0)} />);
+    fireEvent.pointerDown(layer(), { ...mouse, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(layer(), { ...mouse, clientX: 300, clientY: 200 });
+    expect(draftBox()).toHaveAttribute("data-tone", "dark");
+    expect(draftBox()!.className).toContain("bg-mark-glow");
+    fireEvent.pointerUp(layer(), { ...mouse, clientX: 300, clientY: 200 });
+    rerender(<Stage marking={false} shown={{ kind: "lost", rect: onLeft.rect }} sample={copy(0)} />);
+    expect((boxes()[0] as HTMLElement).className).toContain("bg-mark-lost-glow");
+    rerender(<Stage marking={false} marks={[onLeft]} selectedId="l" sample={copy(0)} />);
+    expect(markButtons()[0].className).toContain("outline-surface");
+    expect(markButtons()[0].className).not.toContain("outline-ink");
   });
 });
 

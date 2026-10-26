@@ -6,18 +6,29 @@ import { HighlightBoxes } from "@/components/HighlightBoxes";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import type { Rect } from "@/lib/rect";
-import { boxOpacity, overlapDepth } from "@/lib/markDepth";
+import { boxOpacity, glowOpacity, overlapDepth } from "@/lib/markDepth";
+import { markTone, useSlideSample, type MarkTone } from "@/lib/slideTone";
 
 /**
- * Every student's red mark, in the student's highlighter red (--color-mark-lost), with no border
- * (batch L). The boxes stack inside their own layer with darken, so a pile of boxes only gets more
- * opaque, never darker than one full mark; the layer is then multiplied over the slide like a
- * highlighter (the text under it is multiplied too and stays readable, globals.test.ts). Each box's
- * opacity drops as more boxes stack up (boxOpacity), so where most people pointed comes out
- * darkest step by step, and a box drawn alone among many is still there to see.
+ * Every student's red mark, in the student's red, with no border (batch L), in the look that shows on
+ * the part of the slide under it (batch M, lib/slideTone):
+ * - light: the highlighter red (--color-mark-lost). The boxes stack inside their own layer with darken,
+ *   so a pile only gets more opaque, never darker than one full mark; the layer is multiplied over the
+ *   slide (the text under it stays readable, globals.test.ts).
+ * - dark: the glow red (--color-mark-lost-glow). The same in reverse: lighten inside the layer (a pile
+ *   is never brighter than one full glow), the layer screened over the slide.
+ * - edge (the slide could not be measured): the red fill at 40% for the whole pile (darken inside an
+ *   isolated layer at 40%), and each box's 2 px inner edge in the lost red on top.
+ * Each box's opacity drops as more boxes stack up on the slide (boxOpacity; glowOpacity for the glow,
+ * which keeps a higher floor so it shows on black), so where most people pointed comes out strongest
+ * step by step, and a box drawn alone among many is still there to see.
  */
-const BOX = "rounded-xs bg-mark-lost mix-blend-darken";
-const LAYER = "isolate mix-blend-multiply";
+const LOOKS = {
+  light: { box: "rounded-xs bg-mark-lost mix-blend-darken", layer: "isolate mix-blend-multiply" },
+  dark: { box: "rounded-xs bg-mark-lost-glow mix-blend-lighten", layer: "isolate mix-blend-screen" },
+  edge: { box: "rounded-xs bg-mark-lost mix-blend-darken", layer: "isolate opacity-40" },
+} as const;
+const EDGE_RING = "rounded-xs inset-ring-2 inset-ring-lost";
 /** The shape a slide is drawn at until its image says otherwise. */
 const WIDE = 16 / 9;
 
@@ -60,7 +71,26 @@ export function SlideFocus({ number, firstLine, url, rects, marksLabel, onOpen, 
   const [own, setOwn] = useState<number | null>(null);
   // How deep the boxes stack on this slide sets how see-through each one is.
   const depth = useMemo(() => overlapDepth(rects), [rects]);
-  const boxes = <HighlightBoxes rects={rects} boxClassName={BOX} className={LAYER} opacity={boxOpacity(depth)} />;
+  // The slide measured: each box takes the look that shows on the part of the slide under it.
+  const sample = useSlideSample(url);
+  const byTone = useMemo(() => {
+    const out: Record<MarkTone, Rect[]> = { light: [], dark: [], edge: [] };
+    for (const r of rects) out[markTone(sample, r, "lost")].push(r);
+    return out;
+  }, [rects, sample]);
+  // On a dark part the glow keeps a higher floor (glowOpacity), so a box alone in a crowd still shows on black.
+  const opacityOf = (tone: MarkTone) => (tone === "dark" ? glowOpacity(depth) : boxOpacity(depth));
+  const boxes = (
+    <>
+      {(["light", "dark", "edge"] as const).map(
+        (tone) =>
+          byTone[tone].length > 0 && (
+            <HighlightBoxes key={tone} tone={tone} rects={byTone[tone]} boxClassName={LOOKS[tone].box} className={LOOKS[tone].layer} opacity={opacityOf(tone)} />
+          ),
+      )}
+      {byTone.edge.length > 0 && <HighlightBoxes key="edge-ring" tone="edge" counted={false} rects={byTone.edge} boxClassName={EDGE_RING} opacity={opacityOf("edge")} />}
+    </>
+  );
   const ratio = own ?? guess ?? WIDE;
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);

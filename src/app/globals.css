@@ -27,6 +27,16 @@
    */
   --color-mark: #ffe45c;
   --color-mark-lost: #f2a898;
+  /*
+   * Marks on a dark part of a slide (batch M, hand test 4: multiply vanishes on black). The same yellow
+   * and red, deeper, drawn with mix-blend-screen so they lift the dark slide like a glow; white and
+   * light gray text under them stays readable, and they stand out from black (globals.test.ts).
+   * mark-edge (amber) and lost are the 2 px inner edge of the look used when a slide can not be
+   * measured: it shows on white and on black.
+   */
+  --color-mark-glow: #756617;
+  --color-mark-lost-glow: #a84635;
+  --color-mark-edge: #b88300;
 
   /*
    * Course colors (batch D, three more in batch H): eleven swatches for the bar on each course

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fakeSlideImages } from "../../../../tests/fakeSlides";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 // from("lost_taps").update(patch).in("id", ids).select("id")
@@ -727,6 +728,20 @@ describe("SpotDetail: marks (migration 0020: several on the slide, each with a n
     expect(marks[0]).toHaveAccessibleName("Mark 1, lost: this part");
     expect(screen.queryByRole("button", { name: "Mark the spot" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mark" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("on a black slide the marks glow (screen) instead of the highlighter that vanishes there (hand test 4)", async () => {
+    fakeSlideImages(() => "black");
+    try {
+      show({ marks: marksApi() });
+      await waitFor(() => expect(document.querySelector("[data-mark]")).toHaveAttribute("data-tone", "dark"));
+      for (const m of document.querySelectorAll<HTMLElement>("[data-mark]")) {
+        expect(m.className).toContain("mix-blend-screen bg-mark-lost-glow");
+        expect(m.className).not.toContain("mix-blend-multiply");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("Mark, then drags, adds a mark for each; Mark again turns it off", () => {

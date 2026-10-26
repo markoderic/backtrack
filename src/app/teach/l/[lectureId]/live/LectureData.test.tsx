@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
+import { fakeSlideImages } from "../../../../../../tests/fakeSlides";
 
 type Query = { table: string; cols?: string; opts?: unknown; range: [number, number] | null; eqs: [string, unknown][] };
 
@@ -2023,6 +2024,71 @@ describe("LectureData red marks (batch L)", () => {
       renderLive();
       await waitFor(() => expect(figure("sum-marks")).toBe("5"));
       expect(new Set(boxesOn(2).map((b) => b.style.opacity))).toEqual(new Set(["0.85"]));
+    });
+  });
+
+  describe("on any slide color (hand test 4: red marks vanish on a black slide)", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+    const lostOn2 = (n: number) =>
+      h.tapsQuery.mockResolvedValue({
+        data: Array.from({ length: n }, (_, i) => row(`t${i}`, { slide_number: 2, anon_id: `s${i}` })),
+        error: null,
+      });
+
+    it("a black slide: the boxes glow (lighten inside their layer, the layer screened over the slide), with the same overlap opacity", async () => {
+      fakeSlideImages(() => "black");
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      lostOn2(3);
+      marksAre(Array.from({ length: 3 }, (_, i) => mark(`m${i}`, { anon_id: `s${i}`, ...box(0.1 + i * 0.01, 0.1, 0.5, 0.15) })));
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("3"));
+      await waitFor(() => expect(boxesOn(2)[0].className).toContain("bg-mark-lost-glow"));
+      for (const b of boxesOn(2)) {
+        expect(b.className).toContain("mix-blend-lighten");
+        expect(b.className).not.toMatch(/\bborder\b/);
+        // Three deep: 0.47 in the highlighter look, 0.81 as a glow (a faint glow is lost on black).
+        expect(b.style.opacity).toBe("0.81");
+      }
+      const layer = boxesOn(2)[0].parentElement!;
+      expect(layer).toHaveAttribute("data-tone", "dark");
+      expect(layer.className).toContain("isolate mix-blend-screen");
+      expect(layer.className).not.toContain("mix-blend-multiply");
+      // Enlarge draws them the same way.
+      fireEvent.click(within(panel()).getByRole("button", { name: "Enlarge slide 2" }));
+      expect(screen.getByRole("dialog").querySelectorAll('[data-tone="dark"] [data-highlight-box]')).toHaveLength(3);
+    });
+
+    it("half black, half white: each box takes the look of the part under it; the count is every box once", async () => {
+      fakeSlideImages(() => "split");
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      lostOn2(2);
+      marksAre([mark("m0", { anon_id: "s0", ...box(0.05, 0.1, 0.3, 0.1) }), mark("m1", { anon_id: "s1", ...box(0.6, 0.1, 0.3, 0.1) })]);
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+      await waitFor(() => expect(panel().querySelector('[data-tone="dark"]')).not.toBeNull());
+      expect(panel().querySelectorAll('[data-tone="dark"] [data-highlight-box]')).toHaveLength(1);
+      expect(panel().querySelectorAll('[data-tone="light"] [data-highlight-box]')).toHaveLength(1);
+      expect(panel().querySelector('[data-tone="light"]')!.className).toContain("mix-blend-multiply");
+      expect(boxesOn(2)).toHaveLength(2);
+    });
+
+    it("a slide that can not be measured: a 40% red fill for the pile and a 2 px red inner edge on each box, counted once", async () => {
+      fakeSlideImages(() => "tainted");
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      lostOn2(2);
+      marksAre([mark("m0", { anon_id: "s0", ...box(0.05, 0.1, 0.3, 0.1) }), mark("m1", { anon_id: "s1", ...box(0.6, 0.1, 0.3, 0.1) })]);
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("2"));
+      await waitFor(() => expect(panel().querySelector('[data-tone="edge"]')).not.toBeNull());
+      const [fill, edges] = Array.from(panel().querySelectorAll<HTMLElement>('[data-tone="edge"]'));
+      expect(fill.className).toContain("isolate opacity-40");
+      expect(fill.querySelectorAll("[data-highlight-box]")).toHaveLength(2);
+      expect(edges.querySelectorAll("[data-highlight-edge]")).toHaveLength(2);
+      expect(edges.querySelector("[data-highlight-edge]")!.className).toContain("inset-ring-2 inset-ring-lost");
+      expect(boxesOn(2)).toHaveLength(2);
+      expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("2 highlights");
     });
   });
 });

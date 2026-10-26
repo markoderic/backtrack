@@ -137,3 +137,61 @@ describe("marks look like a highlighter (batch K1)", () => {
     expect(contrast(token("mark-lost")!, "#ffffff")).toBeGreaterThan(contrast(token("lost-tint")!, "#ffffff") + 0.5);
   });
 });
+
+describe("marks on a dark slide glow, and marks on a slide that can not be measured get an edge (batch M)", () => {
+  const token = (name: string) => css.match(new RegExp(`--color-${name}:\\s*(#[0-9a-f]{6})`, "i"))?.[1] ?? null;
+  const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const toHex = (c: number[]) => "#" + c.map((n) => Math.round(n).toString(16).padStart(2, "0")).join("");
+  const luminance = (hex: string) => {
+    const [r, g, b] = rgb(hex).map((n) => {
+      const v = n / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a: string, b: string) => {
+    const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  // mix-blend-screen, per channel: what the browser draws for the slide (and its text) under a glow.
+  const screen = (under: string, fill: string) => toHex(rgb(under).map((u, i) => 255 - ((255 - u) * (255 - rgb(fill)[i])) / 255));
+  // A fill of this opacity laid over the slide (the edge look, normal blending).
+  const over = (under: string, fill: string, a: number) => toHex(rgb(under).map((u, i) => u * (1 - a) + rgb(fill)[i] * a));
+
+  it("under a glow on black, white text keeps 5.5:1 and light gray 4:1, and the glow stands out from black by 3.5:1", () => {
+    for (const name of ["mark-glow", "mark-lost-glow"]) {
+      const glow = token(name);
+      expect(glow, name).not.toBeNull();
+      const bg = screen("#000000", glow!);
+      expect(bg).toBe(glow!.toLowerCase());
+      expect(contrast(screen("#ffffff", glow!), bg), `${name} white`).toBeGreaterThanOrEqual(5.5);
+      expect(contrast(screen("#cccccc", glow!), bg), `${name} #ccc`).toBeGreaterThanOrEqual(4);
+      expect(contrast(bg, "#000000"), `${name} on black`).toBeGreaterThanOrEqual(3.5);
+    }
+  });
+
+  it("the glows are the same color family: a yellow and a red", () => {
+    const [yr, yg, yb] = rgb(token("mark-glow")!);
+    expect(yr).toBeGreaterThan(yb + 60);
+    expect(yg).toBeGreaterThan(yb + 60);
+    expect(Math.abs(yr - yg)).toBeLessThan(30);
+    const [rr, rg, rb] = rgb(token("mark-lost-glow")!);
+    expect(rr - rg).toBeGreaterThan(80);
+    expect(rr - rb).toBeGreaterThan(80);
+  });
+
+  it("the edge look: its 2 px inner edge shows on white and on black (3:1), and text under its 40% fill stays readable on both", () => {
+    for (const [fill, edge] of [
+      ["mark", "mark-edge"],
+      ["mark-lost", "lost"],
+    ]) {
+      const e = token(edge)!;
+      expect(contrast(e, "#ffffff"), `${edge} on white`).toBeGreaterThanOrEqual(3);
+      expect(contrast(e, "#000000"), `${edge} on black`).toBeGreaterThanOrEqual(3);
+      const f = token(fill)!;
+      // Black text on a white slide, white text on a black one.
+      expect(contrast(over("#000000", f, 0.4), over("#ffffff", f, 0.4)), `${fill} white slide`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(over("#ffffff", f, 0.4), over("#000000", f, 0.4)), `${fill} black slide`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});

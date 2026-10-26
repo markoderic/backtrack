@@ -19,6 +19,7 @@ import { useLiveMarks } from "@/lib/useLiveMarks";
 import { useNotebook } from "@/lib/useNotebook";
 import { useTrackHere } from "@/lib/useHere";
 import { useSlideImages } from "@/lib/useSlideImages";
+import { useSlideSample } from "@/lib/slideTone";
 import { HighlightLayer, type ShownMark } from "./HighlightLayer";
 import { LostButton, type LegacyMarks, type Spot } from "./LostButton";
 import { MarkPopover } from "./MarkPopover";
@@ -237,6 +238,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
   const viewing = state?.viewing ?? initialSlide;
   const url = state ? urlFor(viewing) : undefined;
+  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light one).
+  const sample = useSlideSample(url);
   const behind = state !== null && !state.following && state.viewing < state.live;
   const reconnecting = state?.conn === "reconnecting";
   const live = state?.live ?? initialSlide;
@@ -543,6 +546,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
                     }}
                     onMark={addMark}
                     onCancel={() => setMarking(false)}
+                    sample={sample}
                   />
                 </>
               )}

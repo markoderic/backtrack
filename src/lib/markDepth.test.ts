@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { LONE_BOX_OPACITY, MIN_BOX_OPACITY, boxOpacity, overlapDepth } from "./markDepth";
+import { LONE_BOX_OPACITY, MIN_BOX_OPACITY, MIN_GLOW_OPACITY, boxOpacity, glowOpacity, overlapDepth } from "./markDepth";
 
 const r = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
 
@@ -35,6 +35,21 @@ describe("boxOpacity", () => {
       const stacked = 1 - (1 - boxOpacity(depth)) ** depth;
       expect(stacked).toBeGreaterThan(0.8);
       expect(stacked).toBeLessThanOrEqual(0.86);
+    }
+  });
+});
+
+describe("glowOpacity (a dark slide, batch M)", () => {
+  it("a lone box glows at full strength; in a crowd each stays at least 0.7 so it shows on black; deeper is never stronger", () => {
+    expect(glowOpacity(1)).toBe(1);
+    expect(glowOpacity(40)).toBe(MIN_GLOW_OPACITY);
+    expect(MIN_GLOW_OPACITY).toBeGreaterThanOrEqual(0.7);
+    let last = 1;
+    for (let d = 1; d <= 50; d++) {
+      const g = glowOpacity(d);
+      expect(g).toBeLessThanOrEqual(last);
+      expect(g).toBeGreaterThanOrEqual(boxOpacity(d));
+      last = g;
     }
   });
 });
