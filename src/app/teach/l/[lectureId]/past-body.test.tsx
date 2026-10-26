@@ -166,7 +166,9 @@ describe("PastBody", () => {
   it("the course crumb carries the section (\"ACC 221 A\"), and before 0018 it reads the course without it", async () => {
     maybeSingle.mockResolvedValueOnce({ data: { ...lecture, courses: { ...lecture.courses, section: "Section A" } }, error: null });
     const first = render(await PastBody({ params }));
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^ACC 221 A$/);
+    const crumb = screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')!;
+    expect(crumb).toHaveTextContent(/^ACC 221 section A$/);
+    expect(crumb.querySelector("[data-course-section]")).toHaveClass("text-secondary", "font-light");
     first.unmount();
     selects.length = 0;
     maybeSingle

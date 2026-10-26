@@ -69,7 +69,8 @@ describe("StartBody", () => {
     const { render, screen } = await import("@testing-library/react");
     maybeSingle.mockResolvedValueOnce({ data: { id: "c1", name: "IMS 452", section: "Section B" }, error: null });
     const first = render(await StartBody({ params }));
-    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^IMS 452 B$/);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('a[href="/teach/c/c1"]')).toHaveTextContent(/^IMS 452 section B$/);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector("[data-course-section]")).toHaveClass("text-secondary", "font-light");
     first.unmount();
     maybeSingle
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column courses.section does not exist" } })

@@ -55,7 +55,16 @@ export function staggerStyle(index: number): React.CSSProperties {
 export const staggerClass =
   "animate-rise-in [animation-delay:calc(var(--i,0)*30ms)] motion-reduce:[animation-delay:0ms]";
 
-export type Crumb = { label: string; href?: string };
+/**
+ * One step of the breadcrumb. A course step passes its section too (null or a string): the label is then
+ * the course code and the section is drawn after it in gray (CourseTitle), "IMS 452 B".
+ */
+export type Crumb = { label: string; href?: string; section?: string | null };
+
+/** A crumb's text: a course step as its title (code and gray section), anything else as it is. */
+function CrumbLabel({ crumb, tone }: { crumb: Crumb; tone: SectionTone }) {
+  return crumb.section !== undefined ? <CourseTitle code={crumb.label} section={crumb.section} tone={tone} /> : <>{crumb.label}</>;
+}
 
 /**
  * The teacher top bar: 64 high with a hairline, logo (to Home), breadcrumb, then the teacher's name and
@@ -89,7 +98,9 @@ export function TeacherTopBar({
           className={`press focus-ring flex min-w-0 items-center gap-1 rounded-sm type-small text-secondary hover:text-ink sm:hidden ${hitAreaClass}`}
         >
           <Icon name="back" size={18} />
-          <span className="truncate">{parent.label}</span>
+          <span className="truncate">
+            <CrumbLabel crumb={parent} tone="regular" />
+          </span>
         </Link>
       )}
       <nav aria-label="Breadcrumb" className="hidden min-w-0 sm:block">
@@ -105,17 +116,19 @@ export function TeacherTopBar({
                 )}
                 {last ? (
                   <span aria-current="page" className="truncate type-small-strong text-ink">
-                    {crumb.label}
+                    <CrumbLabel crumb={crumb} tone="strong" />
                   </span>
                 ) : crumb.href ? (
                   <Link
                     href={crumb.href}
                     className="press focus-ring relative rounded-sm text-secondary after:absolute after:-inset-x-1 after:-inset-y-3 after:content-[''] hover:text-ink"
                   >
-                    {crumb.label}
+                    <CrumbLabel crumb={crumb} tone="regular" />
                   </Link>
                 ) : (
-                  <span className="text-secondary">{crumb.label}</span>
+                  <span className="text-secondary">
+                    <CrumbLabel crumb={crumb} tone="regular" />
+                  </span>
                 )}
               </li>
             );
@@ -191,15 +204,31 @@ export function courseTitleSpoken(code: string, section?: string | null): string
 }
 
 /**
- * The title inside a heading or a link: the code and the section in one size and weight
- * ("IMS 452 B"), and a screen reader hears "IMS 452 section B".
+ * How heavy the text around a course title is. "strong" (the default): a heading, a card or a crumb set
+ * in a medium or semibold weight, so the section is regular. "regular": text in the regular weight (the
+ * Live now row, the archive note, a breadcrumb link), so the section is light.
  */
-export function CourseTitle({ code, section }: { code: string; section?: string | null }) {
+export type SectionTone = "strong" | "regular";
+
+/** The section's look: the secondary gray, one weight lighter than the code (Marko, hand test 4). */
+export function sectionClass(tone: SectionTone = "strong"): string {
+  return `text-secondary ${tone === "regular" ? "font-light" : "font-normal"}`;
+}
+
+/**
+ * The title inside a heading or a link: the code, then the section in gray and a lighter weight
+ * ("IMS 452 B"), so the section reads as its own part and never as text typed into the name (Marko,
+ * hand test 4). A screen reader hears "IMS 452 section B".
+ */
+export function CourseTitle({ code, section, tone = "strong" }: { code: string; section?: string | null; tone?: SectionTone }) {
   const tag = sectionTag(section);
   if (!tag) return <>{code}</>;
   return (
     <>
-      {code} <span className="sr-only">section</span> <span data-course-section="">{tag}</span>
+      {code} <span className="sr-only">section</span>{" "}
+      <span data-course-section="" className={sectionClass(tone)}>
+        {tag}
+      </span>
     </>
   );
 }

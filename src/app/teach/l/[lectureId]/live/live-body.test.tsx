@@ -144,7 +144,11 @@ describe("LiveBody", () => {
   it("the course crumb carries the section (\"ACC 221 A\"), and before 0018 it reads the course without it", async () => {
     maybeSingle.mockResolvedValueOnce({ data: { ...lecture, courses: { ...lecture.courses, section: "Section A" } }, error: null });
     const first = render(await LiveBody({ params, searchParams: noSearch }));
-    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "ACC 221 A" })).toHaveAttribute("href", "/teach/c/c1");
+    const crumb = within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "ACC 221 section A" });
+    expect(crumb).toHaveAttribute("href", "/teach/c/c1");
+    // The section gray and a lighter weight than the code (hand test 4).
+    expect(crumb.querySelector("[data-course-section]")).toHaveClass("text-secondary", "font-light");
+    expect(screen.getByTestId("back-link").querySelector("[data-course-section]")).toHaveTextContent(/^A$/);
     first.unmount();
     selects.length = 0;
     maybeSingle

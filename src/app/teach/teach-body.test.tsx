@@ -97,11 +97,11 @@ describe("TeachBody", () => {
     expect(html).not.toContain('href="/teach/c/c1/start"');
   });
 
-  it("Live now names the course with its section, as the card does (\"IMS 452 B\")", async () => {
+  it("Live now names the course with its section, as the card does (\"IMS 452 B\"), the section lighter (hand test 4)", async () => {
     courses.mockResolvedValue({ data: [{ id: "c1", name: "IMS 452", color: null, section: "Section B", meet_days: null, start_minute: null, end_minute: null }], error: null });
     live.mockResolvedValue({ data: [{ id: "l2", name: "Lecture 2, Oct 26", course_id: "c1", courses: { teacher_id: "u1" } }], error: null });
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
-    expect(html).toMatch(/Live now<span[^>]*>· IMS 452 B<\/span>/);
+    expect(html).toMatch(/Live now<span class="font-normal text-secondary">· IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-light">B<\/span><\/span>/);
   });
 
   it("throws when the live lectures query fails", async () => {
@@ -213,9 +213,10 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     const [first, second] = cards(html);
     expect(first).toContain('data-course-color="teal"');
     expect(first).toContain("bg-course-teal");
-    // The section is part of the title (Marko, hand test 3): "IMS 452 B" in the title's size and weight, the
-    // typed "Section B" shortened to "B"; a screen reader hears "IMS 452 section B".
-    expect(first).toMatch(/<h2 class="[^"]*type-title[^"]*"><a [^>]*data-card-link[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/a><\/h2>/);
+    // The section is part of the title (Marko, hand test 3): "IMS 452 B" in the title's size, the typed
+    // "Section B" shortened to "B", and gray and a lighter weight than the code (hand test 4); a screen
+    // reader hears "IMS 452 section B".
+    expect(first).toMatch(/<h2 class="[^"]*type-title[^"]*"><a [^>]*data-card-link[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-normal">B<\/span><\/a><\/h2>/);
     expect(first).not.toContain("Section B");
     expect(first).not.toContain("type-small-strong text-secondary");
     expect(first).toContain('aria-label="Start lecture in IMS 452 section B"');
@@ -260,7 +261,7 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     const block = html.match(/<section[^>]*data-testid="now-next"[\s\S]*?<\/section>/)?.[0] ?? "";
     expect(block).toContain('data-state="now"');
     expect(block).toContain(">Now<");
-    expect(block).toMatch(/<a class="[^"]*type-display[^"]*" href="\/teach\/c\/c1">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/a>/);
+    expect(block).toMatch(/<a class="[^"]*type-display[^"]*" href="\/teach\/c\/c1">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-normal">B<\/span><\/a>/);
     expect(block).not.toContain("Section B");
     expect(block).toContain('aria-label="Start lecture in IMS 452 section B"');
     expect(block).toContain("Mon Wed Fri · 10:05–11:00 AM");
@@ -308,7 +309,7 @@ describe("TeachBody course cards and Now / Next (batch D)", () => {
     ]);
     expect(cards(html)).toHaveLength(1);
     expect(cards(html)[0]).toContain("bg-course-teal");
-    expect(cards(html)[0]).toMatch(/<h2 class="[^"]*type-title[^"]*"><a [^>]*data-card-link[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/a><\/h2>/);
+    expect(cards(html)[0]).toMatch(/<h2 class="[^"]*type-title[^"]*"><a [^>]*data-card-link[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-normal">B<\/span><\/a><\/h2>/);
   });
 
   it("a course with a picked color (after 0019): the bar is painted with it, inline, on the card and in Now", async () => {

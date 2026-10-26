@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { CourseTitle, TeacherTopBar, courseTitleSpoken, courseTitleText, fieldClass, fieldNarrowClass, hitAreaClass, sectionTag } from "./ui";
+import { CourseTitle, TeacherTopBar, courseTitleSpoken, courseTitleText, fieldClass, fieldNarrowClass, hitAreaClass, sectionClass, sectionTag } from "./ui";
 
 describe("buttons, not links (Marko, 2:05 PM)", () => {
   it("no teacher screen and not Home has an underlined text action left", () => {
@@ -115,20 +115,56 @@ describe("the section as part of the course title (Marko, hand test 3)", () => {
     expect(sectionTag(null)).toBeNull();
   });
 
-  it("reads \"IMS 452 B\" in one size and weight, and a screen reader hears \"IMS 452 section B\"", () => {
+  it("reads \"IMS 452 B\" in one size, the B gray and a lighter weight (hand test 4); a screen reader hears \"IMS 452 section B\"", () => {
     render(
       <h2 className="type-title">
         <CourseTitle code="IMS 452" section="Section B" />
       </h2>,
     );
     const heading = screen.getByRole("heading", { name: "IMS 452 section B" });
-    // No class of its own on the section: it takes the heading's size and weight.
-    expect(heading.querySelector("[data-course-section]")).toHaveTextContent("B");
-    expect(heading.querySelector("[data-course-section]")!.getAttribute("class")).toBeNull();
+    // The heading's size; the secondary gray and regular weight under a semibold heading, so it can never
+    // look like text typed into the title (Marko, hand test 4: "Make B a little bit gray").
+    const tag = heading.querySelector("[data-course-section]")!;
+    expect(tag).toHaveTextContent("B");
+    expect(tag.getAttribute("class")).toBe("text-secondary font-normal");
+    expect(tag.className).not.toMatch(/type-|text-(xs|sm|base|lg)/);
     expect(heading.querySelector(".sr-only")).toHaveTextContent("section");
     expect(courseTitleText("IMS 452", "Section B")).toBe("IMS 452 B");
     expect(courseTitleSpoken("IMS 452", "Section B")).toBe("IMS 452 section B");
     expect(courseTitleText("IMS 452", null)).toBe("IMS 452");
     expect(courseTitleSpoken("IMS 452", " ")).toBe("IMS 452");
+  });
+
+  it("in regular-weight text (a breadcrumb link, Live now, the archive note) the section is light", () => {
+    expect(sectionClass("regular")).toBe("text-secondary font-light");
+    expect(sectionClass("strong")).toBe("text-secondary font-normal");
+    render(
+      <p>
+        <CourseTitle code="IMS 452" section="B" tone="regular" />
+      </p>,
+    );
+    expect(document.querySelector("[data-course-section]")).toHaveClass("font-light");
+  });
+
+  it("the breadcrumb draws a course step's section gray: lighter than the current page's medium text, and in the back link", () => {
+    render(
+      <TeacherTopBar
+        crumbs={[
+          { label: "Courses", href: "/teach" },
+          { label: "IMS 452", section: "Section B", href: "/teach/c/c1" },
+          { label: "Lecture 3" },
+        ]}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(nav).getByRole("link", { name: "IMS 452 section B" }).querySelector("[data-course-section]")).toHaveClass("text-secondary", "font-light");
+    expect(screen.getByTestId("back-link")).toHaveTextContent("IMS 452 section B");
+    cleanup();
+    render(<TeacherTopBar crumbs={[{ label: "Courses", href: "/teach" }, { label: "IMS 452", section: "B" }]} />);
+    const current = screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector('[aria-current="page"]')!;
+    expect(current).toHaveClass("type-small-strong");
+    expect(current.querySelector("[data-course-section]")).toHaveClass("text-secondary", "font-normal");
+    // A step without a section key is plain text.
+    expect(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Courses" }).querySelector("[data-course-section]")).toBeNull();
   });
 });

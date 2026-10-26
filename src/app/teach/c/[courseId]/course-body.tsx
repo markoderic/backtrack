@@ -212,7 +212,7 @@ export async function CourseBody({
 
   return (
     <TeacherPage
-      crumbs={[{ label: "Courses", href: "/teach" }, { label: courseTitleText(code, details?.section) }]}
+      crumbs={[{ label: "Courses", href: "/teach" }, { label: code, section: details?.section ?? null }]}
       teacherName={teacherName}
     >
       <RefreshOnReturn />

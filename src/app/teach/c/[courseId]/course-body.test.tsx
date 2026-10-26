@@ -434,8 +434,9 @@ describe("CourseBody: color, section and schedule (batch D)", () => {
     expect(html).toContain('data-course-color="plum"');
     expect(html).toContain("bg-course-plum");
     // The section is part of the title (Marko, hand test 3): same size and weight, "Section B" shown as "B".
-    expect(html).toMatch(/<h1 class="type-display[^"]*">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="">B<\/span><\/h1>/);
-    expect(html).toMatch(/aria-current="page"[^>]*>IMS 452 B</);
+    // Hand test 4: the section gray and a lighter weight than the code, in the header and the breadcrumb.
+    expect(html).toMatch(/<h1 class="type-display[^"]*">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-normal">B<\/span><\/h1>/);
+    expect(html).toMatch(/aria-current="page"[^>]*>IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-normal">B<\/span></);
     expect(html).toContain(">Mon Wed Fri · 10:05–11:00 AM<");
     expect(html).not.toContain("Section B");
     expect(html).toContain("Edit details");

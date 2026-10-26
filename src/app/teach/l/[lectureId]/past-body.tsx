@@ -7,7 +7,7 @@ import { RenameForm } from "./RenameForm";
 import { DeleteLecture } from "../../DeleteLecture";
 import { readTeacherName } from "../../teacher";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
-import { TeacherTopBar, courseTitleText, splitCourseName } from "../../ui";
+import { TeacherTopBar, splitCourseName } from "../../ui";
 
 // Lectures happen at Miami (Ohio), and lecture_date is already the Eastern date.
 const clock = new Intl.DateTimeFormat("en-US", {
@@ -82,7 +82,7 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
   type CourseRel = { name?: string; section?: string | null };
   const courseRel = (lecture as { courses?: CourseRel | CourseRel[] }).courses;
   const course = Array.isArray(courseRel) ? courseRel[0] : courseRel;
-  const code = courseTitleText(splitCourseName(course?.name ?? "").code, course?.section);
+  const code = splitCourseName(course?.name ?? "").code;
   // Joined, lost taps and the rest are in the data view's summary row right under this.
   const when = lectureWhen(lecture.lecture_date, lecture.started_at, lecture.ended_at);
 
@@ -92,7 +92,7 @@ export async function PastBody({ params }: { params: Promise<{ lectureId: string
       <TeacherTopBar
         crumbs={[
           { label: "Courses", href: "/teach" },
-          ...(code ? [{ label: code, href: `/teach/c/${lecture.course_id}` }] : []),
+          ...(code ? [{ label: code, section: course?.section ?? null, href: `/teach/c/${lecture.course_id}` }] : []),
           { label: lecture.name },
         ]}
         teacherName={teacherName}

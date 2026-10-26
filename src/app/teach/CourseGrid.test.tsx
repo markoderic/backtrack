@@ -57,11 +57,15 @@ describe("CourseGrid: Archive from a card's ⋯", () => {
     expect(h.refresh).toHaveBeenCalled();
   });
 
-  it("the note names the section as the card does (\"Archived ACC 221 A.\")", async () => {
+  it("the note names the section as the card does (\"Archived ACC 221 A.\"), the section gray and lighter (hand test 4)", async () => {
     const withSection: GridCourse = { ...acc, details: { color: null, section: "Section A", meetDays: [], startMinute: null, endMinute: null } };
     render(<CourseGrid courses={[ims, withSection]} options />);
     archive("ACC 221 A");
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Archived ACC 221 A."));
+    // A screen reader hears "section A"; on screen the A is gray and light, after the code.
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Archived ACC 221 section A."));
+    const tag = screen.getByRole("status").querySelector("[data-course-section]")!;
+    expect(tag).toHaveTextContent(/^A$/);
+    expect(tag).toHaveClass("text-secondary", "font-light");
     expect(screen.getByRole("button", { name: "Undo, unarchive ACC 221 A" })).toHaveFocus();
   });
 

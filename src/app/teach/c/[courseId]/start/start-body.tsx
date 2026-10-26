@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { readTeacherName } from "../../../teacher";
-import { TeacherPage, courseTitleText, splitCourseName } from "../../../ui";
+import { TeacherPage, splitCourseName } from "../../../ui";
 import { StartForm } from "./start-form";
 
 export async function StartBody({ params }: { params: Promise<{ courseId: string }> }) {
@@ -30,12 +30,12 @@ export async function StartBody({ params }: { params: Promise<{ courseId: string
   ]);
   if (countError) throw new Error(countError.message);
 
-  const code = courseTitleText(splitCourseName(course.name).code, course.section);
+  const code = splitCourseName(course.name).code;
   return (
     <TeacherPage
       crumbs={[
         { label: "Courses", href: "/teach" },
-        { label: code, href: `/teach/c/${course.id}` },
+        { label: code, section: course.section ?? null, href: `/teach/c/${course.id}` },
         { label: "Start lecture" },
       ]}
       teacherName={teacherName}

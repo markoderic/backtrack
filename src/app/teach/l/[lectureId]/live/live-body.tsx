@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { LectureData } from "./LectureData";
 import { readTeacherName } from "../../../teacher";
-import { TeacherTopBar, courseTitleText, splitCourseName } from "../../../ui";
+import { TeacherTopBar, splitCourseName } from "../../../ui";
 
 export type LiveSearchParams = Promise<{ end?: string | string[] }>;
 
@@ -63,14 +63,14 @@ export async function LiveBody({
   type CourseRel = { name?: string; section?: string | null };
   const courseRel = (lecture as { courses?: CourseRel | CourseRel[] }).courses;
   const course = Array.isArray(courseRel) ? courseRel[0] : courseRel;
-  const courseCode = courseTitleText(splitCourseName(course?.name ?? "").code, course?.section);
+  const courseCode = splitCourseName(course?.name ?? "").code;
 
   return (
     <div className="flex min-h-screen flex-col">
       <TeacherTopBar
         crumbs={[
           { label: "Courses", href: "/teach" },
-          ...(courseCode ? [{ label: courseCode, href: `/teach/c/${lecture.course_id}` }] : []),
+          ...(courseCode ? [{ label: courseCode, section: course?.section ?? null, href: `/teach/c/${lecture.course_id}` }] : []),
           { label: lecture.name },
         ]}
         teacherName={teacherName}

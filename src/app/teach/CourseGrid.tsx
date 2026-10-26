@@ -8,7 +8,13 @@ import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { CourseDetails } from "@/lib/courseDetails";
 import { CourseCard } from "./CourseCard";
 import { STATUS_MS } from "./settings/NameForm";
-import { courseTitleText, splitCourseName } from "./ui";
+import { CourseTitle, courseTitleText, splitCourseName } from "./ui";
+
+const noteCourse = (verb: string, course: GridCourse) => ({
+  verb,
+  code: splitCourseName(course.name).code,
+  section: course.details?.section ?? null,
+});
 
 export type GridCourse = {
   id: string;
@@ -20,7 +26,11 @@ export type GridCourse = {
   liveLectureId: string | null;
 };
 
-type Note = { text: string; undo?: GridCourse };
+/**
+ * The line under the heading. An archive or unarchive note names the course as its title does (the
+ * section in gray, a lighter weight): `course` then draws "Archived ACC 221 A." in place of `text`.
+ */
+type Note = { text: string; undo?: GridCourse; course?: { verb: string; code: string; section: string | null } };
 
 /** Undo for an archive goes away after this long, like the student's Undo (batch G, Marko). */
 export const UNDO_MS = 10_000;
@@ -53,7 +63,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
       () => {
         if (note.undo) {
           if (document.activeElement === undoButton.current) focusNext.current = { to: "status" };
-          setNote({ text: note.text });
+          setNote({ text: note.text, course: note.course });
         } else setNote(null);
       },
       note.undo ? UNDO_MS : STATUS_MS,
@@ -98,7 +108,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
     }
     setArchived((s) => new Set(s).add(course.id));
     setRestored((r) => r.filter((c) => c.id !== course.id));
-    setNote({ text: `Archived ${code}.`, undo: course });
+    setNote({ text: `Archived ${code}.`, undo: course, course: noteCourse("Archived", course) });
     focusNext.current = { to: "undo" };
     router.refresh();
     return true;
@@ -118,7 +128,7 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
       return next;
     });
     setRestored((r) => [...r.filter((c) => c.id !== course.id), course]);
-    setNote({ text: `Unarchived ${code}.` });
+    setNote({ text: `Unarchived ${code}.`, course: noteCourse("Unarchived", course) });
     focusNext.current = { to: "menu", id: course.id };
     router.refresh();
   }
@@ -128,7 +138,13 @@ export function CourseGrid({ courses, options }: { courses: GridCourse[]; option
       <div ref={statusLine} tabIndex={-1} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-sm outline-none">
         {/* Always in the page so it is announced; the visible line is the same words. */}
         <p role="status" data-testid="courses-status" className="type-small text-secondary empty:sr-only">
-          {note?.text ?? ""}
+          {note?.course ? (
+            <>
+              {note.course.verb} <CourseTitle code={note.course.code} section={note.course.section} tone="regular" />.
+            </>
+          ) : (
+            (note?.text ?? "")
+          )}
         </p>
         {note?.undo && (
           <button
