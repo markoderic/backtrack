@@ -2,12 +2,13 @@ import { vi } from "vitest";
 
 /**
  * How a fake slide image looks when a test measures it (lib/slideTone):
- * white, black, mid gray, "split" (left half black, right half white), "tainted" (it loads but the
+ * white, black, mid gray, "dim" (#333), "split" (left half black, right half white), "tainted" (it loads but the
  * canvas may not be read, like an image from another site without CORS) or "broken" (it fails to load).
  */
-export type FakePaint = "white" | "black" | "gray" | "split" | "tainted" | "broken";
+export type FakePaint = "white" | "black" | "gray" | "dim" | "split" | "tainted" | "broken";
 
-const RGB: Record<"white" | "black" | "gray", [number, number, number]> = {
+const RGB: Record<"white" | "black" | "gray" | "dim", [number, number, number]> = {
+  dim: [51, 51, 51],
   white: [255, 255, 255],
   black: [0, 0, 0],
   gray: [128, 128, 128],

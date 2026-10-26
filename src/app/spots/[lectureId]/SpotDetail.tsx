@@ -216,8 +216,6 @@ export function SpotDetail({
   // The slide's own shape, from the image once it loads.
   const [ratio, setRatio] = useState(WIDE);
   const url = expired ? undefined : urlFor(viewing);
-  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light one).
-  const sample = useSlideSample(url);
   // While the lecture is live, the last slide a student may see is the live one.
   const lastSlide = liveSlide ?? slideCount ?? slideNumber;
   const onViewingRef = useRef(onViewingChange);
@@ -415,6 +413,9 @@ export function SpotDetail({
   }
 
   const shownMarks: ShownMark[] = marks ? marks.list : rect && spot ? [{ id: spot.id, rect, kind: lost ? "lost" : "save" }] : [];
+  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light
+  // one): only while it has marks or Mark is on, so a slide without marks is downloaded once.
+  const sample = useSlideSample(onSpotSlide && (shownMarks.length > 0 || marking) ? url : undefined);
   const selectedIndex = selected ? shownMarks.findIndex((m) => m.id === selected.id) : -1;
   const selectedMark = marks && selectedIndex >= 0 ? shownMarks[selectedIndex] : null;
 

@@ -184,6 +184,35 @@ describe("SplitHandle on a laptop (hand test 4: only the slide and the notebook 
       expect(lecture).toHaveAttribute("data-notes", "side");
     });
 
+    it("while dragging the notebook stays where it is (no layout per move); it moves once the drag ends (review M6)", async () => {
+      // The slide's own resize (ResizeObserver) during the drag does not move it either.
+      const seen: (() => void)[] = [];
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(cb: () => void) {
+            seen.push(cb);
+          }
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const { handle, lecture } = await setup();
+      let h = 868 - UNDER_SLIDE_PX;
+      sizes(lecture, () => h);
+      fireEvent.keyDown(handle(), { key: "End" });
+      expect(lecture).toHaveAttribute("data-notes", "side");
+      fireEvent.pointerDown(handle(), { pointerType: "mouse", button: 0, pointerId: 1, clientX: 740, clientY: 450 });
+      h = 300;
+      fireEvent.pointerMove(handle(), { pointerType: "mouse", pointerId: 1, clientX: 400, clientY: 450 });
+      expect(seen.length).toBeGreaterThan(0);
+      for (const cb of seen) cb();
+      expect(lecture).toHaveAttribute("data-notes", "side");
+      fireEvent.pointerUp(handle(), { pointerType: "mouse", pointerId: 1 });
+      expect(lecture).toHaveAttribute("data-notes", "under");
+      expect(NOTES_UNDER_MIN).toBe(48);
+    });
+
     it("measured again when the window changes, and not on a phone", async () => {
       const { lecture } = await setup();
       sizes(lecture, () => 300);

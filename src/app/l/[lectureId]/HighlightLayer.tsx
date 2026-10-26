@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, type MouseEvent, type RefObject } from "react";
+import { useEffect, useRef, type CSSProperties, type MouseEvent, type RefObject } from "react";
 import type { Rect } from "@/lib/rect";
 import { slideBoxStyle, useDragRect } from "@/lib/useDragRect";
-import { markLookClass, markTone, type MarkTone, type SlideSample } from "@/lib/slideTone";
+import { markLook, markLookClass, type MarkLook, type MarkTone, type SlideSample } from "@/lib/slideTone";
 
 export type MarkKind = "lost" | "save";
 
@@ -20,6 +20,17 @@ const pct = (n: number) => `${Math.round(n * 1e6) / 1e4}%`;
  */
 export function markClass(kind: MarkKind, tone: MarkTone = "light"): string {
   return markLookClass(kind, tone);
+}
+
+/** A glow's strength as the --glow variable (lib/slideTone, globals.css mark-glow). */
+const glowStyle = (look: MarkLook): CSSProperties => (look.tone === "dark" ? ({ "--glow": look.opacity ?? 1 } as CSSProperties) : {});
+
+/** The selected outline and the focus ring, so they show on the slide under the mark. */
+function ringClass(look: MarkLook, kind: MarkKind, selected: boolean): string {
+  // On a dark part white; in the edge look (any color under it) ink with a white ring around it.
+  if (look.tone === "dark") return `outline-offset-1 focus-visible:outline-2 focus-visible:outline-surface ${selected ? "outline-2 outline-surface" : ""}`;
+  if (look.tone === "edge") return `outline-offset-2 focus-visible:outline-2 focus-visible:outline-ink focus-visible:ring-2 focus-visible:ring-surface ${selected ? "outline-2 outline-ink ring-2 ring-surface" : ""}`;
+  return `outline-offset-1 focus-visible:outline-2 focus-visible:outline-ink ${selected ? `outline-2 ${kind === "lost" ? "outline-lost" : "outline-ink"}` : ""}`;
 }
 
 /** What a screen reader hears for a mark: its number, red marks say lost, and its note if it has one. */
@@ -110,6 +121,9 @@ export function HighlightLayer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [marking]);
 
+  const shownLook = shown ? markLook(sample, shown.rect, shown.kind) : null;
+  const draftLook = draft ? markLook(sample, draft, markingKind) : null;
+
   const onMarkClick = (id: string) => (e: MouseEvent) => {
     // The second click of a double click would close what the first one opened.
     if (e.detail > 1) return;
@@ -133,7 +147,8 @@ export function HighlightLayer({
       <div className="absolute" style={slideBoxStyle(box)}>
         {marks.map((m, i) => {
           const selected = m.id === selectedId;
-          const tone = markTone(sample, m.rect, m.kind);
+          const look = markLook(sample, m.rect, m.kind);
+          const tone = look.tone;
           return (
             <button
               key={m.id}
@@ -151,32 +166,30 @@ export function HighlightLayer({
                 `absolute animate-fade-in rounded-xs ${markClass(m.kind, tone)} ` +
                 // While marking, the drag goes to the layer under the marks.
                 (marking ? "pointer-events-none " : "pointer-events-auto cursor-pointer ") +
-                // On a dark part of the slide the focus ring and the selected outline are white, so they show.
-                `outline-offset-1 focus-visible:outline-2 ${tone === "dark" ? "focus-visible:outline-surface" : "focus-visible:outline-ink"} ` +
-                (selected ? `outline-2 ${tone === "dark" ? "outline-surface" : m.kind === "lost" ? "outline-lost" : "outline-ink"}` : "")
+                ringClass(look, m.kind, selected)
               }
-              style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h) }}
+              style={{ left: pct(m.rect.x), top: pct(m.rect.y), width: pct(m.rect.w), height: pct(m.rect.h), ...glowStyle(look) }}
             />
           );
         })}
-        {shown && (
+        {shown && shownLook && (
           <div
             aria-hidden
             data-highlight-box=""
             data-kind={shown.kind}
-            data-tone={markTone(sample, shown.rect, shown.kind)}
-            className={`pointer-events-none absolute animate-fade-in rounded-xs ${markClass(shown.kind, markTone(sample, shown.rect, shown.kind))}`}
-            style={{ left: pct(shown.rect.x), top: pct(shown.rect.y), width: pct(shown.rect.w), height: pct(shown.rect.h) }}
+            data-tone={shownLook.tone}
+            className={`pointer-events-none absolute animate-fade-in rounded-xs ${markClass(shown.kind, shownLook.tone)}`}
+            style={{ left: pct(shown.rect.x), top: pct(shown.rect.y), width: pct(shown.rect.w), height: pct(shown.rect.h), ...glowStyle(shownLook) }}
           />
         )}
-        {draft && (
+        {draft && draftLook && (
           // The box as it is drawn, in the look it will have.
           <div
             aria-hidden
             data-mark-draft=""
-            data-tone={markTone(sample, draft, markingKind)}
-            className={`pointer-events-none absolute rounded-xs opacity-80 ${markClass(markingKind, markTone(sample, draft, markingKind))}`}
-            style={{ left: pct(draft.x), top: pct(draft.y), width: pct(draft.w), height: pct(draft.h) }}
+            data-tone={draftLook.tone}
+            className={`pointer-events-none absolute rounded-xs opacity-80 ${markClass(markingKind, draftLook.tone)}`}
+            style={{ left: pct(draft.x), top: pct(draft.y), width: pct(draft.w), height: pct(draft.h), ...glowStyle(draftLook) }}
           />
         )}
       </div>

@@ -86,12 +86,14 @@ export function SplitHandle() {
 
   const container = () => ref.current?.closest<HTMLElement>("[data-lecture]") ?? null;
 
-  const set = useCallback((next: SlideSize, save: boolean) => {
+  // `place` false while dragging: the notebook's place is measured once the drag ends (no layout per
+  // pointer move, and the notebook does not jump under the pointer mid-drag).
+  const set = useCallback((next: SlideSize, save: boolean, place = true) => {
     sizeRef.current = next;
     setSize(next);
     const el = ref.current?.closest<HTMLElement>("[data-lecture]") ?? null;
     apply(el, next);
-    placeNotes(el, wideRef.current);
+    if (place) placeNotes(el, wideRef.current);
     if (save) writeSlideSize(next);
   }, []);
 
@@ -112,7 +114,10 @@ export function SplitHandle() {
     const el = container();
     placeNotes(el, wide);
     if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => placeNotes(el, wideRef.current));
+    // Not while the handle is dragged: the notebook moves once the drag ends.
+    const observer = new ResizeObserver(() => {
+      if (!drag.current) placeNotes(el, wideRef.current);
+    });
     observer.observe(el);
     const slide = el.querySelector("[data-lecture-slide]");
     if (slide) observer.observe(slide);
@@ -166,10 +171,10 @@ export function SplitHandle() {
     const cur = sizeRef.current;
     if (wide) {
       // The slide's right edge follows the pointer (its width and height scale together).
-      set({ ...cur, wide: clampScale(d.scale * ((d.width + (e.clientX - d.x)) / d.width)) }, false);
+      set({ ...cur, wide: clampScale(d.scale * ((d.width + (e.clientX - d.x)) / d.width)) }, false, false);
     } else {
       // The slide's height follows the pointer.
-      set({ ...cur, narrow: clampScale(d.scale * ((d.height + (e.clientY - d.y)) / d.height)) }, false);
+      set({ ...cur, narrow: clampScale(d.scale * ((d.height + (e.clientY - d.y)) / d.height)) }, false, false);
     }
   }
 
@@ -178,6 +183,7 @@ export function SplitHandle() {
     drag.current = null;
     setDragging(false);
     writeSlideSize(sizeRef.current);
+    placeNotes(container(), wide);
   }
 
   return (

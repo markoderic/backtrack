@@ -1191,6 +1191,21 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
     expect(myMarks).toHaveBeenCalledWith({ p_lecture_id: LECTURE });
   });
 
+  it("measures a slide only when it has marks or Mark is on: a slide without marks is not downloaded again (review I4)", async () => {
+    const fake = fakeSlideImages(() => "black");
+    try {
+      show(7);
+      await settle();
+      await act(async () => new Promise((r) => setTimeout(r, 50)));
+      expect(fake.loads).toEqual([]);
+      // Turning Mark on starts measuring, before the first drag ends.
+      fireEvent.click(markTool());
+      await waitFor(() => expect(fake.loads.map((l) => l.url)).toEqual(["https://signed/7.webp"]));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("on a black slide the marks glow instead of multiplying into black (hand test 4); a white slide keeps the highlighter", async () => {
     const fake = fakeSlideImages((url) => (url.endsWith("/7.webp") ? "black" : "white"));
     try {
@@ -1198,7 +1213,7 @@ describe("StudentLecture marks (migration 0020: several per slide, in slide_mark
       show(7);
       await waitFor(() => expect(marksShown()[0]).toHaveAttribute("data-tone", "dark"));
       expect(marksShown()[0].className).toContain("mix-blend-screen");
-      expect(marksShown()[0].className).toContain("bg-mark-glow");
+      expect(marksShown()[0].className).toContain("mark-glow");
       expect(marksShown()[0].className).not.toContain("mix-blend-multiply");
       // The slide on screen is measured once, read with CORS so the canvas can be read.
       expect(fake.loads).toContainEqual({ url: "https://signed/7.webp", crossOrigin: "anonymous" });

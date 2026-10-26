@@ -10,8 +10,10 @@ type Props = {
    * The default is translucent, so boxes that overlap get darker.
    */
   boxClassName?: string | ((rect: Rect, index: number) => string);
-  /** Each box's opacity (the data view lowers it as more boxes stack up). */
-  opacity?: number;
+  /** Each box's opacity (the data view lowers it as more boxes stack up), or per box from its rect. */
+  opacity?: number | ((rect: Rect, index: number) => number | undefined);
+  /** The whole layer's opacity (bounds a pile of glowing boxes). */
+  layerOpacity?: number;
   /** Classes for the layer that holds the boxes (how the whole stack blends with the slide). */
   className?: string;
   /** The look these boxes are drawn in (data-tone on the layer), when it depends on the slide. */
@@ -32,16 +34,17 @@ export function HighlightBoxes({
   className = "",
   tone,
   counted = true,
+  layerOpacity,
 }: Props) {
   return (
-    <div aria-hidden data-highlight-layer="" data-tone={tone} className={`pointer-events-none absolute inset-0 ${className}`}>
+    <div aria-hidden data-highlight-layer="" data-tone={tone} className={`pointer-events-none absolute inset-0 ${className}`} style={layerOpacity === undefined ? undefined : { opacity: layerOpacity }}>
       {rects.map((r, i) => (
         <div
           key={i}
           data-highlight-box={counted ? "" : undefined}
           data-highlight-edge={counted ? undefined : ""}
           className={`absolute ${typeof boxClassName === "function" ? boxClassName(r, i) : boxClassName}`}
-          style={{ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h), opacity }}
+          style={{ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h), opacity: typeof opacity === "function" ? opacity(r, i) : opacity }}
         />
       ))}
     </div>

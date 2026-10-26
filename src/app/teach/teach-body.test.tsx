@@ -91,7 +91,7 @@ describe("TeachBody", () => {
       ["Resume", "/teach/l/l2/present"],
     ]);
     // Live now names the course on the dashboard.
-    expect(html).toMatch(/Live now<span[^>]*>· IMS 452<\/span>/);
+    expect(html).toMatch(/Live now<span[^>]*>· <span class="text-ink">IMS 452<\/span><\/span>/);
     // The Live now row stays at the very top, above the course cards.
     expect(html.indexOf("Lecture 2, Oct 26")).toBeLessThan(html.indexOf('data-testid="course-card"'));
     expect(html).not.toContain('href="/teach/c/c1/start"');
@@ -101,7 +101,8 @@ describe("TeachBody", () => {
     courses.mockResolvedValue({ data: [{ id: "c1", name: "IMS 452", color: null, section: "Section B", meet_days: null, start_minute: null, end_minute: null }], error: null });
     live.mockResolvedValue({ data: [{ id: "l2", name: "Lecture 2, Oct 26", course_id: "c1", courses: { teacher_id: "u1" } }], error: null });
     const html = renderToStaticMarkup(await TeachBody({ searchParams: search }));
-    expect(html).toMatch(/Live now<span class="font-normal text-secondary">· IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-light">B<\/span><\/span>/);
+    // The code in ink (review M11), the section gray and light after it.
+    expect(html).toMatch(/Live now<span class="font-normal text-secondary">· <span class="text-ink">IMS 452 <span class="sr-only">section<\/span> <span data-course-section="" class="text-secondary font-light">B<\/span><\/span><\/span>/);
   });
 
   it("throws when the live lectures query fails", async () => {

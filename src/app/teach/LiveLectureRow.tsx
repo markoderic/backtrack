@@ -28,7 +28,10 @@ export function LiveLectureRow({
           {/* On the dashboard, which course it is (the course page needs no reminder). */}
           {course && (
             <span className="font-normal text-secondary">
-              · <CourseTitle code={course.code} section={course.section} tone="regular" />
+              · {/* The code in ink, so the gray, light section reads as its own part. */}
+              <span className="text-ink">
+                <CourseTitle code={course.code} section={course.section} tone="regular" />
+              </span>
             </span>
           )}
         </span>

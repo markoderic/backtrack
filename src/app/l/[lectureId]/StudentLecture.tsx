@@ -238,8 +238,6 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
 
   const viewing = state?.viewing ?? initialSlide;
   const url = state ? urlFor(viewing) : undefined;
-  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light one).
-  const sample = useSlideSample(url);
   const behind = state !== null && !state.following && state.viewing < state.live;
   const reconnecting = state?.conn === "reconnecting";
   const live = state?.live ?? initialSlide;
@@ -321,6 +319,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
       .filter((m) => m.slide === viewing)
       .map((m) => (m.note ? { id: m.id, rect: m.rect, kind, note: m.note } : { id: m.id, rect: m.rect, kind }));
   }, [legacy, active, lostHere, marks.marks, viewing]);
+  // The slide measured, so each mark shows on it (a glow on a dark part, the highlighter on a light
+  // one): only while the slide has marks or Mark is on (turning Mark on starts it, before the first drag).
+  const sample = useSlideSample(slideMarks.length > 0 || marking ? url : undefined);
   const selectedIndex = selected ? slideMarks.findIndex((m) => m.id === selected.id) : -1;
   const selectedMark = selectedIndex >= 0 ? slideMarks[selectedIndex] : null;
   // Said to a screen reader when a mark is added or deleted (the panel says the rest).

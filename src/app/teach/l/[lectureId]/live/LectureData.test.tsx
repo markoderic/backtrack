@@ -2074,7 +2074,7 @@ describe("LectureData red marks (batch L)", () => {
       expect(boxesOn(2)).toHaveLength(2);
     });
 
-    it("a slide that can not be measured: a 40% red fill for the pile and a 2 px red inner edge on each box, counted once", async () => {
+    it("a slide that can not be measured: a 30% red fill for the pile and a 2 px red inner edge on each box, counted once", async () => {
       fakeSlideImages(() => "tainted");
       h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
       lostOn2(2);
@@ -2083,12 +2083,42 @@ describe("LectureData red marks (batch L)", () => {
       await waitFor(() => expect(figure("sum-marks")).toBe("2"));
       await waitFor(() => expect(panel().querySelector('[data-tone="edge"]')).not.toBeNull());
       const [fill, edges] = Array.from(panel().querySelectorAll<HTMLElement>('[data-tone="edge"]'));
-      expect(fill.className).toContain("isolate opacity-40");
+      expect(fill.className).toContain("isolate opacity-30");
       expect(fill.querySelectorAll("[data-highlight-box]")).toHaveLength(2);
       expect(edges.querySelectorAll("[data-highlight-edge]")).toHaveLength(2);
       expect(edges.querySelector("[data-highlight-edge]")!.className).toContain("inset-ring-2 inset-ring-lost");
       expect(boxesOn(2)).toHaveLength(2);
       expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("2 highlights");
+      // Alone, the rings are at full strength.
+      expect(edges.querySelector<HTMLElement>("[data-highlight-edge]")!.style.opacity).toBe("1");
+    });
+
+    it("40 boxes on a slide that can not be measured: every ring stays at 0.7 or more, only the fill fades (review I2)", async () => {
+      fakeSlideImages(() => "tainted");
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      lostOn2(40);
+      marksAre(Array.from({ length: 40 }, (_, i) => mark(`m${i}`, { anon_id: `s${i}`, ...box(0.1 + i * 0.002, 0.1, 0.5, 0.15) })));
+      renderLive();
+      await waitFor(() => expect(figure("sum-marks")).toBe("40"));
+      await waitFor(() => expect(panel().querySelector("[data-highlight-edge]")).not.toBeNull());
+      const rings = Array.from(panel().querySelectorAll<HTMLElement>("[data-highlight-edge]"));
+      expect(rings).toHaveLength(40);
+      for (const r of rings) expect(Number(r.style.opacity)).toBeGreaterThanOrEqual(0.7);
+      for (const b of boxesOn(2)) expect(b.style.opacity).toBe("0.25");
+      expect(within(panel()).getByTestId("panel-marks")).toHaveTextContent("40 highlights");
+    });
+
+    it("a dark gray slide (#333): the glowing layer is weakened so white text keeps 4.5:1 (review I1)", async () => {
+      fakeSlideImages(() => "dim");
+      h.slideUrls.mockReturnValue({ 2: "https://signed/2.webp" });
+      lostOn2(1);
+      marksAre([mark("m0", { anon_id: "s0", ...box(0.1, 0.1, 0.5, 0.15) })]);
+      renderLive();
+      await waitFor(() => expect(panel().querySelector('[data-tone="dark"]')).not.toBeNull());
+      const layer = panel().querySelector<HTMLElement>('[data-tone="dark"]')!;
+      const strength = Number(layer.style.opacity);
+      expect(strength).toBeGreaterThan(0.35);
+      expect(strength).toBeLessThan(1);
     });
   });
 });

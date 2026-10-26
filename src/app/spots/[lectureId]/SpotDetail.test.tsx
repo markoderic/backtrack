@@ -736,7 +736,7 @@ describe("SpotDetail: marks (migration 0020: several on the slide, each with a n
       show({ marks: marksApi() });
       await waitFor(() => expect(document.querySelector("[data-mark]")).toHaveAttribute("data-tone", "dark"));
       for (const m of document.querySelectorAll<HTMLElement>("[data-mark]")) {
-        expect(m.className).toContain("mix-blend-screen bg-mark-lost-glow");
+        expect(m.className).toContain("mix-blend-screen mark-lost-glow");
         expect(m.className).not.toContain("mix-blend-multiply");
       }
     } finally {

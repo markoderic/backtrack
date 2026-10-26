@@ -55,4 +55,4 @@ export const clampScale = (s: number) => Math.min(Math.max(s, SCALE_MIN), SCALE_
 export const clampNarrow = clampScale;
 
 /** The notebook goes under the slide (laptop) once there is at least this much room under the strip (px). */
-export const NOTES_UNDER_MIN = 96;
+export const NOTES_UNDER_MIN = 48;

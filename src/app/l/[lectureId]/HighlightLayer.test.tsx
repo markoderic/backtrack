@@ -313,9 +313,9 @@ describe("HighlightLayer marks on any slide color (hand test 4: black slides)", 
     const [a, b] = markButtons();
     expect(a).toHaveAttribute("data-tone", "dark");
     expect(a.className).toContain("mix-blend-screen");
-    expect(a.className).toContain("bg-mark-glow");
+    expect(a.className).toContain("mark-glow");
     expect(a.className).not.toContain("mix-blend-multiply");
-    expect(b.className).toContain("bg-mark-lost-glow");
+    expect(b.className).toContain("mark-lost-glow");
     for (const m of [a, b]) expect(m.className).not.toMatch(/\bborder\b/);
   });
 
@@ -343,16 +343,31 @@ describe("HighlightLayer marks on any slide color (hand test 4: black slides)", 
     expect(a.className).not.toContain("mix-blend");
   });
 
+  it("on a dark gray (#333) the glow is weaker (--glow under 1), so white text keeps 4.5:1 (review I1)", () => {
+    render(<Stage marking={false} marks={[onLeft]} sample={copy(51)} />);
+    const [a] = markButtons();
+    expect(a).toHaveAttribute("data-tone", "dark");
+    const glow = Number(a.style.getPropertyValue("--glow"));
+    expect(glow).toBeGreaterThan(0.35);
+    expect(glow).toBeLessThan(1);
+  });
+
+  it("a selected mark in the edge look has an ink outline with a white ring, so it shows on any color (review M4)", () => {
+    render(<Stage marking={false} marks={[onLeft]} selectedId="l" sample={null} />);
+    expect(markButtons()[0].className).toContain("outline-ink");
+    expect(markButtons()[0].className).toContain("ring-2 ring-surface");
+  });
+
   it("the box being drawn and the one mark of My spots take the same look; a selected mark on black has a white outline", () => {
     mockLayerSize();
     const { rerender } = render(<Stage markingKind="save" sample={copy(0)} />);
     fireEvent.pointerDown(layer(), { ...mouse, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(layer(), { ...mouse, clientX: 300, clientY: 200 });
     expect(draftBox()).toHaveAttribute("data-tone", "dark");
-    expect(draftBox()!.className).toContain("bg-mark-glow");
+    expect(draftBox()!.className).toContain("mark-glow");
     fireEvent.pointerUp(layer(), { ...mouse, clientX: 300, clientY: 200 });
     rerender(<Stage marking={false} shown={{ kind: "lost", rect: onLeft.rect }} sample={copy(0)} />);
-    expect((boxes()[0] as HTMLElement).className).toContain("bg-mark-lost-glow");
+    expect((boxes()[0] as HTMLElement).className).toContain("mark-lost-glow");
     rerender(<Stage marking={false} marks={[onLeft]} selectedId="l" sample={copy(0)} />);
     expect(markButtons()[0].className).toContain("outline-surface");
     expect(markButtons()[0].className).not.toContain("outline-ink");

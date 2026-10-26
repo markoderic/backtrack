@@ -34,8 +34,8 @@
    * mark-edge (amber) and lost are the 2 px inner edge of the look used when a slide can not be
    * measured: it shows on white and on black.
    */
-  --color-mark-glow: #756617;
-  --color-mark-lost-glow: #a84635;
+  --color-mark-glow: #84731a;
+  --color-mark-lost-glow: #b84d3a;
   --color-mark-edge: #b88300;
 
   /*
@@ -445,9 +445,10 @@
     --slide-room: calc(100cqh - 216px);
     /* The widest the slide gets: the window less the handle and the notebook's default width. */
     --slide-max-w: calc(100cqw - 24px - max(300px, clamp(260px, 20vw, 380px)));
+    --slide-w: calc(min(var(--slide-max-w), max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778)) * var(--slide-scale-wide, 1));
   }
   [data-lecture-slide] {
-    width: calc(min(var(--slide-max-w), max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778)) * var(--slide-scale-wide, 1));
+    width: var(--slide-w);
   }
   [data-lecture-stage] {
     grid-area: stage;
@@ -467,9 +468,15 @@
   [data-lecture-spots] { grid-area: spots; }
   [data-lecture-jump="side"] { grid-area: jump; }
   [data-lecture-jump="pill"] { display: none; }
-  /* Beside the stack, the full height of its row, with a short grip in the middle. */
+  /* On the slide's right edge, as tall as the slide, with a short grip in the middle: it stays on the
+     edge however small the slide is (the stack can be wider, for the strip). */
   [data-split-handle] {
-    grid-area: handle;
+    grid-area: auto;
+    position: absolute;
+    top: 16px;
+    left: calc(16px + var(--slide-w));
+    width: 24px;
+    height: calc(var(--slide-w) / var(--slide-ratio, 1.7778));
     cursor: col-resize;
   }
   [data-split-handle] [data-grip] { width: 4px; height: 40px; }
@@ -492,6 +499,20 @@
     row-gap: 16px;
     min-width: 0;
   }
+}
+
+/*
+ * A mark's glow on a dark part of a slide (batch M; lib/slideTone): the glow color at --glow strength
+ * (0 to 1, set per mark so the background under it stays dark enough for white text) and a soft
+ * halo. In the color, not in opacity, so the marks' fade-in animation can not undo it.
+ */
+@utility mark-glow {
+  background-color: color-mix(in srgb, var(--color-mark-glow) calc(var(--glow, 1) * 100%), transparent);
+  box-shadow: 0 0 8px 1px color-mix(in srgb, var(--color-mark-glow) calc(var(--glow, 1) * 100%), transparent);
+}
+@utility mark-lost-glow {
+  background-color: color-mix(in srgb, var(--color-mark-lost-glow) calc(var(--glow, 1) * 100%), transparent);
+  box-shadow: 0 0 8px 1px color-mix(in srgb, var(--color-mark-lost-glow) calc(var(--glow, 1) * 100%), transparent);
 }
 
 /* Faint ruled lines under notebook text, one every 24 px (the line height), that scroll with it. */

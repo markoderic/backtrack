@@ -798,6 +798,21 @@ describe("SpotsView: marks and notebook notes (migration 0020, batch K2)", () =>
     expect(boxes(items[1])[0].className).not.toContain("bg-mark-lost");
   });
 
+  it("measures only the thumbnails that have marks: the others are not downloaded a second time (review I4)", async () => {
+    const fake = fakeSlideImages(() => "white");
+    try {
+      show();
+      await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(5));
+      const withMarks = screen.getAllByRole("listitem").filter((li) => boxes(li).length > 0).length;
+      await waitFor(() => expect(fake.loads).toHaveLength(withMarks));
+      expect(withMarks).toBeLessThan(5);
+      expect(new Set(fake.loads.map((l) => l.url)).size).toBe(withMarks);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("on a black slide the thumbnail's marks glow (hand test 4: \"black background, I can't see anything\"); on a white one they stay the highlighter", async () => {
     // Slide 9 (the lost one, red marks) is black; the others white.
     fakeSlideImages((url) => (url.endsWith("/9.webp") ? "black" : "white"));
@@ -807,7 +822,7 @@ describe("SpotsView: marks and notebook notes (migration 0020, batch K2)", () =>
       const items = screen.getAllByRole("listitem");
       await waitFor(() => expect(boxes(items[4])[0].className).toContain("mix-blend-screen"));
       for (const b of boxes(items[4])) {
-        expect(b.className).toContain("bg-mark-lost-glow");
+        expect(b.className).toContain("mark-lost-glow");
         expect(b.className).not.toContain("mix-blend-multiply");
       }
       await waitFor(() => expect(boxes(items[1])[0].className).toContain("mix-blend-multiply bg-mark"));

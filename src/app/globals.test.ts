@@ -60,6 +60,13 @@ describe("globals.css entrance animations", () => {
     const stage = wide.match(/\n  \[data-lecture-stage\]\s*{([^}]*)}/)?.[1] ?? "";
     expect(stage).toMatch(/flex-direction:\s*column/);
     expect(stage).toMatch(/align-self:\s*start/);
+    // The size handle sits on the slide's right edge, as tall as the slide, however small the slide is
+    // (review I5: it used to sit beside the strip, about 110 px away).
+    const handle = wide.match(/\n  \[data-split-handle\]\s*{([^}]*)}/)?.[1] ?? "";
+    expect(handle).toMatch(/position:\s*absolute/);
+    expect(handle).toMatch(/left:\s*calc\(16px \+ var\(--slide-w\)\)/);
+    expect(handle).toMatch(/height:\s*calc\(var\(--slide-w\) \/ var\(--slide-ratio, 1.7778\)\)/);
+    expect(wide).toMatch(/\[data-lecture-slide\]\s*{\s*width:\s*var\(--slide-w\);/);
     // The slide's full size leaves the panel and the strip (216 px) under it.
     expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 216px\)/);
   });
@@ -184,15 +191,16 @@ describe("marks on a dark slide glow, and marks on a slide that can not be measu
   // A fill of this opacity laid over the slide (the edge look, normal blending).
   const over = (under: string, fill: string, a: number) => toHex(rgb(under).map((u, i) => u * (1 - a) + rgb(fill)[i] * a));
 
-  it("under a glow on black, white text keeps 5.5:1 and light gray 4:1, and the glow stands out from black by 3.5:1", () => {
+  // The full glow (on black); on lighter dark backgrounds lib/slideTone lowers its strength (slideTone.test.ts has the table).
+  it("under a full glow on black, white text keeps 4.5:1 (AA) and light gray 3:1 (the stated floor), and the glow stands out from black by 4:1", () => {
     for (const name of ["mark-glow", "mark-lost-glow"]) {
       const glow = token(name);
       expect(glow, name).not.toBeNull();
       const bg = screen("#000000", glow!);
       expect(bg).toBe(glow!.toLowerCase());
-      expect(contrast(screen("#ffffff", glow!), bg), `${name} white`).toBeGreaterThanOrEqual(5.5);
-      expect(contrast(screen("#cccccc", glow!), bg), `${name} #ccc`).toBeGreaterThanOrEqual(4);
-      expect(contrast(bg, "#000000"), `${name} on black`).toBeGreaterThanOrEqual(3.5);
+      expect(contrast(screen("#ffffff", glow!), bg), `${name} white`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(screen("#cccccc", glow!), bg), `${name} #ccc`).toBeGreaterThanOrEqual(3);
+      expect(contrast(bg, "#000000"), `${name} on black`).toBeGreaterThanOrEqual(4);
     }
   });
 
@@ -206,7 +214,7 @@ describe("marks on a dark slide glow, and marks on a slide that can not be measu
     expect(rr - rb).toBeGreaterThan(80);
   });
 
-  it("the edge look: its 2 px inner edge shows on white and on black (3:1), and text under its 40% fill stays readable on both", () => {
+  it("the edge look: its 2 px inner edge shows on white and on black (3:1), and text under its 30% fill stays readable on both", () => {
     for (const [fill, edge] of [
       ["mark", "mark-edge"],
       ["mark-lost", "lost"],
@@ -216,8 +224,8 @@ describe("marks on a dark slide glow, and marks on a slide that can not be measu
       expect(contrast(e, "#000000"), `${edge} on black`).toBeGreaterThanOrEqual(3);
       const f = token(fill)!;
       // Black text on a white slide, white text on a black one.
-      expect(contrast(over("#000000", f, 0.4), over("#ffffff", f, 0.4)), `${fill} white slide`).toBeGreaterThanOrEqual(4.5);
-      expect(contrast(over("#ffffff", f, 0.4), over("#000000", f, 0.4)), `${fill} black slide`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(over("#000000", f, 0.3), over("#ffffff", f, 0.3)), `${fill} white slide`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(over("#ffffff", f, 0.3), over("#000000", f, 0.3)), `${fill} black slide`).toBeGreaterThanOrEqual(4.5);
     }
   });
 });
