@@ -4,8 +4,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, type KeyboardEvent,
 import type { NoteState } from "@/lib/notebookApi";
 
 /**
- * Text typed straight on the page, like a notebook: no box, no border, no button. Newsreader
- * italic on faint ruled lines (bg-ruled), with a thin margin line at the left that turns ink while
+ * Text typed straight on the page, like a notebook: no box, no border, no button. Inter, regular
+ * (type-note, batch N), on faint ruled lines (bg-ruled), with a thin margin line at the left that turns ink while
  * the field has the focus (the focus indicator). The page saves it by itself.
  *
  * `grow`: the field is as tall as its text (from `rows` lines up to `maxRows`, then it scrolls).

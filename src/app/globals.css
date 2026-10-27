@@ -96,6 +96,9 @@
   /* Geist comes from the geist package (next/font/local); Newsreader from @fontsource. */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Newsreader", ui-serif, Georgia, serif;
+  /* Student notes (the notebook, the note to the teacher, a mark's note): a simple sans (Marko, Oct 27:
+     "something simple like arial or inter"). Inter from @fontsource-variable/inter, Arial if it is missing. */
+  --font-notes: "Inter Variable", Inter, Arial, ui-sans-serif, system-ui, sans-serif;
 }
 
 /*
@@ -249,11 +252,11 @@
   letter-spacing: 0;
 }
 @utility type-note {
-  font-family: var(--font-serif);
+  font-family: var(--font-notes);
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
-  font-style: italic;
+  font-style: normal;
   letter-spacing: 0;
 }
 @utility type-projector-l {
@@ -341,22 +344,33 @@
 }
 
 /*
- * Student live lecture (/l/[lectureId]): one markup, two layouts.
- * The slide, the I'm lost panel and the strip are one stack: the panel and the strip sit right under
- * the slide, at one size always (the panel 360 px, the strip 480 px, the note to the teacher 300 px,
- * narrower only when the window is), so resizing the slide changes only the slide and the notebook
- * (Marko, hand test 4: "I don't want these buttons to get bigger, just like the area for taking notes").
- * The size handle scales the slide from 35% to 100% of its full size (--slide-scale on a phone,
- * --slide-scale-wide on a laptop; 1 by default). The slide's width comes from the room left
- * (--slide-room) times its shape (--slide-ratio).
- * Wide: the stack on the left (its full size is the largest slide that leaves room for the panel and
- * the strip under it and the notebook's default width beside it), the handle at its right edge, and
- * the sidebar: My lectures, the lecture, the notebook (it takes the room that is left), Jump to live
- * (while behind) and My spots. Once the slide is made small enough to leave room under the strip
- * (data-notes="under", set by the handle), the notebook moves under the stack and takes the whole
- * width there, and the sidebar keeps the rest; no empty band is left under the slide.
- * Narrow: top bar, the slide in a 16 px gutter, the I'm lost panel, the strip, the handle and the
- * notebook, which takes the room left at the bottom.
+ * Student live lecture (/l/[lectureId]): one markup, three layouts the student picks (data-view on the
+ * screen, the Layout menu; batch N), each with a laptop (wide) and a phone (narrow) arrangement.
+ *
+ * Notes (the default; batch M, improved in batch N): the slide, the I'm lost panel right under it and the
+ * strip under that are one stack (--col-w wide). The panel and the strip fill the stack's width (Marko,
+ * Oct 27: the buttons "go all the way right until the notes", the timeline "long" again); the stack is
+ * as wide as the slide's full size, so dragging the handle changes only the slide and the notebook, never
+ * the buttons or the strip (hand test 4). The panel is two rows when it has the room (I'm lost; Save
+ * this, Mark and the Undo line beside them: 104 px), so no empty band sits between the buttons and the
+ * strip; with less room the Undo line keeps its own 40 px row under the buttons (156 px).
+ * Wide: the stack on the left, its full size the largest slide that leaves room for the panel and the
+ * strip under it and 260 px of notebook beside it (it fills the height where it can), the handle on the
+ * slide's right edge (--slide-scale-wide, 35% to 100%), and the sidebar: My lectures, the lecture, the
+ * notebook (the room left), Jump to live (while behind) and My spots. Once the slide is made small enough
+ * to leave room under the strip (data-notes="under", set by the handle), the notebook moves under the
+ * stack and takes the whole width; the sidebar keeps the rest.
+ * Slides only: Notes without a notebook or a handle: the slide at its full size, beside a slim sidebar
+ * (200 px) with the lecture, the note to the teacher on a lost slide, Jump to live and My spots.
+ * Classic (the K2 layout, before batch M): the slide as big as the room left of the sidebar allows, the
+ * strip right under it as wide as the slide (480 px at least); the sidebar (clamp(260px, 20vw, 380px),
+ * --side-w once the handle is dragged) holds My lectures, the lecture, the I'm lost panel, the notebook,
+ * Jump to live and My spots; the handle between them.
+ * Narrow (every layout): top bar, the slide in a 16 px gutter (--slide-scale), the I'm lost panel and the
+ * strip the full width, the handle and the notebook, which takes the room left at the bottom. Slides only
+ * has no handle and no notebook, only the note to the teacher's place under the strip.
+ * The slide's width comes from the room left (--slide-room) times its shape (--slide-ratio). Sizes in cq
+ * units are used by the screen's children only (on the screen itself they would be the window's).
  */
 [data-lecture] {
   position: fixed;
@@ -366,14 +380,6 @@
 }
 [data-lecture-slide] {
   justify-self: start;
-}
-[data-lecture-panel] {
-  width: 360px;
-  max-width: 100%;
-}
-[data-lecture-nav] {
-  width: 480px;
-  max-width: 100%;
 }
 [data-teacher-slot] {
   width: 300px;
@@ -430,34 +436,73 @@
     inset: -12px 0;
   }
   [data-split-handle] [data-grip] { width: 40px; height: 4px; }
+  /* Slides only: no handle and no notebook; the slide as big as the room left by the top bar (56), the
+     panel (156), the strip (44), the note to the teacher's line (24) and the gaps (48) allows. */
+  [data-lecture][data-view="slides"] {
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    grid-template-areas: "top" "slide" "panel" "nav" "notes";
+    --slide-room: calc(100cqh - 328px);
+  }
+  [data-lecture][data-view="slides"] [data-lecture-slide] {
+    width: min(100cqw, max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778));
+  }
+}
+/* A half laptop window (560 px of panel or more): the panel in two rows (104 px), 52 px more for the slide. */
+@media (min-width: 592px) and (max-width: 699.98px), (min-width: 592px) and (max-aspect-ratio: 9999/10000) {
+  [data-lecture] {
+    --slide-room: calc(100cqh - 342px);
+  }
+  [data-lecture][data-view="slides"] {
+    --slide-room: calc(100cqh - 276px);
+  }
+  [data-lecture] [data-lecture-panel] {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 12px;
+  }
+  [data-lecture] [data-lecture-panel] > * { grid-column: 1 / -1; }
+  [data-lecture] [data-lecture-panel] > [data-tools] { grid-column: 1 / span 2; }
+  [data-lecture] [data-lecture-panel] > [data-panel-line] { grid-column: 3 / span 2; }
 }
 @media (min-width: 700px) and (min-aspect-ratio: 1/1) {
   [data-lecture] {
     display: grid;
-    grid-template-columns: auto 24px minmax(0, 1fr) auto;
+    grid-template-columns: auto var(--handle-w) minmax(0, 1fr) auto;
     grid-template-rows: auto auto minmax(0, 1fr) auto auto;
     grid-template-areas: "stage handle back back" "stage handle brand info" "stage handle notes notes" "stage handle jump jump" "stage handle spots spots";
     row-gap: 16px;
     padding: 16px;
     /* A short window (a phone held sideways) scrolls the whole screen to reach the end. */
     overflow-y: auto;
-    /* The height left for the slide: the panel and the strip under it (216 px with their gaps). */
-    --slide-room: calc(100cqh - 216px);
-    /* The widest the slide gets: the window less the handle and the notebook's default width. */
-    --slide-max-w: calc(100cqw - 24px - max(300px, clamp(260px, 20vw, 380px)));
-    --slide-w: calc(min(var(--slide-max-w), max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778)) * var(--slide-scale-wide, 1));
+    /* The handle's column, and the notebook's width beside a slide at its full size. */
+    --handle-w: 24px;
+    --nb-w: 260px;
+    /* What sits under the slide: 8 px, the panel (156), 8 px, the strip (44). 164 with a two row panel. */
+    --under: 216px;
+    /* The stack is never narrower than this (the panel's buttons). */
+    --col-min: 360px;
+    --slide-room: calc(100cqh - var(--under));
+    /* The slide's full size: as wide as the room beside the notebook, as tall as the room over the panel. */
+    --slide-full-w: min(100cqw - var(--handle-w) - var(--nb-w), max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778));
+    /* The stack (the panel and the strip): the slide's full width, whatever its size now. */
+    --col-w: max(var(--slide-full-w), var(--col-min));
+    --slide-w: calc(var(--slide-full-w) * var(--slide-scale-wide, 1));
   }
   [data-lecture-slide] {
     width: var(--slide-w);
+    align-self: flex-start;
   }
   [data-lecture-stage] {
     grid-area: stage;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     /* Its own height, at the top: the panel and the strip right under the slide. */
     align-self: start;
     gap: 8px;
+    width: var(--col-w);
     min-width: 0;
   }
   [data-lecture-side],
@@ -469,7 +514,7 @@
   [data-lecture-jump="side"] { grid-area: jump; }
   [data-lecture-jump="pill"] { display: none; }
   /* On the slide's right edge, as tall as the slide, with a short grip in the middle: it stays on the
-     edge however small the slide is (the stack can be wider, for the strip). */
+     edge however small the slide is (the stack keeps its width). */
   [data-split-handle] {
     grid-area: auto;
     position: absolute;
@@ -480,18 +525,15 @@
     cursor: col-resize;
   }
   [data-split-handle] [data-grip] { width: 4px; height: 40px; }
-  /* A small slide: the notebook under the stack, the whole width; the sidebar beside the stack. */
-  [data-lecture][data-notes="under"] {
-    grid-template-columns: auto 24px minmax(0, 1fr);
+  /* A small slide: the notebook under the stack, the whole width; the sidebar beside the stack, as wide
+     as the notebook was. */
+  [data-lecture][data-view="notes"][data-notes="under"] {
+    grid-template-columns: auto var(--handle-w) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas: "stage handle side" "notes notes notes";
   }
-  [data-lecture][data-notes="under"] [data-lecture-side] {
+  [data-lecture][data-view="notes"][data-notes="under"] [data-lecture-side] {
     grid-area: side;
-    /* A sidebar's width at the right edge, as beside a big slide (My spots does not stretch across). */
-    justify-self: end;
-    width: max(300px, clamp(260px, 20vw, 380px));
-    max-width: 100%;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "back back" "brand info" "jump jump" "spots spots";
@@ -499,6 +541,75 @@
     row-gap: 16px;
     min-width: 0;
   }
+
+  /* Slides only: no handle (a 16 px gap) and no notebook; a 200 px sidebar, so the slide is bigger. */
+  [data-lecture][data-view="slides"] {
+    --handle-w: 16px;
+    --nb-w: 200px;
+    --slide-w: var(--slide-full-w);
+  }
+  /* The note to the teacher in that slim sidebar: the field takes the line, "Saved" (or the count) goes under it. */
+  [data-lecture][data-view="slides"] [data-teacher-note] { flex-wrap: wrap; }
+  [data-lecture][data-view="slides"] [data-teacher-note] > textarea { flex-basis: calc(100% - 16px); }
+  [data-lecture][data-view="slides"] [data-teacher-note] > :last-child { margin-left: auto; }
+  /* "Jump to live, slide 12" may take two lines there. */
+  [data-lecture][data-view="slides"] [data-lecture-jump="side"] { text-align: center; }
+
+  /* Classic: the K2 layout. The stack's box goes away, so the panel can sit in the sidebar. */
+  [data-lecture][data-view="classic"] {
+    /* The sidebar's width, and the info cell's (the Layout and Help buttons, 36 each, 4 apart). */
+    --side: var(--side-w, clamp(260px, 20vw, 380px));
+    --info-w: 76px;
+    grid-template-columns: minmax(0, 1fr) 24px minmax(0, calc(var(--side) - var(--info-w))) var(--info-w);
+    grid-template-rows: auto auto auto minmax(96px, 1fr) auto auto;
+    grid-template-areas: "stage handle back back" "stage handle brand info" "stage handle panel panel" "stage handle notes notes" "stage handle jump jump" "stage handle spots spots";
+    /* The room left of the sidebar; the slide as big as it and the height (less the strip, 52) allow. */
+    --classic-w: calc(100cqw - 24px - var(--side));
+    --slide-room: calc(100cqh - 52px);
+    --slide-w: min(var(--classic-w), max(var(--slide-room), 96px) * var(--slide-ratio, 1.7778));
+  }
+  [data-lecture][data-view="classic"] [data-lecture-stage] { display: contents; }
+  [data-lecture][data-view="classic"] [data-lecture-slide] {
+    grid-area: stage;
+    align-self: start;
+    justify-self: center;
+  }
+  /* Right under the slide (8 px), as wide as the slide (480 px at least, as before). */
+  [data-lecture][data-view="classic"] [data-lecture-nav] {
+    grid-area: stage;
+    align-self: start;
+    justify-self: center;
+    margin-top: calc(var(--slide-w) / var(--slide-ratio, 1.7778) + 8px);
+    width: max(min(var(--classic-w), 480px), var(--slide-w));
+  }
+  [data-lecture][data-view="classic"] [data-lecture-panel] { grid-area: panel; }
+  [data-lecture][data-view="classic"] [data-teacher-slot] { width: auto; }
+  /* The full height of the screen, in the gap between the slide and the sidebar, with a short grip in the middle. */
+  [data-lecture][data-view="classic"] [data-split-handle] {
+    grid-area: handle;
+    position: relative;
+    top: auto;
+    left: auto;
+    width: auto;
+    height: auto;
+  }
+}
+/* A laptop with room for a 560 px panel (Notes and Slides only): the panel in two rows, 52 px more for the slide. */
+@media (min-width: 892px) and (min-aspect-ratio: 1/1) {
+  [data-lecture]:not([data-view="classic"]) {
+    --under: 164px;
+    --col-min: 560px;
+  }
+  [data-lecture]:not([data-view="classic"]) [data-lecture-panel] {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 12px;
+  }
+  [data-lecture]:not([data-view="classic"]) [data-lecture-panel] > * { grid-column: 1 / -1; }
+  [data-lecture]:not([data-view="classic"]) [data-lecture-panel] > [data-tools] { grid-column: 1 / span 2; }
+  [data-lecture]:not([data-view="classic"]) [data-lecture-panel] > [data-panel-line] { grid-column: 3 / span 2; }
 }
 
 /*

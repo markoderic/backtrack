@@ -28,10 +28,14 @@ describe("InfoButton", () => {
     expect(panel).toHaveTextContent(
       "Type notes right on the page. They save by themselves and only you see them. On a slide where you're lost, the note for the teacher is the one your teacher reads. Drag the bar next to the slide to make it smaller or bigger; the notes take the room.",
     );
+    // The layouts (batch N): the only place they are explained.
+    expect(panel).toHaveTextContent(
+      "The layout button next to this one switches between Notes, Slides only (no notes) and Classic (the buttons and notes beside the slide). This browser remembers your pick.",
+    );
     expect(panel).toHaveTextContent("Nobody sees your name, not even your teacher. Your spots stay in this browser.");
     // The old Mark the spot (only after I'm lost) is gone.
     expect(panel).not.toHaveTextContent("Mark the spot");
-    expect(panel.querySelectorAll("p")).toHaveLength(6);
+    expect(panel.querySelectorAll("p")).toHaveLength(7);
   });
 
   it("closes when the button is pressed again", () => {

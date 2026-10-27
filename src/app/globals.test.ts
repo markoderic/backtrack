@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const css = readFileSync(join(__dirname, "globals.css"), "utf8");
+/** The laptop layout's block, the phone's, and the Classic screen rule inside the laptop's. */
+const wide = css.slice(css.lastIndexOf("@media (min-width: 700px) and (min-aspect-ratio: 1/1) {"));
+const narrow = css.slice(css.lastIndexOf("@media (max-width: 699.98px), (max-aspect-ratio: 9999/10000) {"), css.indexOf("@media (min-width: 592px)"));
+const classic = wide.match(/\[data-lecture\]\[data-view="classic"\]\s*{([^}]*)}/)?.[1] ?? "";
 
 describe("globals.css entrance animations", () => {
   it("a whole page never starts invisible and is done within 120 ms", () => {
@@ -33,42 +37,113 @@ describe("globals.css entrance animations", () => {
 
   it("the slide size handle scales only the slide: --slide-scale on a phone, --slide-scale-wide on a laptop (1 by default)", () => {
     expect(css).toMatch(/\* var\(--slide-scale, 1\)\)/);
-    expect(css).toMatch(/\* var\(--slide-scale-wide, 1\)\)/);
-    // No sidebar width set by the handle any more (it made the buttons wider, hand test 4).
-    expect(css).not.toContain("--side-w");
+    expect(css).toMatch(/--slide-w:\s*calc\(var\(--slide-full-w\) \* var\(--slide-scale-wide, 1\)\)/);
+    // The sidebar width set by the handle is only the Classic layout's (batch N restores it).
+    const sideW = [...css.matchAll(/var\(--side-w[,)]/g)];
+    expect(sideW).toHaveLength(1);
+    expect(classic).toMatch(/--side:\s*var\(--side-w, clamp\(260px, 20vw, 380px\)\)/);
     expect(css).toMatch(/grid-template-areas:\s*"top" "slide" "panel" "nav" "handle" "notes"/);
   });
 
-  it("I'm lost and its buttons, the strip and the note to the teacher have one size at every slide size and window size (hand test 4)", () => {
-    const rule = (sel: string) => css.match(new RegExp(`\\[${sel}\\]\\s*{([^}]*)}`))?.[1] ?? "";
-    expect(rule("data-lecture-panel")).toMatch(/width:\s*360px;\s*max-width:\s*100%/);
-    expect(rule("data-lecture-nav")).toMatch(/width:\s*480px;\s*max-width:\s*100%/);
-    expect(rule("data-teacher-slot")).toMatch(/width:\s*300px;\s*max-width:\s*100%/);
-    // Nothing else sizes them: no other rule gives the panel, the strip or the note a width from the slide or the window.
-    for (const sel of ["data-lecture-panel", "data-lecture-nav", "data-teacher-slot"]) {
-      const widths = [...css.matchAll(new RegExp(`\\[${sel}\\][^{]*{[^}]*[^-]width:[^;]*;`, "g"))];
-      expect(widths, sel).toHaveLength(1);
-    }
+  it("the panel, the strip and the note to the teacher never take a size from the slide: the panel and the strip fill the stack (batch N)", () => {
+    // No fixed 360 / 480 px any more (Marko, Oct 27: the buttons "go all the way right until the notes",
+    // the timeline "long" again), and no rule gives the panel a width at all: it fills its column.
+    expect(css).not.toMatch(/\[data-lecture-panel\][^{]*{[^}]*[^-]width:/);
+    expect(css).not.toMatch(/width:\s*360px/);
+    // The strip has no width of its own except in Classic, where it is the slide's (480 px at least, as in K2).
+    const navWidths = [...css.matchAll(/\[data-lecture-nav\][^{]*{[^}]*[^-]width:([^;]*);/g)].map((m) => m[1].trim());
+    expect(navWidths).toEqual(["max(min(var(--classic-w), 480px), var(--slide-w))"]);
+    expect(css).toMatch(/\[data-teacher-slot\]\s*{\s*width:\s*300px;\s*max-width:\s*100%;/);
   });
 
-  it("on a laptop the panel and the strip sit right under the slide; a small slide puts the notebook under them, the whole width (no empty band)", () => {
-    expect(css).toMatch(/grid-template-areas:\s*"stage handle back back" "stage handle brand info" "stage handle notes notes" "stage handle jump jump" "stage handle spots spots"/);
-    const notesUnder = css.match(/\[data-lecture\]\[data-notes="under"\]\s*{([^}]*)}/)?.[1] ?? "";
-    expect(notesUnder).toMatch(/grid-template-areas:\s*"stage handle side" "notes notes notes"/);
-    expect(notesUnder).toMatch(/grid-template-rows:\s*auto minmax\(0, 1fr\)/);
-    const wide = css.slice(css.lastIndexOf("@media (min-width: 700px) and (min-aspect-ratio: 1/1) {"));
+  it("Notes on a laptop: the stack is the slide's full width (whatever the handle did), the panel and the strip stretch to it", () => {
     const stage = wide.match(/\n  \[data-lecture-stage\]\s*{([^}]*)}/)?.[1] ?? "";
     expect(stage).toMatch(/flex-direction:\s*column/);
+    expect(stage).toMatch(/align-items:\s*stretch/);
     expect(stage).toMatch(/align-self:\s*start/);
-    // The size handle sits on the slide's right edge, as tall as the slide, however small the slide is
-    // (review I5: it used to sit beside the strip, about 110 px away).
+    expect(stage).toMatch(/width:\s*var\(--col-w\)/);
+    // The column: the slide's full size (never the scaled one), so dragging never changes the buttons' width.
+    expect(wide).toMatch(/--col-w:\s*max\(var\(--slide-full-w\), var\(--col-min\)\)/);
+    expect(wide).toMatch(/--slide-full-w:\s*min\(100cqw - var\(--handle-w\) - var\(--nb-w\), max\(var\(--slide-room\), 96px\) \* var\(--slide-ratio, 1.7778\)\)/);
+    expect(wide).not.toMatch(/--col-w:[^;]*slide-scale/);
+    // At the default size the slide uses the room it can: beside 260 px of notebook (it was 300), over the panel.
+    expect(wide).toMatch(/--nb-w:\s*260px/);
+    expect(wide).toMatch(/--slide-room:\s*calc\(100cqh - var\(--under\)\)/);
+    expect(wide).toMatch(/\[data-lecture-slide\]\s*{\s*width:\s*var\(--slide-w\);/);
+    expect(wide).toMatch(/grid-template-areas:\s*"stage handle back back" "stage handle brand info" "stage handle notes notes" "stage handle jump jump" "stage handle spots spots"/);
+    const notesUnder = css.match(/\[data-lecture\]\[data-view="notes"\]\[data-notes="under"\]\s*{([^}]*)}/)?.[1] ?? "";
+    expect(notesUnder).toMatch(/grid-template-areas:\s*"stage handle side" "notes notes notes"/);
+    expect(notesUnder).toMatch(/grid-template-rows:\s*auto minmax\(0, 1fr\)/);
+    // The size handle sits on the slide's right edge, as tall as the slide, however small the slide is.
     const handle = wide.match(/\n  \[data-split-handle\]\s*{([^}]*)}/)?.[1] ?? "";
     expect(handle).toMatch(/position:\s*absolute/);
     expect(handle).toMatch(/left:\s*calc\(16px \+ var\(--slide-w\)\)/);
     expect(handle).toMatch(/height:\s*calc\(var\(--slide-w\) \/ var\(--slide-ratio, 1.7778\)\)/);
-    expect(wide).toMatch(/\[data-lecture-slide\]\s*{\s*width:\s*var\(--slide-w\);/);
-    // The slide's full size leaves the panel and the strip (216 px) under it.
-    expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 216px\)/);
+    // No cq unit sizes the screen's own grid (there it would be the window's, not the screen's content box).
+    const grid = wide.match(/\n  \[data-lecture\]\s*{([^}]*)}/)?.[1] ?? "";
+    expect(grid.match(/grid-template-columns:([^;]*);/)?.[1]).not.toMatch(/cq|--col-w|--slide/);
+  });
+
+  it("no empty band between the buttons and the strip: with room, the Undo line sits beside Save this and Mark (panel 104 px, not 156)", () => {
+    // Laptop (Notes and Slides only, 892 px and up) and a half window on a phone layout (592 px and up).
+    const laptop = css.slice(css.indexOf("@media (min-width: 892px) and (min-aspect-ratio: 1/1) {"));
+    const half = css.slice(css.indexOf("@media (min-width: 592px) and (max-width: 699.98px), (min-width: 592px) and (max-aspect-ratio: 9999/10000) {"));
+    for (const [name, block, sel] of [
+      ["laptop", laptop, '\\[data-lecture\\]:not\\(\\[data-view="classic"\\]\\)'],
+      ["half", half, "\\[data-lecture\\]"],
+    ] as const) {
+      expect(block, name).toMatch(new RegExp(`${sel} \\[data-lecture-panel\\]\\s*{[^}]*display:\\s*grid;[^}]*grid-template-columns:\\s*repeat\\(4, minmax\\(0, 1fr\\)\\)`));
+      expect(block, name).toMatch(new RegExp(`${sel} \\[data-lecture-panel\\] > \\*\\s*{\\s*grid-column:\\s*1 / -1;`));
+      expect(block, name).toMatch(new RegExp(`${sel} \\[data-lecture-panel\\] > \\[data-tools\\]\\s*{\\s*grid-column:\\s*1 / span 2;`));
+      expect(block, name).toMatch(new RegExp(`${sel} \\[data-lecture-panel\\] > \\[data-panel-line\\]\\s*{\\s*grid-column:\\s*3 / span 2;`));
+    }
+    // The room under the slide shrinks with it: 216 -> 164 (laptop), 394 -> 342 (half window).
+    expect(wide).toMatch(/--under:\s*216px/);
+    expect(laptop).toMatch(/\[data-lecture\]:not\(\[data-view="classic"\]\)\s*{\s*--under:\s*164px;\s*--col-min:\s*560px;/);
+    expect(css).toMatch(/--slide-room:\s*calc\(100cqh - 394px\)/);
+    expect(half).toMatch(/\[data-lecture\]\s*{\s*--slide-room:\s*calc\(100cqh - 342px\);/);
+    // The stack's own gap stays the token's 8 px.
+    expect(wide.match(/\n  \[data-lecture-stage\]\s*{([^}]*)}/)?.[1]).toMatch(/gap:\s*8px/);
+  });
+
+  it("Slides only: no notebook column, a 200 px sidebar, the slide at its full size (no handle scale)", () => {
+    expect(wide).toMatch(/\[data-lecture\]\[data-view="slides"\]\s*{\s*--handle-w:\s*16px;\s*--nb-w:\s*200px;\s*--slide-w:\s*var\(--slide-full-w\);/);
+    const narrowSlides = narrow.match(/\[data-lecture\]\[data-view="slides"\]\s*{([^}]*)}/)?.[1] ?? "";
+    expect(narrowSlides).toMatch(/grid-template-areas:\s*"top" "slide" "panel" "nav" "notes"/);
+    expect(narrowSlides).toMatch(/--slide-room:\s*calc\(100cqh - 328px\)/);
+    expect(narrow).toMatch(/\[data-lecture\]\[data-view="slides"\] \[data-lecture-slide\]\s*{\s*width:\s*min\(100cqw, max\(var\(--slide-room\), 96px\) \* var\(--slide-ratio, 1.7778\)\);/);
+  });
+
+  it("Classic (the K2 layout): the slide with its strip on the left, the sidebar with the buttons on top and the notebook under them", () => {
+    expect(classic).toMatch(
+      /grid-template-areas:\s*"stage handle back back" "stage handle brand info" "stage handle panel panel" "stage handle notes notes" "stage handle jump jump" "stage handle spots spots"/,
+    );
+    expect(classic).toMatch(/grid-template-rows:\s*auto auto auto minmax\(96px, 1fr\) auto auto/);
+    expect(classic).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 24px minmax\(0, calc\(var\(--side\) - var\(--info-w\)\)\) var\(--info-w\)/);
+    // The stack's box goes away so the panel can sit in the sidebar; the strip sits 8 px under the slide.
+    expect(wide).toMatch(/\[data-lecture\]\[data-view="classic"\] \[data-lecture-stage\]\s*{\s*display:\s*contents;/);
+    expect(wide).toMatch(/\[data-lecture\]\[data-view="classic"\] \[data-lecture-panel\]\s*{\s*grid-area:\s*panel;/);
+    expect(wide).toMatch(/margin-top:\s*calc\(var\(--slide-w\) \/ var\(--slide-ratio, 1.7778\) \+ 8px\)/);
+    // As in K2: the slide as big as the room left of the sidebar and the height less the strip (52) allow.
+    expect(classic).toMatch(/--slide-room:\s*calc\(100cqh - 52px\)/);
+    expect(classic).toMatch(/--slide-w:\s*min\(var\(--classic-w\), max\(var\(--slide-room\), 96px\) \* var\(--slide-ratio, 1.7778\)\)/);
+    // The handle between the slide and the sidebar, the whole height.
+    expect(wide).toMatch(/\[data-lecture\]\[data-view="classic"\] \[data-split-handle\]\s*{\s*grid-area:\s*handle;\s*position:\s*relative;/);
+    // Classic's panel keeps its three rows (the two row panel is for Notes and Slides only).
+    expect(css).toMatch(/\[data-lecture\]:not\(\[data-view="classic"\]\) \[data-lecture-panel\]/);
+  });
+
+  it("student notes are Inter, regular and upright, with Arial and the system sans as fallbacks (Marko, Oct 27)", () => {
+    const note = css.match(/@utility type-note\s*{([^}]*)}/)?.[1] ?? "";
+    expect(note).toMatch(/font-family:\s*var\(--font-notes\);/);
+    expect(note).toMatch(/font-weight:\s*400;/);
+    expect(note).toMatch(/font-style:\s*normal;/);
+    expect(note).not.toContain("italic");
+    expect(css).toMatch(/--font-notes:\s*"Inter Variable", Inter, Arial, ui-sans-serif, system-ui, sans-serif;/);
+    // Loaded from npm in the root layout (no Google Fonts at build).
+    const layout = readFileSync(join(__dirname, "layout.tsx"), "utf8");
+    expect(layout).toContain('import "@fontsource-variable/inter/wght.css";');
+    expect(layout).not.toContain("400-italic");
   });
 
   it("notebook text sits on faint ruled lines, one per 24 px line, that scroll with it", () => {

@@ -443,7 +443,7 @@ describe("LostButton", () => {
       const field = noteField();
       expect(field.tagName).toBe("TEXTAREA");
       expect(field).toHaveAttribute("placeholder", "Note for the teacher");
-      // The notebook look: Newsreader italic on ruled lines, no border box.
+      // The notebook look: Inter (batch N) on ruled lines, no border box.
       expect(field.className).toContain("type-note");
       expect(field.className).toContain("bg-ruled");
       expect(field.className).toContain("border-0");

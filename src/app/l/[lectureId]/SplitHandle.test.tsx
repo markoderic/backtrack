@@ -1,14 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
+import type { LectureView } from "@/lib/lectureView";
 import { NOTES_UNDER_MIN, SLIDE_SIZE_KEY, readSlideSize, writeSlideSize } from "@/lib/slideSize";
 import { SplitHandle, UNDER_SLIDE_PX } from "./SplitHandle";
 
 /** The handle inside the lecture screen it sizes, with a slide 400 px tall. */
-async function setup() {
+async function setup(layoutView?: LectureView) {
   const view = render(
     <div data-lecture="">
       <div data-lecture-slide="" />
-      <SplitHandle />
+      <SplitHandle view={layoutView} />
     </div>,
   );
   const slide = view.container.querySelector("[data-lecture-slide]") as HTMLElement;
@@ -222,7 +223,22 @@ describe("SplitHandle on a laptop (hand test 4: only the slide and the notebook 
       expect(lecture).toHaveAttribute("data-notes", "side");
       fireEvent.pointerUp(handle(), { pointerType: "mouse", pointerId: 1 });
       expect(lecture).toHaveAttribute("data-notes", "under");
-      expect(NOTES_UNDER_MIN).toBe(48);
+    });
+
+    it("needs five ruled lines of room (120 px) to move the notes, measured from the panel's height on this screen (--under)", async () => {
+      expect(NOTES_UNDER_MIN).toBe(120);
+      const { handle, lecture } = await setup();
+      // A two row panel (batch N): 164 px under the slide.
+      lecture.style.setProperty("--under", "164px");
+      // 1440x900 at the default size: the slide 632 px tall leaves 56 px; the notes stay beside it.
+      let h = 632;
+      sizes(lecture, () => h);
+      fireEvent.keyDown(handle(), { key: "End" });
+      expect(lecture).toHaveAttribute("data-notes", "side");
+      // 120 px left under the strip with the two row panel (it would be 68 with the old 216).
+      h = 868 - 164 - 16 - 120;
+      fireEvent.keyDown(handle(), { key: "ArrowLeft" });
+      expect(lecture).toHaveAttribute("data-notes", "under");
     });
 
     it("measured again when the window changes, and not on a phone", async () => {
@@ -246,6 +262,81 @@ describe("SplitHandle on a laptop (hand test 4: only the slide and the notebook 
   });
 });
 
+describe("SplitHandle in the Classic layout (batch N: the K2 layout, the sidebar beside the slide)", () => {
+  beforeEach(() => layout(true));
+
+  it("on a laptop it widens the sidebar (the buttons and the notebook): --side-w, the slide's share of the window, remembered apart", async () => {
+    const { handle, lecture } = await setup("classic");
+    // The sidebar's default at 1440: 20% (288 px); the slide has the rest (80%).
+    expect(handle()).toHaveAttribute("aria-orientation", "vertical");
+    expect(handle()).toHaveAttribute("aria-valuenow", "80");
+    expect(lecture.style.getPropertyValue("--side-w")).toBe("");
+    fireEvent.keyDown(handle(), { key: "ArrowLeft" });
+    // 2% of the window more sidebar: 317 px.
+    expect(lecture.style.getPropertyValue("--side-w")).toBe("317px");
+    expect(handle()).toHaveAttribute("aria-valuenow", "78");
+    const kept = stored() as unknown as { wideScale: null; narrow: null; classicSide: number };
+    expect(kept).toMatchObject({ wideScale: null, narrow: null });
+    expect(kept.classicSide).toBeCloseTo(0.22, 5);
+    // Dragging left widens it more; never past 60% of the window.
+    fireEvent.pointerDown(handle(), { pointerType: "mouse", button: 0, pointerId: 1, clientX: 1100, clientY: 400 });
+    fireEvent.pointerMove(handle(), { pointerType: "mouse", pointerId: 1, clientX: 100, clientY: 400 });
+    fireEvent.pointerUp(handle(), { pointerType: "mouse", pointerId: 1 });
+    expect(lecture.style.getPropertyValue("--side-w")).toBe("864px");
+    expect(handle()).toHaveAttribute("aria-valuenow", "40");
+    // The Notes size is not touched, and the notebook never moves in Classic.
+    expect(lecture.style.getPropertyValue("--slide-scale-wide")).toBe("");
+    expect(lecture).not.toHaveAttribute("data-notes");
+    // A double click puts the sidebar back to its own width.
+    fireEvent.doubleClick(handle());
+    expect(lecture.style.getPropertyValue("--side-w")).toBe("");
+    expect(handle()).toHaveAttribute("aria-valuenow", "80");
+  });
+
+  it("each layout keeps its own size: the Classic sidebar does not change the Notes slide, and is read back", async () => {
+    localStorage.setItem(SLIDE_SIZE_KEY, JSON.stringify({ wideScale: 0.6, narrow: null, classicSide: 0.3 }));
+    const { handle, lecture } = await setup("classic");
+    expect(lecture.style.getPropertyValue("--side-w")).toBe("432px");
+    expect(lecture.style.getPropertyValue("--slide-scale-wide")).toBe("0.6");
+    expect(handle()).toHaveAttribute("aria-valuenow", "70");
+    expect(readSlideSize()).toEqual({ wide: 0.6, narrow: null, classic: 0.3 });
+  });
+
+  it("on a phone it is the stacked handle of every layout (the slide's height)", async () => {
+    layout(false);
+    const { handle, lecture } = await setup("classic");
+    expect(handle()).toHaveAttribute("aria-orientation", "horizontal");
+    fireEvent.keyDown(handle(), { key: "ArrowUp" });
+    expect(lecture.style.getPropertyValue("--slide-scale")).toBe("0.95");
+    expect(lecture.style.getPropertyValue("--side-w")).toBe("");
+  });
+
+  it("Notes again: the notebook's place is measured again; gone (Slides only): data-notes goes with it", async () => {
+    const view = render(
+      <div data-lecture="">
+        <div data-lecture-slide="" />
+        <SplitHandle view="classic" />
+      </div>,
+    );
+    await act(async () => {});
+    const lecture = view.container.querySelector("[data-lecture]") as HTMLElement;
+    expect(lecture).not.toHaveAttribute("data-notes");
+    view.rerender(
+      <div data-lecture="">
+        <div data-lecture-slide="" />
+        <SplitHandle view="notes" />
+      </div>,
+    );
+    expect(lecture).toHaveAttribute("data-notes");
+    view.rerender(
+      <div data-lecture="">
+        <div data-lecture-slide="" />
+      </div>,
+    );
+    expect(lecture).not.toHaveAttribute("data-notes");
+  });
+});
+
 describe("slideSize", () => {
   it("reads nothing broken, and works with storage blocked", () => {
     localStorage.setItem(SLIDE_SIZE_KEY, JSON.stringify({ wideScale: 3, narrow: 0.1 }));
@@ -262,5 +353,9 @@ describe("slideSize", () => {
     });
     expect(readSlideSize()).toEqual({ wide: null, narrow: null });
     expect(() => writeSlideSize({ wide: 0.3, narrow: null })).not.toThrow();
+    vi.restoreAllMocks();
+    // A Classic share outside (0, 1) is not read.
+    localStorage.setItem(SLIDE_SIZE_KEY, JSON.stringify({ wideScale: null, narrow: null, classicSide: 1.4 }));
+    expect(readSlideSize()).toEqual({ wide: null, narrow: null });
   });
 });

@@ -11,4 +11,7 @@ afterEach(async () => {
   // Slides measured for the marks' look (lib/slideTone) are kept per url for the page; each test starts fresh.
   const { forgetSamples } = await import("@/lib/slideTone");
   forgetSamples();
+  // A layout pick that storage could not keep lives for the page; each test starts without one.
+  const { forgetLectureView } = await import("@/lib/lectureView");
+  forgetLectureView();
 });

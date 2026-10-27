@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { buttonSecondaryClass } from "@/components/ButtonPrimary";
@@ -14,6 +14,7 @@ import { cutNote, useTeacherNoteMax } from "@/lib/noteLimit";
 import type { Rect } from "@/lib/rect";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import type { QueueOp } from "@/lib/tapQueue";
+import { currentLectureView, DEFAULT_VIEW, subscribeLectureView, writeLectureView, type LectureView } from "@/lib/lectureView";
 import { useLiveLecture } from "@/lib/useLiveLecture";
 import { useLiveMarks } from "@/lib/useLiveMarks";
 import { useNotebook } from "@/lib/useNotebook";
@@ -25,6 +26,7 @@ import { LostButton, type LegacyMarks, type Spot } from "./LostButton";
 import { MarkPopover } from "./MarkPopover";
 import { SlideStrip, type SpotKind } from "./SlideStrip";
 import { SplitHandle } from "./SplitHandle";
+import { ViewMenu } from "./ViewMenu";
 
 const END_FLUSH_MS = 3000;
 /** "Loading slide 7" shows only if the image takes longer than this. The next slide is preloaded, so it is rare. */
@@ -49,12 +51,14 @@ type Props = {
 };
 
 /**
- * The student's live lecture screen. One markup, two layouts (globals.css, "student live
- * lecture"): on a laptop or a landscape tablet the slide fills the left (about 80%) with
- * its navigation right under it, and a sidebar on the right holds My lectures, the lecture,
- * the I'm lost panel, the notebook, Jump to live and My spots; on a phone or a narrow window it
- * stacks the top bar, the slide, the I'm lost panel, the slide strip and the notebook. A handle
- * between the slide and the notebook makes the slide smaller or bigger (remembered on the device).
+ * The student's live lecture screen. One markup, laid out by globals.css ("student live lecture")
+ * in the layout the student picks (the Layout menu in the top bar, remembered on the device):
+ * Notes (the default: the slide with the I'm lost panel and the strip right under it, the notebook
+ * beside it or under it), Slides only (no notebook, the slide as big as the window allows) or Classic
+ * (the slide with its strip on the left, a sidebar with the buttons above the notebook). On a phone or
+ * a narrow window every layout stacks the top bar, the slide, the I'm lost panel, the slide strip and
+ * the notebook (none in Slides only). A handle makes the slide smaller or bigger (remembered on the device).
+ * The markup is the same in every layout, so switching never remounts I'm lost or the notebook's text.
  *
  * The notebook: the student types straight on the page, one private note per slide (the slide on
  * screen), saved by itself. On a slide where they are lost, a small note to the teacher sits above it.
@@ -67,6 +71,8 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const router = useRouter();
   const { state, back, forward, jumpToLive, goTo, recheck } = useLiveLecture(lectureId, initialSlide);
   const { urlFor } = useSlideImages(lectureId, state?.viewing);
+  // The layout the student picked on this device (the server and the first paint use the default).
+  const view = useSyncExternalStore(subscribeLectureView, currentLectureView, () => DEFAULT_VIEW);
 
   // The client is made when a tap is sent, not while rendering.
   const send = useMemo(() => (op: QueueOp) => makeSend(createBrowserSupabase(), lectureId)(op), [lectureId]);
@@ -289,6 +295,13 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
     unpinNotebook();
     void notebook.flush();
   };
+  /** Another layout: what was typed in the notebook is sent first (Slides only has no notebook field). */
+  const changeView = (next: LectureView) => {
+    composing.current = false;
+    unpinNotebook();
+    void flushNotebookRef.current();
+    writeLectureView(next);
+  };
 
   // The slide changes at once; the loading text only shows when the image is slow.
   const imageKey = url ?? `slide-${viewing}`;
@@ -379,7 +392,7 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
   const onPick = (n: number) => moveTo(Math.min(Math.max(Math.floor(n), 1), live), () => goTo(n));
 
   return (
-    <div data-lecture="" className="text-ink" style={{ "--slide-ratio": ratio } as CSSProperties}>
+    <div data-lecture="" data-view={view} className="text-ink" style={{ "--slide-ratio": ratio } as CSSProperties}>
       <div data-lecture-side="">
         <div data-lecture-top="">
           {/* The way to all the student's lectures (My spots of each). Just the arrow on a phone. */}
@@ -415,7 +428,9 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
               {spotCount}
             </span>
           </Link>
-          <div data-lecture-info="" className="flex shrink-0 justify-end">
+          <div data-lecture-info="" className="flex shrink-0 justify-end gap-1">
+            {/* Notes, Slides only or Classic. */}
+            <ViewMenu view={view} onView={changeView} />
             {/* The popover lines up with the right edge (of the top bar, or of the sidebar on a laptop). */}
             <InfoButton panelClassName="right-0" />
           </div>
@@ -589,33 +604,39 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
           </div>
         </div>
       </div>
-      {/* At the slide's edge (laptop) or above the notebook (phone): drag (or arrow keys) to make the slide smaller or bigger. */}
-      <SplitHandle />
-      {/* The notebook: typed straight on the page, one private note per slide, saved by itself. */}
+      {/* At the slide's edge (Notes on a laptop), between the slide and the sidebar (Classic) or above the
+          notebook (phone): drag (or arrow keys) to make the slide smaller or bigger. None in Slides only. */}
+      {view !== "slides" && <SplitHandle view={view} />}
+      {/* The notebook: typed straight on the page, one private note per slide, saved by itself. In Slides
+          only just the note to the teacher's place (under the strip), always there so the note keeps its text. */}
       <div data-lecture-notes="">
         {/* The note to the teacher, on a slide where the student is lost (LostButton puts it here). */}
         <div ref={setNoteSlot} data-teacher-slot="" className="shrink-0 empty:hidden [&:not(:empty)]:pb-3" />
-        <NotebookField
-          aria-label={`Your notes, slide ${notebookSlide}`}
-          placeholder="Your notes"
-          value={notebook.textOf(notebookSlide)}
-          onValue={typeNotebook}
-          onBlur={leaveNotebook}
-          onCompositionStart={() => {
-            composing.current = true;
-          }}
-          onCompositionEnd={() => {
-            composing.current = false;
-          }}
-          className="min-h-12 flex-1"
-        />
-        <div className="flex h-5 shrink-0 items-end justify-between gap-3 pt-1">
-          {/* Typing on while the teacher moved on: the notes stay with their slide for now. */}
-          <span data-notebook-slide="" className="type-caption text-secondary">
-            {notebookSlide !== viewing ? `Slide ${notebookSlide}` : ""}
-          </span>
-          <SavedState state={notebook.stateOf(notebookSlide)} className="text-right" />
-        </div>
+        {view !== "slides" && (
+          <>
+            <NotebookField
+              aria-label={`Your notes, slide ${notebookSlide}`}
+              placeholder="Your notes"
+              value={notebook.textOf(notebookSlide)}
+              onValue={typeNotebook}
+              onBlur={leaveNotebook}
+              onCompositionStart={() => {
+                composing.current = true;
+              }}
+              onCompositionEnd={() => {
+                composing.current = false;
+              }}
+              className="min-h-12 flex-1"
+            />
+            <div className="flex h-5 shrink-0 items-end justify-between gap-3 pt-1">
+              {/* Typing on while the teacher moved on: the notes stay with their slide for now. */}
+              <span data-notebook-slide="" className="type-caption text-secondary">
+                {notebookSlide !== viewing ? `Slide ${notebookSlide}` : ""}
+              </span>
+              <SavedState state={notebook.stateOf(notebookSlide)} className="text-right" />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

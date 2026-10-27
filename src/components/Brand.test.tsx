@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { Icon } from "./Icon";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Icon, ICON_NAMES } from "./Icon";
 import { LogoLockup, LogoMark } from "./Logo";
 import { ButtonPrimary, ButtonPrimaryLink } from "./ButtonPrimary";
 
@@ -12,6 +14,18 @@ describe("Icon", () => {
     expect(el.style.maskImage || el.style.webkitMaskImage).toContain("/brand/info.svg");
     expect(el.style.width).toBe("20px");
     expect(el.className).toContain("bg-current");
+  });
+
+  it("every icon name has its file, drawn in the same style (24 px, 1.6 stroke, ink); the Layout icon too (batch N)", () => {
+    expect(ICON_NAMES).toContain("layout");
+    for (const name of ICON_NAMES) {
+      const file = join(__dirname, "../../public/brand", `${name}.svg`);
+      expect(existsSync(file), name).toBe(true);
+      const svg = readFileSync(file, "utf8");
+      expect(svg, name).toMatch(/viewBox="0 0 24 24"/);
+      expect(svg, name).toContain("#1B1A18");
+    }
+    expect(readFileSync(join(__dirname, "../../public/brand/layout.svg"), "utf8")).toContain('stroke-width="1.6"');
   });
 
   it("has a name when given a label", () => {

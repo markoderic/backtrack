@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import "@fontsource/newsreader/400.css";
-import "@fontsource/newsreader/400-italic.css";
+// Student notes (type-note): Inter, regular, from npm (no Google Fonts at build).
+import "@fontsource-variable/inter/wght.css";
 import "./globals.css";
 
 const DESCRIPTION = "Mark the slide where you got lost, come back to it after class.";

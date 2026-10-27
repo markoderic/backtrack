@@ -206,12 +206,12 @@ describe("StudentLecture", () => {
     expect(within(top()).getByRole("link", { name: /My spots/ }).className).toMatch(/\bshrink-0\b/);
   });
 
-  it("has a My spots link with the count in the top bar, and no theme button yet", () => {
+  it("has a My spots link with the count in the top bar, and no theme button yet (Layout and Help only)", () => {
     show();
     const link = within(top()).getByRole("link", { name: /My spots/ });
     expect(link).toHaveAttribute("href", `/spots/${LECTURE}`);
     expect(link).toHaveTextContent("My spots0");
-    expect(within(top()).getAllByRole("button")).toHaveLength(1);
+    expect(within(top()).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Layout", "Help"]);
   });
 
   // The note to the teacher, on a lost slide.
@@ -1769,5 +1769,120 @@ describe("StudentLecture way back to My lectures, and the slide size handle", ()
     fireEvent.keyDown(handle, { key: "ArrowUp" });
     expect(handle).toHaveAttribute("aria-valuenow", "95");
     expect(lecture.style.getPropertyValue("--slide-scale")).toBe("0.95");
+  });
+});
+
+describe("StudentLecture layouts (batch N: Notes, Slides only, Classic, picked by the student)", () => {
+  const screenEl = () => document.querySelector("[data-lecture]") as HTMLElement;
+  const layoutButton = () => screen.getByRole("button", { name: "Layout" });
+  const pick = (name: "Notes" | "Slides only" | "Classic") => {
+    fireEvent.click(layoutButton());
+    fireEvent.click(screen.getByRole("menuitemradio", { name }));
+  };
+  const notebookField = (n = 7) => screen.queryByRole("textbox", { name: `Your notes, slide ${n}` }) as HTMLTextAreaElement | null;
+  const saves = () => notebookSave.mock.calls.map((c) => c[0] as { p_slide_number: number; p_body: string });
+
+  beforeEach(() => {
+    probe.mockResolvedValue({ data: [], error: null, status: 200 });
+    myMarks.mockResolvedValue({ data: [], error: null, status: 200 });
+    notebookRows.mockResolvedValue({ data: [], error: null, status: 200 });
+    notebookSave.mockResolvedValue({ data: "2026-10-27T14:01:00Z", error: null, status: 200 });
+  });
+
+  it("a new student gets Notes; the Layout button sits in the top bar next to Help, with no text on the screen", async () => {
+    show(7);
+    await settle();
+    expect(screenEl()).toHaveAttribute("data-view", "notes");
+    const info = document.querySelector("[data-lecture-info]") as HTMLElement;
+    expect(info).toContainElement(layoutButton());
+    expect(info).toContainElement(screen.getByRole("button", { name: "Help" }));
+    expect(top()).toContainElement(layoutButton());
+    expect(layoutButton().textContent).toBe("");
+    expect(notebookField()).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Slide size" })).toBeInTheDocument();
+    fireEvent.click(layoutButton());
+    expect(screen.getByRole("menuitemradio", { name: "Notes" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("the pick is remembered on this device: a new visit opens in it", async () => {
+    const first = show(7);
+    await settle();
+    pick("Classic");
+    expect(screenEl()).toHaveAttribute("data-view", "classic");
+    expect(localStorage.getItem("backtrack:view")).toBe("classic");
+    first.unmount();
+    show(7);
+    await settle();
+    expect(screenEl()).toHaveAttribute("data-view", "classic");
+    fireEvent.click(layoutButton());
+    expect(screen.getByRole("menuitemradio", { name: "Classic" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("Slides only has no notebook and no handle; the note to the teacher still shows on a lost slide", async () => {
+    show(7);
+    await settle();
+    pick("Slides only");
+    expect(screenEl()).toHaveAttribute("data-view", "slides");
+    expect(notebookField()).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Your notes/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "Slide size" })).not.toBeInTheDocument();
+    expect(screenEl()).not.toHaveAttribute("data-notes");
+    fireEvent.click(lost());
+    const slot = document.querySelector("[data-teacher-slot]") as HTMLElement;
+    expect(slot).toContainElement(screen.getByRole("textbox", { name: "Note for the teacher" }));
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+  });
+
+  it("Classic has the buttons above the notebook (both after the slide), the handle between", async () => {
+    show(7);
+    await settle();
+    pick("Classic");
+    expect(screenEl()).toHaveAttribute("data-view", "classic");
+    const notes = document.querySelector("[data-lecture-notes]") as HTMLElement;
+    expect(panel().compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(notes).toContainElement(notebookField());
+    expect(screen.getByRole("separator", { name: "Slide size" })).toBeInTheDocument();
+  });
+
+  it("switching never loses typed notes: the notebook is sent first, and its text is there again in Notes", async () => {
+    show(7);
+    await settle();
+    const field = notebookField()!;
+    field.focus();
+    fireEvent.change(field, { target: { value: "accrual = earned, not paid" } });
+    expect(notebookSave).not.toHaveBeenCalled();
+    pick("Slides only");
+    await waitFor(() => expect(saves()).toEqual([expect.objectContaining({ p_slide_number: 7, p_body: "accrual = earned, not paid" })]));
+    pick("Classic");
+    expect(notebookField()).toHaveValue("accrual = earned, not paid");
+    pick("Notes");
+    expect(notebookField()).toHaveValue("accrual = earned, not paid");
+    expect(saves()).toHaveLength(1);
+  });
+
+  it("switching never remounts I'm lost or loses its state: the same button, still lost, with its Undo", async () => {
+    show(7);
+    await settle();
+    fireEvent.click(lost());
+    const button = screen.getByRole("button", { name: "Lost on slide 7" });
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    for (const name of ["Slides only", "Classic", "Notes"] as const) {
+      pick(name);
+      expect(screen.getByRole("button", { name: "Lost on slide 7" })).toBe(button);
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      // One markup: the panel stays in the stack, right after the slide, in every layout.
+      expect(panel().parentElement).toHaveAttribute("data-lecture-stage");
+    }
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+  });
+
+  it("a pick in another tab of this browser shows here too", async () => {
+    show(7);
+    await settle();
+    act(() => {
+      localStorage.setItem("backtrack:view", "slides");
+      window.dispatchEvent(new StorageEvent("storage", { key: "backtrack:view" }));
+    });
+    expect(screenEl()).toHaveAttribute("data-view", "slides");
   });
 });

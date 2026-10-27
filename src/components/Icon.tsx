@@ -12,6 +12,8 @@ export const ICON_NAMES = [
   "download",
   "alert",
   "edit",
+  // Batch N: the student's layout menu (drawn in the same 24 px, 1.6 stroke style).
+  "layout",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
