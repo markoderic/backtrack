@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Activity } from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
@@ -6,6 +6,17 @@ const renderPdf = vi.fn();
 vi.mock("@/lib/pdf/renderPdf", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/pdf/renderPdf")>()),
   renderPdf: (...args: unknown[]) => renderPdf(...args),
+}));
+
+const renderPptx = vi.fn();
+vi.mock("@/lib/slides/renderPptx", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/slides/renderPptx")>()),
+  renderPptx: (...args: unknown[]) => renderPptx(...args),
+}));
+const renderImages = vi.fn();
+vi.mock("@/lib/slides/renderImages", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/slides/renderImages")>()),
+  renderImages: (...args: unknown[]) => renderImages(...args),
 }));
 
 const upload = vi.fn();
@@ -37,7 +48,7 @@ const blob = (type: string) => new Blob(["x"], { type });
 
 function choose(name = "slides.pdf") {
   const file = new File(["%PDF-1.7"], name, { type: "application/pdf" });
-  fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText("Slides file"), { target: { files: [file] } });
 }
 
 const startButton = () => screen.getByRole("button", { name: "Start lecture" });
@@ -97,7 +108,7 @@ describe("StartForm", () => {
     expect(rpc).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
     // Back to the drop area, ready for another file.
-    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(screen.getByText("Drop your slides here")).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
   });
 
@@ -133,7 +144,7 @@ describe("StartForm", () => {
     expect(startButton()).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Remove slides.pdf" }));
-    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(screen.getByText("Drop your slides here")).toBeInTheDocument();
     // The cancelled render stops at its next page and its result is ignored.
     expect(() => progress(13, 40)).toThrow();
     finish({ blobs: [blob("image/webp")], firstLines: [""] });
@@ -166,7 +177,7 @@ describe("StartForm", () => {
     // Marko: "no one is gonna read that".
     expect(screen.queryByText("Opens the projector view with the join code.")).toBeNull();
     // Replace and Remove are white buttons; Replace opens the file picker for one file.
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     const click = vi.spyOn(input, "click").mockImplementation(() => {});
     const replaceButton = screen.getByRole("button", { name: "Replace Week 8 slides.pdf" });
     expect(replaceButton).toHaveTextContent("Replace");
@@ -176,7 +187,7 @@ describe("StartForm", () => {
     expect(input.multiple).toBe(false);
     expect(screen.getByRole("button", { name: "Remove Week 8 slides.pdf" })).toHaveTextContent("Remove");
     // Add another PDF opens it for more files.
-    fireEvent.click(screen.getByRole("button", { name: "Add another PDF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add more slides" }));
     expect(click).toHaveBeenCalledTimes(2);
     expect(input.multiple).toBe(true);
   });
@@ -187,7 +198,7 @@ describe("StartForm", () => {
     await chooseReady("week8.pdf");
     fireEvent.click(screen.getByRole("button", { name: "Remove week8.pdf" }));
     expect(screen.queryByText("week8.pdf")).toBeNull();
-    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(screen.getByText("Drop your slides here")).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
     expect(screen.getByTestId("start-status")).toHaveTextContent("");
   });
@@ -198,7 +209,7 @@ describe("StartForm", () => {
       .mockResolvedValueOnce({ blobs: [blob("image/webp"), blob("image/webp"), blob("image/webp")], firstLines: ["a", "b", "c"] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("draft.pdf");
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
     choose("final.pdf");
@@ -214,13 +225,13 @@ describe("StartForm", () => {
       .mockRejectedValueOnce(new NotPdfError());
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("draft.pdf");
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
-    choose("photo.png");
+    choose("photo scan.pdf");
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("draft.pdf")).toBeInTheDocument();
-    expect(screen.queryByText("photo.png")).toBeNull();
+    expect(screen.queryByText("photo scan.pdf")).toBeNull();
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 slides ready"));
     expect(screen.getByRole("button", { name: "Start lecture" })).toBeEnabled();
   });
@@ -231,7 +242,7 @@ describe("StartForm", () => {
       .mockRejectedValueOnce(new PasswordPdfError());
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("draft.pdf");
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
     choose("locked.pdf");
@@ -246,9 +257,9 @@ describe("StartForm", () => {
       .mockResolvedValueOnce({ blobs: [blob("image/jpeg")], firstLines: ["Extra"] });
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("part1.pdf");
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
-    fireEvent.click(screen.getByRole("button", { name: "Add another PDF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add more slides" }));
     choose("part2.pdf");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("3 slides ready"));
     const names = screen.getAllByRole("listitem").map((li) => li.textContent);
@@ -362,7 +373,7 @@ describe("StartForm", () => {
     expect(screen.getByText("2 slides")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Remove / })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Replace / })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add another PDF" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add more slides" })).toBeDisabled();
     expect(startButton()).toBeDisabled();
     expect(nameField()).toBeDisabled();
   });
@@ -683,7 +694,7 @@ describe("StartForm background uploads", () => {
     await chooseReady("draft.pdf");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 slides ready"));
     const old = paths();
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
     choose("final.pdf");
@@ -703,10 +714,10 @@ describe("StartForm background uploads", () => {
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("draft.pdf");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1 slide ready"));
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
-    choose("photo.png");
+    choose("photo scan.pdf");
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(remove).not.toHaveBeenCalled();
     fireEvent.click(startButton());
@@ -719,13 +730,13 @@ describe("StartForm background uploads", () => {
     render(<StartForm courseId={COURSE} existingCount={0} />);
     await chooseReady("draft.pdf");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1 slide ready"));
-    const input = screen.getByLabelText("PDF file") as HTMLInputElement;
+    const input = screen.getByLabelText("Slides file") as HTMLInputElement;
     vi.spyOn(input, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: "Replace draft.pdf" }));
     choose("final.pdf");
     fireEvent.click(await screen.findByRole("button", { name: "Remove final.pdf" }));
     expect(remove).toHaveBeenCalledWith(paths());
-    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(screen.getByText("Drop your slides here")).toBeInTheDocument();
   });
 });
 
@@ -755,7 +766,7 @@ describe("StartForm shown again after a start", () => {
     view.rerender(at("visible"));
 
     expect(screen.queryByText("week3.pdf")).toBeNull();
-    expect(screen.getByText("Drop the slides PDF here")).toBeInTheDocument();
+    expect(screen.getByText("Drop your slides here")).toBeInTheDocument();
     expect(screen.getByTestId("start-status")).toHaveTextContent("");
     expect(nameField()).toBeEnabled();
     expect(nameField().value).toMatch(/^Lecture 3, /);
@@ -851,5 +862,119 @@ describe("StartForm shown again after a start", () => {
     expect(screen.getByText("keep.pdf")).toBeInTheDocument();
     expect(startButton()).toBeEnabled();
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("StartForm, other slide files and Google Slides", () => {
+  const pick = (...files: File[]) => fireEvent.change(screen.getByLabelText("Slides file"), { target: { files } });
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    renderPptx.mockReset();
+    renderImages.mockReset();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("offers PDF, PowerPoint and images in the picker and says so", () => {
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    const accept = (screen.getByLabelText("Slides file") as HTMLInputElement).accept;
+    for (const a of [".pdf", ".pptx", ".png", ".jpg", ".jpeg"]) expect(accept.split(",")).toContain(a);
+    expect(screen.getByText("PDF, PowerPoint, PNG or JPEG")).toBeInTheDocument();
+  });
+
+  it("takes images picked together as one part, in name order, and starts the lecture with them", async () => {
+    renderImages.mockImplementation(async (files: File[], onProgress: (d: number, t: number) => void) => {
+      onProgress(files.length, files.length);
+      return { blobs: files.map(() => blob("image/webp")), firstLines: files.map(() => "") };
+    });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    pick(
+      new File(["a"], "Slide10.png", { type: "image/png" }),
+      new File(["b"], "Slide2.png", { type: "image/png" }),
+      new File(["c"], "Slide1.jpg", { type: "image/jpeg" }),
+    );
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(renderImages).toHaveBeenCalledTimes(1);
+    expect((renderImages.mock.calls[0][0] as File[]).map((f) => f.name)).toEqual(["Slide1.jpg", "Slide2.png", "Slide10.png"]);
+    expect(screen.getByText("3 images")).toBeInTheDocument();
+    expect(screen.getByText(/^3 slides, /)).toBeInTheDocument();
+    expect(renderPdf).not.toHaveBeenCalled();
+    fireEvent.click(startButton());
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    expect((rpc.mock.calls[0][1] as { p_slides: unknown[] }).p_slides).toHaveLength(3);
+  });
+
+  it("renders a PowerPoint file and says it can look a little different", async () => {
+    renderPptx.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["Title", ""] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    pick(new File(["PK"], "Week 8.pptx"));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(renderPptx).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Week 8.pptx")).toBeInTheDocument();
+    expect(screen.getByTestId("pptx-note")).toHaveTextContent("For an exact copy, upload a PDF.");
+  });
+
+  it("says what to do with a file it cannot read, and still takes the rest of the pick", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp")], firstLines: [""] });
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    pick(new File(["x"], "old deck.ppt"), new File(["%PDF-1.7"], "ok.pdf", { type: "application/pdf" }));
+    expect(await screen.findByText("That's an old PowerPoint file (.ppt). Save it as .pptx or PDF and try again.")).toBeInTheDocument();
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(screen.getByText("ok.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("old deck.ppt")).toBeNull();
+  });
+
+  it("shows the PowerPoint message when a deck cannot be read", async () => {
+    const { SlidesFileError } = await import("@/lib/slides/slideFiles");
+    renderPptx.mockRejectedValue(new SlidesFileError("Could not read that PowerPoint file. Try saving it as a PDF and uploading that."));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    pick(new File(["PK"], "broken.pptx"));
+    expect(await screen.findByText("Could not read that PowerPoint file. Try saving it as a PDF and uploading that.")).toBeInTheDocument();
+    expect(screen.getByText("Drop your slides here")).toBeInTheDocument();
+  });
+
+  const linkField = () => screen.getByLabelText("Or add a Google Slides link") as HTMLInputElement;
+  const ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-ab";
+
+  it("brings in a shared Google Slides deck as a PDF named after the deck", async () => {
+    renderPdf.mockResolvedValue({ blobs: [blob("image/webp"), blob("image/webp")], firstLines: ["", ""] });
+    fetchMock.mockResolvedValue(
+      new Response("%PDF-1.7", { headers: { "content-type": "application/pdf", "X-Slides-Name": encodeURIComponent("Week 8 deck") } }),
+    );
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    fireEvent.change(linkField(), { target: { value: `https://docs.google.com/presentation/d/${ID}/edit?usp=sharing` } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(fetchMock.mock.calls[0][0]).toBe(`/teach/google-slides?id=${ID}`);
+    expect(screen.getByText("Week 8 deck.pdf")).toBeInTheDocument();
+    expect((renderPdf.mock.calls[0][0] as File).type).toBe("application/pdf");
+    expect(linkField().value).toBe("");
+  });
+
+  it("Enter in the link field adds the link and never starts a lecture", async () => {
+    fetchMock.mockResolvedValue(Response.json({ error: "not_shared" }, { status: 404 }));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    fireEvent.change(linkField(), { target: { value: `https://docs.google.com/presentation/d/${ID}/edit` } });
+    fireEvent.keyDown(linkField(), { key: "Enter" });
+    expect(await screen.findByText(/set General access to Anyone with the link/)).toBeInTheDocument();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("says a link is not a Google Slides link without asking the server", async () => {
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    fireEvent.change(linkField(), { target: { value: "https://example.com/deck" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByText("That isn't a Google Slides link. Copy it from Share, then Copy link.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says so when Google cannot be reached", async () => {
+    fetchMock.mockRejectedValue(new TypeError("offline"));
+    render(<StartForm courseId={COURSE} existingCount={0} />);
+    fireEvent.change(linkField(), { target: { value: `https://docs.google.com/presentation/d/${ID}` } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByText("Couldn't reach Google Slides. Try again.")).toBeInTheDocument();
   });
 });

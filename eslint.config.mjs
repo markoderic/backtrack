@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The built PowerPoint renderer (scripts/build-pptx-renderer.mjs), minified.
+    "public/pptx-renderer/render.js",
   ]),
 ]);
 

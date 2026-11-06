@@ -29,7 +29,7 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Blob | n
 
 // WebP first. A browser that cannot encode it hands back a PNG, so check the type
 // of what came back and use JPEG instead.
-async function exportPage(canvas: HTMLCanvasElement, webpWorks: { value: boolean }): Promise<Blob> {
+export async function exportPage(canvas: HTMLCanvasElement, webpWorks: { value: boolean }): Promise<Blob> {
   if (webpWorks.value) {
     const webp = await canvasToBlob(canvas, "image/webp");
     if (webp && webp.type === "image/webp") return webp;

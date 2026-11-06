@@ -6,7 +6,7 @@
  * (`<lecture id>/<n>.webp` or `.jpg`, what the storage policy and start_lecture accept). n is a
  * new number for every upload, in the order the pages arrive, so a PDF picked alone gets 1 to N
  * and nothing ever lands on a name that is already taken (an upload that failed may have landed
- * after all; Replace and Add another PDF add their own numbers). start_lecture is then given the
+ * after all; Replace and Add more slides add their own numbers). start_lecture is then given the
  * slides in the order shown, each with the path its image went to.
  *
  * Images of a PDF that is removed or replaced are taken back out right away, including one that

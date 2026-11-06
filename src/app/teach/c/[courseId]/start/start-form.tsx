@@ -4,7 +4,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type ImgHTMLAttributes } 
 import { useRouter } from "next/navigation";
 import { createBrowserSupabase } from "@/lib/supabase/browser";
 import { defaultLectureName } from "@/lib/lectureName";
-import { renderPdf, NotPdfError, PasswordPdfError } from "@/lib/pdf/renderPdf";
+import { NotPdfError, PasswordPdfError } from "@/lib/pdf/renderPdf";
+import { renderSlides } from "@/lib/slides/renderSlides";
+import { SLIDES_ACCEPT, SlidesFileError, groupPicked, kindOf, partName } from "@/lib/slides/slideFiles";
+import { NOT_SHARED_TEXT, googleSlidesId } from "@/lib/slides/googleSlides";
 import { ButtonPrimary, buttonSecondaryClass } from "@/components/ButtonPrimary";
 import { Icon } from "@/components/Icon";
 import { fieldClass, labelClass } from "../../../ui";
@@ -19,7 +22,8 @@ class UploadError extends Error {}
 class StartError extends Error {}
 
 /**
- * One picked PDF. Its pages are turned into images as soon as it is picked (Figma 33:1014, "so
+ * One picked part: a PDF, a PowerPoint file, or the images picked together (groupPicked). Its
+ * slides are turned into images as soon as it is picked (Figma 33:1014, "so
  * the progress is real"), and each image is uploaded in the background as soon as it is made
  * (Marko, hand test 2), with the progress on the file's card. Start lecture then only waits for
  * any upload still running (and shows it) and creates the lecture in one database call (D5: no
@@ -28,7 +32,7 @@ class StartError extends Error {}
  */
 type Part = {
   key: number;
-  file: File;
+  files: File[];
   prep:
     | { status: "preparing"; done: number; total: number }
     | { status: "ready"; blobs: Blob[]; firstLines: string[] };
@@ -44,6 +48,17 @@ function fileSize(bytes: number): string {
 }
 
 const slidesWord = (n: number) => `${n} ${n === 1 ? "slide" : "slides"}`;
+
+/** The kind of a part (its first file's), or null for one the form could not tell. */
+function kindOfPart(files: File[]) {
+  try {
+    return kindOf(files[0]);
+  } catch {
+    return null;
+  }
+}
+
+const partSize = (files: File[]) => files.reduce((n, f) => n + f.size, 0);
 
 function ProgressBar({
   done,
@@ -126,6 +141,9 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       ),
   );
   const [dragging, setDragging] = useState(false);
+  // The Google Slides link being typed, and whether its PDF is on its way.
+  const [googleLink, setGoogleLink] = useState("");
+  const [gettingGoogle, setGettingGoogle] = useState(false);
   const touchedName = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const pickTarget = useRef<PickTarget>({ mode: "add" });
@@ -171,6 +189,8 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     setStarting(false);
     setError(null);
     setDragging(false);
+    setGoogleLink("");
+    setGettingGoogle(false);
     setName(defaultLectureName(existingCount, new Date()));
     router.refresh();
   }, [existingCount, router, uploads]);
@@ -180,7 +200,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   // was still being prepared: that PDF starts preparing again, so it is never stuck halfway.
   useEffect(() => {
     for (const part of partsNow.current) {
-      if (part.prep.status === "preparing" && !alive.current.has(part.key)) void prepare(part.key, part.file);
+      if (part.prep.status === "preparing" && !alive.current.has(part.key)) void prepare(part.key, part.files);
     }
     const running = alive.current;
     return () => running.clear();
@@ -191,7 +211,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   const update = (key: number, prep: Part["prep"]) =>
     setParts((list) => list.map((p) => (p.key === key ? { ...p, prep } : p)));
 
-  async function prepare(key: number, file: File) {
+  async function prepare(key: number, files: File[]) {
     // A fresh run: anything an earlier run of this PDF put up (a render stopped when the page was
     // hidden) goes, and its pages go up again as they are made.
     uploads.begin(key);
@@ -199,8 +219,8 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     alive.current.set(key, run);
     const mine = () => alive.current.get(key) === run;
     try {
-      const result = await renderPdf(
-        file,
+      const result = await renderSlides(
+        files,
         (done, total) => {
           // Throwing here stops the render at this page (renderPdf cleans up in its finally).
           if (!mine()) throw new Error("cancelled");
@@ -233,23 +253,28 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
       replaced.current.delete(key);
       if (old) {
         setParts((list) => list.map((p) => (p.key === key ? old : p)));
-        if (old.prep.status !== "ready") void prepare(old.key, old.file);
+        if (old.prep.status !== "ready") void prepare(old.key, old.files);
       } else {
         setParts((list) => list.filter((p) => p.key !== key));
       }
-      if (e instanceof NotPdfError || e instanceof PasswordPdfError) setError(e.message);
-      else setError("Could not read that PDF. Try again.");
+      if (e instanceof NotPdfError || e instanceof PasswordPdfError || e instanceof SlidesFileError) setError(e.message);
+      else setError(kindOfPart(files) === "pdf" ? "Could not read that PDF. Try again." : "Could not read that file. Try again.");
     }
   }
 
-  /** New PDFs go after the others; a replaced one keeps its place in the order. */
+  /**
+   * New parts go after the others; a replaced one keeps its place in the order. A file the form
+   * cannot read is left out with a message (the rest of the pick still goes in).
+   */
   function pick(files: FileList | File[] | null | undefined, target: PickTarget = { mode: "add" }) {
     const picked = Array.from(files ?? []);
     if (picked.length === 0 || starting) return;
-    setError(null);
-    const fresh = (target.mode === "replace" ? picked.slice(0, 1) : picked).map((file) => {
+    const { groups, error: pickError } = groupPicked(picked);
+    setError(pickError);
+    if (groups.length === 0) return;
+    const fresh = (target.mode === "replace" ? groups.slice(0, 1) : groups).map((group) => {
       const key = ++nextKey.current;
-      return { key, file, prep: { status: "preparing", done: 0, total: 0 } } as Part;
+      return { key, files: group, prep: { status: "preparing", done: 0, total: 0 } } as Part;
     });
     if (target.mode === "replace") {
       const old = partsNow.current.find((p) => p.key === target.key);
@@ -259,7 +284,45 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
     } else {
       setParts((list) => [...list, ...fresh]);
     }
-    for (const part of fresh) void prepare(part.key, part.file);
+    for (const part of fresh) void prepare(part.key, part.files);
+  }
+
+  /**
+   * A Google Slides link: the deck comes back as a PDF through /teach/google-slides (Google's export
+   * does not answer the browser directly) and is added like a picked PDF.
+   */
+  async function addGoogleSlides() {
+    if (starting || gettingGoogle) return;
+    const parsed = googleSlidesId(googleLink);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    setError(null);
+    setGettingGoogle(true);
+    try {
+      const res = await fetch(`/teach/google-slides?id=${encodeURIComponent(parsed.id)}`, { cache: "no-store" });
+      if (res.status === 401) throw new SlidesFileError("Sign in again, then add the link.");
+      if (res.status === 413) throw new SlidesFileError("That deck is too big to bring in. Download it as a PDF and upload that.");
+      if (res.status === 404) throw new SlidesFileError(NOT_SHARED_TEXT);
+      if (!res.ok) throw new Error(String(res.status));
+      const pdf = await res.blob();
+      let deckName = "Google Slides";
+      const header = res.headers.get("X-Slides-Name");
+      if (header) {
+        try {
+          deckName = decodeURIComponent(header) || deckName;
+        } catch {
+          // Keeps "Google Slides".
+        }
+      }
+      pick([new File([pdf], `${deckName}.pdf`, { type: "application/pdf" })]);
+      setGoogleLink("");
+    } catch (e) {
+      setError(e instanceof SlidesFileError ? e.message : "Couldn't reach Google Slides. Try again.");
+    } finally {
+      setGettingGoogle(false);
+    }
   }
 
   function openPicker(target: PickTarget) {
@@ -358,6 +421,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
   }
 
   const preparing = parts.find((p) => p.prep.status === "preparing");
+  const hasPowerPoint = parts.some((p) => kindOfPart(p.files) === "pptx");
   const preparingText = (prep: { done: number; total: number }) =>
     prep.total > 0 ? `Preparing slide ${prep.done} of ${prep.total}` : "Preparing slides";
   const uploadText = `Uploading ${sent.done} of ${sent.total}`;
@@ -430,11 +494,11 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
         }
       >
         <input
-          id="pdf-file"
+          id="slides-file"
           ref={fileInput}
           type="file"
-          accept="application/pdf,.pdf"
-          aria-label="PDF file"
+          accept={SLIDES_ACCEPT}
+          aria-label="Slides file"
           multiple
           disabled={starting}
           onChange={(e) => {
@@ -449,11 +513,12 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
 
         {parts.length === 0 ? (
           <label
-            htmlFor="pdf-file"
+            htmlFor="slides-file"
             className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-3 p-6 text-center"
           >
             <Icon name="upload" size={28} />
-            <span className="type-body-strong text-ink">Drop the slides PDF here</span>
+            <span className="type-body-strong text-ink">Drop your slides here</span>
+            <span className="type-small text-secondary">PDF, PowerPoint, PNG or JPEG</span>
             {/* Looks like the white button; the whole area is the label that opens the picker. */}
             <span aria-hidden className={`${buttonSecondaryClass} pointer-events-none mt-1`}>
               Choose a file
@@ -467,11 +532,14 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                   <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2">
                     <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-baseline gap-x-3 gap-y-0.5">
                       {parts.length > 1 && <span className="type-small-strong text-secondary">{i + 1}</span>}
-                      <p className="min-w-0 truncate type-body-strong text-ink">{part.file.name}</p>
+                      <p className="min-w-0 truncate type-body-strong text-ink">{partName(part.files)}</p>
                       <p className="type-small whitespace-nowrap text-secondary">
                         {(() => {
                           const pages = part.prep.status === "ready" ? part.prep.blobs.length : part.prep.total;
-                          return pages > 0 ? `${pages} ${pages === 1 ? "page" : "pages"}, ${fileSize(part.file.size)}` : fileSize(part.file.size);
+                          const size = fileSize(partSize(part.files));
+                          // A PDF has pages; a PowerPoint file or a set of images has slides.
+                          const word = kindOfPart(part.files) === "pdf" ? (pages === 1 ? "page" : "pages") : pages === 1 ? "slide" : "slides";
+                          return pages > 0 ? `${pages} ${word}, ${size}` : size;
                         })()}
                       </p>
                     </div>
@@ -479,7 +547,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
-                        aria-label={`Replace ${part.file.name}`}
+                        aria-label={`Replace ${partName(part.files)}`}
                         disabled={busy}
                         onClick={() => openPicker({ mode: "replace", key: part.key })}
                         className={buttonSecondaryClass}
@@ -488,7 +556,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                       </button>
                       <button
                         type="button"
-                        aria-label={`Remove ${part.file.name}`}
+                        aria-label={`Remove ${partName(part.files)}`}
                         disabled={busy}
                         onClick={() => removePart(part.key)}
                         className={buttonSecondaryClass}
@@ -530,7 +598,7 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
                     const text = `Uploading ${u.done} of ${total}`;
                     return (
                       <>
-                        <ProgressBar done={total + u.done} total={total * 2} label={`Uploading ${part.file.name}`} text={text} />
+                        <ProgressBar done={total + u.done} total={total * 2} label={`Uploading ${partName(part.files)}`} text={text} />
                         <p aria-hidden className="type-small text-secondary">
                           {text}
                         </p>
@@ -565,6 +633,13 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
               </div>
             )}
 
+            {hasPowerPoint && (
+              <p data-testid="pptx-note" className="type-small text-secondary">
+                PowerPoint slides are drawn here, so fonts, bullets and charts can look a little different. For an
+                exact copy, upload a PDF.
+              </p>
+            )}
+
             <button
               type="button"
               disabled={busy}
@@ -572,10 +647,45 @@ export function StartForm({ courseId, existingCount }: { courseId: string; exist
               className={`${buttonSecondaryClass} w-fit`}
             >
               <Icon name="upload" size={18} />
-              Add another PDF
+              Add more slides
             </button>
           </div>
         )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label htmlFor="google-slides-link" className={labelClass}>
+          Or add a Google Slides link
+        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            id="google-slides-link"
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            value={googleLink}
+            placeholder="https://docs.google.com/presentation/d/..."
+            disabled={starting || gettingGoogle}
+            onChange={(e) => setGoogleLink(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter adds the link; it never starts the lecture.
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addGoogleSlides();
+              }
+            }}
+            className={`${fieldClass} min-w-0 flex-1 basis-64`}
+          />
+          <button
+            type="button"
+            disabled={starting || gettingGoogle || googleLink.trim() === ""}
+            onClick={() => void addGoogleSlides()}
+            className={buttonSecondaryClass}
+          >
+            {gettingGoogle ? "Getting slides" : "Add"}
+          </button>
+        </div>
+        <p className="type-small text-secondary">The deck has to be shared as Anyone with the link.</p>
       </div>
 
       <p role="status" aria-live="polite" data-testid="start-status" className="sr-only">
