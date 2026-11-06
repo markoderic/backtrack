@@ -614,6 +614,10 @@ export function StudentLecture({ lectureId, lectureName, courseName, initialSlid
         <div ref={setNoteSlot} data-teacher-slot="" className="shrink-0 empty:hidden [&:not(:empty)]:pb-3" />
         {view !== "slides" && (
           <>
+            {/* Says the notebook is private, so it is not mixed up with the note to the teacher above it. */}
+            <p data-note-label="private" className="shrink-0 pb-1 type-caption text-secondary">
+              Private, only you see these
+            </p>
             <NotebookField
               aria-label={`Your notes, slide ${notebookSlide}`}
               placeholder="Your notes"

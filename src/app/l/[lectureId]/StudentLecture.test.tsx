@@ -453,6 +453,9 @@ describe("StudentLecture", () => {
     expect(slot).toContainElement(teacherNote());
     // Above the notebook itself.
     expect(teacherNote().compareDocumentPosition(screen.getByRole("textbox", { name: "Your notes, slide 7" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Each box says who sees it (Demo Day, Nov 2: a student could not tell the two apart).
+    expect(slot).toHaveTextContent("Sent to your teacher");
+    expect(notes.querySelector('[data-note-label="private"]')).toHaveTextContent("Private, only you see these");
     await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
     teacherNote().focus();
     fireEvent.change(teacherNote(), { target: { value: "lost on the accrual" } });

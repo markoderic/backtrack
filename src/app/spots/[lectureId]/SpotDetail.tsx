@@ -654,6 +654,7 @@ export function SpotDetail({
             {lost && spot && (
               // The note to the teacher: what the teacher reads, typed on the page.
               <div data-teacher-note="" className="flex flex-col gap-1">
+                <p data-note-label="teacher" className="pl-4 type-caption text-lost">Sent to your teacher</p>
                 <div className="flex items-start gap-2">
                   <span aria-hidden className="mt-2 size-2 shrink-0 rounded-full bg-lost" />
                   <NotebookField
@@ -695,6 +696,7 @@ export function SpotDetail({
             {notebook && (
               // The slide's notebook note, typed on the page like the live screen's notebook.
               <div data-spot-notebook="" className="flex flex-col gap-1">
+                <p data-note-label="private" className="type-caption text-secondary">Private, only you see these</p>
                 <NotebookField
                   grow
                   rows={4}

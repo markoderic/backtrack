@@ -891,42 +891,48 @@ export function LostButton({
     },
   };
 
-  // The note to the teacher: a red dot and a line typed straight on the page.
+  // The note to the teacher: a red dot and a line typed straight on the page, under a label that says the
+  // teacher sees it (Demo Day, Nov 2: a student could not tell it apart from the private notebook).
   const noteLine = (
-    <div data-teacher-note="" className="flex min-w-0 animate-fade-in items-start gap-2" {...trackFocus}>
-      <span aria-hidden className="mt-2 size-2 shrink-0 rounded-full bg-lost" />
-      <NotebookField
-        grow
-        rows={1}
-        maxRows={4}
-        aria-label={otherSlide !== null ? `Note for the teacher, slide ${otherSlide}` : "Note for the teacher"}
-        aria-describedby={counter !== null ? counterId : undefined}
-        placeholder="Note for the teacher"
-        enterKeyHint="done"
-        value={noteText}
-        onValue={onNoteValue}
-        onKeyDown={onNoteKeyDown}
-        onFocus={onNoteFocus}
-        onBlur={onNoteBlur}
-        className="flex-1"
-      />
-      {/* At least 64 px, so "Saved" coming and going does not change the field's width; one line, never
-          wrapped ("Slide 12" and "Saved" together widen it, and the field fits itself again). */}
-      <span className="flex min-h-6 min-w-16 shrink-0 items-center justify-end gap-2 whitespace-nowrap type-caption text-secondary">
-        {otherSlide !== null && <span data-note-slide="">Slide {otherSlide}</span>}
-        {counter !== null ? (
-          <span id={counterId} data-counter="">
-            {counter} left
-          </span>
-        ) : (
-          noteSaved > 0 && (
-            // Seen, not read out twice: the status line already says it.
-            <span key={noteSaved} aria-hidden data-note-saved="" className="animate-fade-in">
-              Saved
+    <div data-teacher-note-block="" className="flex min-w-0 animate-fade-in flex-col gap-1" {...trackFocus}>
+      <p data-note-label="teacher" className="pl-4 type-caption text-lost">
+        Sent to your teacher
+      </p>
+      <div data-teacher-note="" className="flex min-w-0 items-start gap-2">
+        <span aria-hidden className="mt-2 size-2 shrink-0 rounded-full bg-lost" />
+        <NotebookField
+          grow
+          rows={1}
+          maxRows={4}
+          aria-label={otherSlide !== null ? `Note for the teacher, slide ${otherSlide}` : "Note for the teacher"}
+          aria-describedby={counter !== null ? counterId : undefined}
+          placeholder="Note for the teacher"
+          enterKeyHint="done"
+          value={noteText}
+          onValue={onNoteValue}
+          onKeyDown={onNoteKeyDown}
+          onFocus={onNoteFocus}
+          onBlur={onNoteBlur}
+          className="flex-1"
+        />
+        {/* At least 64 px, so "Saved" coming and going does not change the field's width; one line, never
+            wrapped ("Slide 12" and "Saved" together widen it, and the field fits itself again). */}
+        <span className="flex min-h-6 min-w-16 shrink-0 items-center justify-end gap-2 whitespace-nowrap type-caption text-secondary">
+          {otherSlide !== null && <span data-note-slide="">Slide {otherSlide}</span>}
+          {counter !== null ? (
+            <span id={counterId} data-counter="">
+              {counter} left
             </span>
-          )
-        )}
-      </span>
+          ) : (
+            noteSaved > 0 && (
+              // Seen, not read out twice: the status line already says it.
+              <span key={noteSaved} aria-hidden data-note-saved="" className="animate-fade-in">
+                Saved
+              </span>
+            )
+          )}
+        </span>
+      </div>
     </div>
   );
 
