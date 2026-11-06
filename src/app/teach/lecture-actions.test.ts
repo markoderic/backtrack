@@ -23,8 +23,8 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-import { deleteLecture } from "./lecture-actions";
-import { LIVE_LECTURE_ERROR, DELETE_FAILED_ERROR } from "./delete-lecture-copy";
+import { deleteLecture, resumeLecture } from "./lecture-actions";
+import { LIVE_LECTURE_ERROR, DELETE_FAILED_ERROR, RESUME_FAILED_ERROR, RESUME_NOT_READY_ERROR } from "./delete-lecture-copy";
 
 const LECTURE = "6b2895f2-5ffc-47ed-9065-8168a678f1ce";
 const COURSE = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -144,5 +144,39 @@ describe("cleanupOrphanUploads", () => {
     expect(await cleanupOrphanUploads()).toBe(0);
     expect(log).toHaveBeenCalledTimes(2);
     log.mockRestore();
+  });
+});
+
+describe("resumeLecture", () => {
+  it("opens the lecture again and goes to its projector", async () => {
+    h.rpc.mockResolvedValue({ data: [{ lecture_id: LECTURE, code: "482916" }], error: null });
+    await expect(resumeLecture(LECTURE)).rejects.toThrow(`REDIRECT:/teach/l/${LECTURE}/present`);
+    expect(h.rpc).toHaveBeenCalledWith("resume_lecture", { p_lecture_id: LECTURE });
+    expect(h.revalidatePath).toHaveBeenCalledWith("/teach", "layout");
+  });
+
+  it("refuses a malformed id without asking the database", async () => {
+    expect(await resumeLecture("not-a-uuid")).toEqual({ error: RESUME_FAILED_ERROR });
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("sends a signed out teacher to sign in", async () => {
+    h.user = null;
+    await expect(resumeLecture(LECTURE)).rejects.toThrow("REDIRECT:/teach");
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("says migration 0021 has to run when the database has no resume_lecture yet", async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function" } });
+    expect(await resumeLecture(LECTURE)).toEqual({ error: RESUME_NOT_READY_ERROR });
+  });
+
+  it("says try again when the database refuses (not the owner) or answers oddly", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "Not allowed." } });
+    expect(await resumeLecture(LECTURE)).toEqual({ error: RESUME_FAILED_ERROR });
+    h.rpc.mockResolvedValue({ data: [], error: null });
+    expect(await resumeLecture(LECTURE)).toEqual({ error: RESUME_FAILED_ERROR });
+    expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 });

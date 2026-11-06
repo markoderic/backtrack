@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { DeleteLectureDialog } from "./DeleteLecture";
+import { useResumeLecture } from "./ResumeLecture";
 import { moveFocus, usePopup } from "./usePopup";
 
 /** The menu items: 44 px tall rows, Small strong, a quiet reason line under one that is off. */
@@ -16,7 +17,8 @@ const itemClass =
  * The ⋯ button at the end of a lecture row (Marko, 2:05 PM: in place of a Delete that only
  * showed on hover). Always visible, 44 px. It opens a small menu:
  * - Download CSV: this lecture's export (an ended lecture; a live one says "When the class ends"),
- * - Resume: back to the projector (a live lecture only, for a projector closed by accident),
+ * - Resume: back to the projector (a live lecture, for a projector closed by accident), or Resume lecture
+ *   (an ended one: it goes live again with a new code, on the slide it was on; Marko, Nov 6),
  * - Delete: the Delete lecture confirm (an ended lecture; a live one says "End the class first").
  * The menu is rendered into document.body (fixed, z-50), so the row's own animation can never put
  * a later row on top of it (no stacking trap). Keyboard: Enter, Space or ↓ opens it on the first
@@ -26,6 +28,7 @@ const itemClass =
 export function LectureMenu({ lectureId, lectureName, live }: { lectureId: string; lectureName: string; live: boolean }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const resume = useResumeLecture(lectureId);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const startAt = useRef<"first" | "last">("first");
@@ -78,25 +81,38 @@ export function LectureMenu({ lectureId, lectureName, live }: { lectureId: strin
   const deleteReason = `${ids}-delete`;
   return (
     <>
-      <button
-        ref={trigger}
-        type="button"
-        aria-label={`More for ${lectureName}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => (open ? close(false) : show("first"))}
-        onKeyDown={onTriggerKeyDown}
-        className={
-          "press focus-ring flex size-11 shrink-0 items-center justify-center gap-[3px] rounded-md border border-transparent text-ink " +
-          "hover:border-hairline hover:bg-surface aria-expanded:border-hairline aria-expanded:bg-surface"
-        }
-      >
-        {/* Three plain dots (CSS circles), the ⋯. */}
-        <span aria-hidden className="size-1 rounded-full bg-current" />
-        <span aria-hidden className="size-1 rounded-full bg-current" />
-        <span aria-hidden className="size-1 rounded-full bg-current" />
-      </button>
+      <span className="relative flex shrink-0">
+        <button
+          ref={trigger}
+          type="button"
+          aria-label={`More for ${lectureName}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
+          onClick={() => (open ? close(false) : show("first"))}
+          onKeyDown={onTriggerKeyDown}
+          className={
+            "press focus-ring flex size-11 shrink-0 items-center justify-center gap-[3px] rounded-md border border-transparent text-ink " +
+            "hover:border-hairline hover:bg-surface aria-expanded:border-hairline aria-expanded:bg-surface"
+          }
+        >
+          {/* Three plain dots (CSS circles), the ⋯. */}
+          <span aria-hidden className="size-1 rounded-full bg-current" />
+          <span aria-hidden className="size-1 rounded-full bg-current" />
+          <span aria-hidden className="size-1 rounded-full bg-current" />
+        </button>
+        {/* Resume lecture from the menu: "Resuming", or why it did not work, in a small note under the ⋯
+            (out of the row's flow, so a long reason never squeezes the row). */}
+        {!live && (resume.pending || resume.error) && (
+          <span
+            role={resume.error ? "alert" : "status"}
+            data-testid="resume-note"
+            className="absolute top-full right-0 z-10 mt-1 w-64 animate-fade-in rounded-md border border-hairline bg-surface px-3 py-2 type-small text-ink shadow-popover"
+          >
+            {resume.error ?? "Resuming"}
+          </span>
+        )}
+      </span>
       {open &&
         typeof document !== "undefined" &&
         createPortal(
@@ -123,10 +139,25 @@ export function LectureMenu({ lectureId, lectureName, live }: { lectureId: strin
                 Download CSV
               </a>
             )}
-            {live && (
+            {live ? (
               <Link role="menuitem" tabIndex={-1} href={`/teach/l/${lectureId}/present`} onClick={() => close(false)} className={itemClass}>
                 Resume
               </Link>
+            ) : (
+              <button
+                role="menuitem"
+                tabIndex={-1}
+                type="button"
+                aria-disabled={resume.pending || undefined}
+                onClick={() => {
+                  if (resume.pending) return;
+                  close(false);
+                  void resume.resume();
+                }}
+                className={itemClass}
+              >
+                Resume lecture
+              </button>
             )}
             {live ? (
               <div role="menuitem" tabIndex={-1} aria-disabled aria-describedby={deleteReason} className={itemClass}>

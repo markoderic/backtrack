@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Activity } from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
-const h = vi.hoisted(() => ({ deleteLecture: vi.fn() }));
-vi.mock("./lecture-actions", () => ({ deleteLecture: h.deleteLecture }));
+const h = vi.hoisted(() => ({ deleteLecture: vi.fn(), resumeLecture: vi.fn() }));
+vi.mock("./lecture-actions", () => ({ deleteLecture: h.deleteLecture, resumeLecture: h.resumeLecture }));
 
 import { LectureMenu } from "./LectureMenu";
 
@@ -15,6 +15,7 @@ const items = () => within(screen.getByRole("menu")).getAllByRole("menuitem");
 
 beforeEach(() => {
   h.deleteLecture.mockReset().mockResolvedValue({ error: "Could not delete the lecture. Try again." });
+  h.resumeLecture.mockReset().mockResolvedValue({ error: "Could not resume the lecture. Try again." });
 });
 
 describe("LectureMenu (the ⋯ on a lecture row)", () => {
@@ -28,15 +29,36 @@ describe("LectureMenu (the ⋯ on a lecture row)", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("an ended lecture: Download CSV (this lecture's export) and Delete, no Resume", () => {
+  it("an ended lecture: Download CSV (this lecture's export), Resume lecture and Delete", () => {
     render(<LectureMenu lectureId={ID} lectureName={NAME} live={false} />);
     fireEvent.click(trigger());
     expect(trigger()).toHaveAttribute("aria-expanded", "true");
-    expect(items().map((i) => i.textContent)).toEqual(["Download CSV", "Delete"]);
+    expect(items().map((i) => i.textContent)).toEqual(["Download CSV", "Resume lecture", "Delete"]);
     const csv = screen.getByRole("menuitem", { name: "Download CSV" });
     expect(csv).toHaveAttribute("href", `/teach/l/${ID}/export`);
     expect(csv).toHaveAttribute("download");
-    expect(screen.queryByRole("menuitem", { name: /Resume/ })).toBeNull();
+    // Not the live lecture's link to the projector: it opens the ended lecture again first.
+    expect(screen.getByRole("menuitem", { name: "Resume lecture" })).not.toHaveAttribute("href");
+  });
+
+  it("Resume lecture on an ended lecture opens it again (the action), and says why when it can't", async () => {
+    render(<LectureMenu lectureId={ID} lectureName={NAME} live={false} />);
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Resume lecture" }));
+    expect(h.resumeLecture).toHaveBeenCalledWith(ID);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not resume the lecture. Try again.");
+  });
+
+  it("Resume lecture says Resuming while it works and nothing more when the action redirects", async () => {
+    let finish: (v: unknown) => void = () => {};
+    h.resumeLecture.mockReturnValue(new Promise((_, reject) => (finish = reject)));
+    render(<LectureMenu lectureId={ID} lectureName={NAME} live={false} />);
+    fireEvent.click(trigger());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Resume lecture" }));
+    expect(await screen.findByTestId("resume-note")).toHaveTextContent("Resuming");
+    finish(Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/teach/l/x/present;307;" }));
+    await waitFor(() => expect(screen.queryByTestId("resume-note")).toBeNull());
   });
 
   it("a live lecture: Resume goes to the projector; Download CSV and Delete are off and say why", () => {

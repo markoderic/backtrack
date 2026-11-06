@@ -200,6 +200,14 @@ describe("PastBody", () => {
     expect(exportLink.className).not.toContain("underline");
   });
 
+  it("has Resume lecture, the black button, first in the heading", async () => {
+    maybeSingle.mockResolvedValue({ data: lecture, error: null });
+    render(await PastBody({ params }));
+    const resume = screen.getByRole("button", { name: "Resume lecture" });
+    expect(resume.className).toContain("bg-ink");
+    expect(resume.compareDocumentPosition(screen.getByRole("link", { name: "Export this lecture" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("leaves joined and lost taps to the data view's summary row: the heading reads no counts", async () => {
     maybeSingle.mockResolvedValue({ data: lecture, error: null });
     render(await PastBody({ params }));

@@ -42,7 +42,7 @@ describe("PastLectures", () => {
     const menu = screen.getByRole("menu");
     expect(menu).toHaveTextContent("Download CSV");
     expect(menu).toHaveTextContent("Delete");
-    expect(menu).not.toHaveTextContent("Resume");
+    expect(menu).toHaveTextContent("Resume lecture");
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Week 8");
   });

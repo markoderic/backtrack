@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { DELETE_FAILED_ERROR, LIVE_LECTURE_ERROR } from "./delete-lecture-copy";
+import { DELETE_FAILED_ERROR, LIVE_LECTURE_ERROR, RESUME_FAILED_ERROR, RESUME_NOT_READY_ERROR } from "./delete-lecture-copy";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,6 +51,39 @@ export async function deleteLecture(lectureId: string): Promise<DeleteLectureRes
   revalidatePath(`/teach/c/${row.course_id}`);
   revalidatePath("/teach");
   redirect(`/teach/c/${row.course_id}?deleted=1`);
+}
+
+/** What Resume lecture shows when the lecture did not open again. */
+export type ResumeLectureResult = { error: string };
+
+/**
+ * Opens one of the signed in teacher's ended lectures again (resume_lecture, migration 0021: back
+ * to live with a new join code, on the slide it was on, with everything it had), then goes to its
+ * projector. For a teacher who keeps one deck for the whole semester. A lecture that is already
+ * live just goes to its projector.
+ */
+export async function resumeLecture(lectureId: string): Promise<ResumeLectureResult> {
+  const id = String(lectureId ?? "");
+  if (!UUID.test(id)) return { error: RESUME_FAILED_ERROR };
+
+  const supabase = await createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/teach");
+
+  const { data, error } = await supabase.rpc("resume_lecture", { p_lecture_id: id });
+  if (error) {
+    // PGRST202 / 42883: the function is not there yet (0021 has not run).
+    const missing = error.code === "PGRST202" || error.code === "42883";
+    if (!missing) console.error(`resume_lecture ${id}:`, error.message);
+    return { error: missing ? RESUME_NOT_READY_ERROR : RESUME_FAILED_ERROR };
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as { lecture_id?: string } | undefined;
+  if (row?.lecture_id !== id) return { error: RESUME_FAILED_ERROR };
+
+  revalidatePath("/teach", "layout");
+  redirect(`/teach/l/${id}/present`);
 }
 
 /**
